@@ -33,3 +33,4 @@ select cron.schedule('gaap-lembretes', '*/15 13-23 * * 1-6', $$
     headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-token', (select valor from public.segredos where chave = 'cron_token')),
     body := '{}'::jsonb)
 $$);
+ALTER FUNCTION public.ping() SET search_path = public;
