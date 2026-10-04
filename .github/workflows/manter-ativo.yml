@@ -1,11 +1,17 @@
 # Chama o banco uma vez por dia para o projeto gratuito do Supabase não pausar
 # por falta de uso (férias, recesso). Usa só a chave pública (anon) do config.js.
+# Também se "reativa" a cada execução: o GitHub desliga agendamentos de repositórios
+# sem nenhuma alteração por 60 dias, e isso zera essa contagem.
 name: Manter o banco ativo
 
 on:
   schedule:
     - cron: "17 11 * * *"   # todo dia às 08:17 (Brasília)
   workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   ping:
@@ -24,3 +30,8 @@ jobs:
           done
           echo "::error::O banco não respondeu. Veja se o projeto no Supabase está pausado."
           exit 1
+      - name: Manter este agendamento ligado
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/manter-ativo.yml/enable" || true

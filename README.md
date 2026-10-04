@@ -65,7 +65,8 @@ e cole o conteúdo de cada arquivo no modelo correspondente:
 |---|---|---|
 | Cópia dos dados no servidor (guarda 30 dias) | Todo dia às 03:00 | pg_cron `gaap-backup-diario` |
 | Lembretes no celular (fim do expediente + 20 min) | Seg a sáb | pg_cron `gaap-lembretes` → função `lembretes` |
-| Manter o banco ativo | Todo dia às 08:17 | GitHub Actions |
+| Manter o banco ativo | Todo dia às 08:17 | GitHub Actions (se reativa sozinho) |
+| Manter o banco ativo (reserva) | Todo dia às 11:23 | Vercel Cron → `/api/ping` |
 
 As chaves das notificações (VAPID) e a senha do agendamento ficam na tabela `segredos`
 do banco, que só o servidor lê. Elas **não** estão neste repositório.
