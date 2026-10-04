@@ -259,3 +259,11 @@ tr.click:hover td{background:var(--surface-2)}
 .loading{padding:60px 0;text-align:center;color:var(--muted)}
 .copybox{width:100%;min-height:160px;font-family:var(--f-mono);font-size:.82rem}
 @media (prefers-reduced-motion:no-preference){.sheet{animation:up .18s ease-out}@keyframes up{from{transform:translateY(16px)}}}
+
+/* lista de cópias de backup */
+#bk-list{min-width:0}
+.bk-list{display:grid;gap:6px;max-height:320px;overflow:auto}
+.bk-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;border:1px solid var(--line,#ddd);border-radius:10px;min-width:0}
+.bk-item span{display:grid;gap:2px;min-width:0}
+.panel.form > *{min-width:0}
+.panel.form p .pill{white-space:normal;display:inline-block;max-width:100%}

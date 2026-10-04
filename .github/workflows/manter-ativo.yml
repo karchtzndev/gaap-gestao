@@ -1,0 +1,26 @@
+# Chama o banco uma vez por dia para o projeto gratuito do Supabase não pausar
+# por falta de uso (férias, recesso). Usa só a chave pública (anon) do config.js.
+name: Manter o banco ativo
+
+on:
+  schedule:
+    - cron: "17 11 * * *"   # todo dia às 08:17 (Brasília)
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Chamar o banco
+        run: |
+          URL=$(grep -o 'https://[a-z0-9]*\.supabase\.co' config.js)
+          KEY=$(grep -o 'eyJ[A-Za-z0-9._-]*' config.js)
+          for i in 1 2 3; do
+            RESP=$(curl -s -m 30 -X POST "$URL/rest/v1/rpc/ping" -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{}')
+            echo "Resposta: $RESP"
+            [ "$RESP" = '"ok"' ] && exit 0
+            sleep 20
+          done
+          echo "::error::O banco não respondeu. Veja se o projeto no Supabase está pausado."
+          exit 1

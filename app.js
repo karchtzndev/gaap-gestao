@@ -313,7 +313,9 @@ function render(){
 function exampleBanner(){
   if(state.worker) return "";
   const pend = state.perfis.filter(p=>p.papel==="pendente").length;
-  const aviso = pend ? `<div class="banner"><span>${pend} pessoa${pend>1?"s":""} criou conta e está aguardando você liberar o acesso.</span><button class="btn sm" data-act="irAcessos">Ver acessos</button></div>` : "";
+  const bk = state.cfg.backupBaixadoEm, velho = state.ap.length >= 5 && (!bk || Date.now() - new Date(bk).getTime() > 7*86400000);
+  const aviso = (pend ? `<div class="banner"><span>${pend} pessoa${pend>1?"s":""} criou conta e está aguardando você liberar o acesso.</span><button class="btn sm" data-act="irAcessos">Ver acessos</button></div>` : "")
+    + (velho ? `<div class="banner"><span>${bk ? "Faz mais de uma semana que você não baixa" : "Você ainda não baixou"} uma cópia completa dos dados e fotos. Leva um minuto.</span><button class="btn sm" data-act="irBackup">Fazer backup</button></div>` : "");
   const n = state.ap.filter(x=>x.exemplo).length + state.orc.filter(x=>x.exemplo).length + state.rec.filter(x=>x.exemplo).length;
   if(!n) return aviso;
   return aviso + `<div class="banner"><span>Estes são dados de exemplo para você ver o sistema funcionando (${n} registros marcados como exemplo).</span><button class="btn sm" data-act="clearExamples">Apagar exemplos</button></div>`;
@@ -1476,6 +1478,7 @@ async function submitRec(){
 
 /* ---------- AJUSTES ---------- */
 function vAjustes(){
+  setTimeout(carregarBackups, 0);
   const c = state.cfg, E = c.empresa; const y = new Date().getFullYear();
   const hol = Object.entries(holidays(y)).sort();
   return `<div class="pagehead"><div><span class="eyebrow">Ajustes</span><h1>Empresa, valores e jornada</h1><p class="muted">Valores novos valem para os próximos apontamentos. Os já lançados mantêm o valor da hora da época.</p></div></div>
@@ -1541,11 +1544,54 @@ function vAjustes(){
     </div>
     <div class="row" style="justify-content:flex-end"><button class="btn primary" type="submit">Salvar ajustes</button></div>
   </form>
-  <section class="section"><header><h2>Backup</h2></header>
-    <div class="panel form"><p class="muted" style="margin:0">Exporte todos os apontamentos, orçamentos e recebimentos em um arquivo. Para restaurar, importe o arquivo; registros com o mesmo código são substituídos.</p>
-      <div class="row"><button class="btn" data-act="exportJson">Exportar backup</button><label class="btn" for="imp">Importar backup</label><input type="file" id="imp" accept="application/json,.json" hidden></div></div>
+  <section class="section" id="backup"><header><h2>Backup</h2></header>
+    <div class="panel form"><h3>Cópia completa para guardar fora (recomendado toda semana)</h3>
+      <p class="muted" style="margin:0">Baixa um arquivo .zip com todos os dados <b>e as fotos</b>. Guarde no iCloud Drive, Google Drive ou no computador. Se um dia perder o sistema, é com ele que tudo volta.</p>
+      <p style="margin:0">${backupIdade()}</p>
+      <div class="row"><button class="btn primary" data-act="backupZip">Baixar backup completo (.zip)</button><button class="btn" data-act="exportJson">Só os dados (.json)</button></div>
+    </div>
+    <div class="panel form"><h3>Cópias automáticas no servidor</h3>
+      <p class="muted" style="margin:0">Todo dia às 03:00 o sistema guarda uma cópia dos dados (sem as fotos) e mantém os últimos 30 dias. Serve para desfazer um erro, por exemplo uma exclusão por engano.</p>
+      <div id="bk-list" class="muted">Carregando cópias…</div>
+      <div class="row"><button class="btn" data-act="backupAgora">Fazer uma cópia agora</button></div>
+    </div>
+    <div class="panel form"><h3>Restaurar</h3>
+      <p class="muted" style="margin:0">Importe um backup (.zip ou .json). Registros com o mesmo código são substituídos; os demais continuam como estão.</p>
+      <div class="row"><label class="btn" for="imp">Importar backup</label><input type="file" id="imp" accept="application/json,.json,application/zip,.zip" hidden></div>
+    </div>
   </section>`;
 }
+function backupDados(){ return {sistema:"GAAP Gestão de Serviços", versao:2, exportadoEm:new Date().toISOString(), config:state.cfg, apontamentos:state.ap, orcamentos:state.orc, recebimentos:state.rec, fechamentos:state.fech, perfis:state.perfis||[]}; }
+function backupIdade(){
+  const b = state.cfg.backupBaixadoEm; if(!b) return `<span class="pill warn">Você ainda não baixou nenhuma cópia completa.</span>`;
+  const dias = Math.floor((Date.now() - new Date(b).getTime())/86400000);
+  return `<span class="pill ${dias>7?"warn":"good"}">Última cópia completa: ${new Date(b).toLocaleDateString("pt-BR")} (${dias===0?"hoje":dias===1?"ontem":`há ${dias} dias`})</span>`;
+}
+async function carregarBackups(){
+  const box = $("#bk-list"); if(!box) return;
+  const {data, error} = await sb.rpc("listar_backups");
+  if(!$("#bk-list")) return;
+  if(error){ box.textContent = "Não consegui carregar as cópias automáticas."; return; }
+  if(!data || !data.length){ box.textContent = "Nenhuma cópia ainda. A primeira é feita hoje de madrugada."; return; }
+  box.classList.remove("muted");
+  box.innerHTML = `<div class="bk-list">${data.map(b=>`<div class="bk-item"><span><b class="mono">${new Date(b.criado_em).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"})}</b><small class="muted">${b.origem==="automatico"?"Automática":"Manual"} · ${b.registros} registro${b.registros===1?"":"s"}</small></span><button class="btn sm" data-act="backupBaixar" data-slot="${b.slot}">Baixar</button></div>`).join("")}</div>`;
+}
+async function importarDados(d, fotos){
+  if(!d || !Array.isArray(d.apontamentos)) throw new Error("formato");
+  const tot = COLS.reduce((n,c)=>n+(d[c]||[]).length,0);
+  if(!confirm(`Importar ${tot} registros${fotos?` e ${fotos.length} fotos`:""} deste backup? Registros com o mesmo código serão substituídos.`)) return false;
+  let n = 0, nf = 0;
+  for(const f of (fotos||[])){
+    const {error} = await sb.storage.from("fotos").upload(f.path, f.blob, {contentType:f.type, upsert:true});
+    if(!error) nf++; if(nf%10===0) toast(`Enviando fotos… ${nf} de ${fotos.length}`);
+  }
+  if(d.config) await saveCfg(deepMerge(DEFAULT_CFG, d.config));
+  for(const col of ["fechamentos", ...COLS.filter(c=>c!=="fechamentos")]) for(const row of (d[col]||[])){ if(!row || !row.id) continue; await save(col, row); n++; if(n%20===0) toast(`Importando… ${n} de ${tot}`); }
+  await loadOwner(); state.rendered = null; render();
+  toast(`Backup importado: ${n} registros${fotos?`, ${nf} fotos`:""}.`);
+  return true;
+}
+const JSZIP = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
 async function submitCfg(){
   const g = id => $("#"+id).value;
   const c = clone(state.cfg);
@@ -1567,15 +1613,19 @@ async function submitCfg(){
 }
 document.addEventListener("change", async e=>{
   if(e.target.id!=="imp" || !e.target.files[0]) return;
+  const file = e.target.files[0];
   try{
-    const d = JSON.parse(await e.target.files[0].text());
-    if(!d || !Array.isArray(d.apontamentos)) throw new Error("formato");
-    const tot = COLS.reduce((n,c)=>n+(d[c]||[]).length,0);
-    if(!confirm(`Importar ${tot} registros deste backup? Registros com o mesmo código serão substituídos.`)){ e.target.value = ""; return; }
-    let n = 0;
-    if(d.config) await saveCfg(d.config);
-    for(const col of ["fechamentos", ...COLS.filter(c=>c!=="fechamentos")]) for(const row of (d[col]||[])){ if(!row || !row.id) continue; await save(col, row); n++; if(n%20===0) toast(`Importando… ${n} de ${tot}`); }
-    toast(`Backup importado: ${n} registros`);
+    if(/\.zip$/i.test(file.name) || file.type==="application/zip"){
+      if(!window.JSZip) await loadScript(JSZIP);
+      const z = await JSZip.loadAsync(file), j = z.file("backup.json");
+      if(!j) throw new Error("formato");
+      const d = JSON.parse(await j.async("string")), fotos = [];
+      for(const name of Object.keys(z.files).filter(n=>n.startsWith("fotos/") && !z.files[n].dir)){
+        const path = name.slice(6), ext = path.split(".").pop().toLowerCase();
+        fotos.push({path, blob: await z.file(name).async("blob"), type: ext==="png"?"image/png":ext==="webp"?"image/webp":ext==="gif"?"image/gif":"image/jpeg"});
+      }
+      await importarDados(d, fotos);
+    } else await importarDados(JSON.parse(await file.text()));
   }catch(err){ toast(err && err.code==="db" ? writeErr(err) : "Arquivo inválido. Use um backup exportado por este sistema."); }
   e.target.value = "";
 });
@@ -1642,6 +1692,32 @@ const A = {
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } try{ await removeDoc("recebimentos", b.dataset.id); toast("Recebimento excluído"); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   dayDescartar(){ rascunho.limpar(); closeModal(); },
+  async backupZip(b){
+    b.disabled = true; const old = b.textContent;
+    try{
+      if(!window.JSZip){ b.textContent = "Preparando…"; await loadScript(JSZIP); }
+      const zip = new JSZip(), dados = backupDados();
+      zip.file("backup.json", JSON.stringify(dados, null, 1));
+      const ids = [...new Set([...state.ap, ...state.orc].flatMap(x=>x.fotos||[]))];
+      let n = 0, falhas = 0;
+      for(let i=0; i<ids.length; i+=40) await assinarFotos(ids.slice(i, i+40));
+      for(const id of ids){
+        b.textContent = `Fotos ${++n} de ${ids.length}…`;
+        try{ const r = await fetch(assetUrls[id]); if(!r.ok) throw 0; zip.file("fotos/"+id, await r.blob()); }catch(err){ falhas++; }
+      }
+      zip.file("LEIA-ME.txt", `Backup do GAAP Gestão de Serviços gerado em ${new Date().toLocaleString("pt-BR")}.\nPara restaurar: Ajustes > Backup > Importar backup e escolha este arquivo .zip.\nRegistros: ${COLS.reduce((s,c)=>s+(dados[c]||[]).length,0)} · Fotos: ${ids.length-falhas}${falhas?` (${falhas} não baixaram)`:""}`);
+      b.textContent = "Compactando…";
+      const blob = await zip.generateAsync({type:"blob", compression:"STORE"});
+      await offerFile(`backup-gaap-completo-${today()}.zip`, blob);
+      state.cfg.backupBaixadoEm = new Date().toISOString(); await saveCfg(state.cfg);
+      toast(falhas ? `Backup gerado, mas ${falhas} foto(s) não baixaram.` : "Backup completo gerado. Guarde o arquivo fora do celular.");
+      state.rendered = null; render(); $("#backup")?.scrollIntoView();
+    }catch(err){ toast("Não consegui gerar o backup. Verifique a conexão e tente de novo."); }
+    finally{ b.disabled = false; b.textContent = old; }
+  },
+  async backupAgora(b){ b.disabled = true; const {error} = await sb.rpc("fazer_backup", {p_origem:"manual"}); b.disabled = false; if(error){ toast(writeErr(dbErr(error))); return; } toast("Cópia feita no servidor."); carregarBackups(); },
+  async backupBaixar(b){ const {data, error} = await sb.rpc("ler_backup", {p_slot:+b.dataset.slot}); if(error || !data){ toast("Não consegui baixar essa cópia."); return; } offerFile(`backup-gaap-servidor-${(data.exportadoEm||"").slice(0,10)}.json`, JSON.stringify(data, null, 1)); },
+  irBackup(){ state.view = "ajustes"; state.rendered = null; render(); setTimeout(()=>$("#backup")?.scrollIntoView(), 50); },
   async renomearProf(b){
     const old = $("#rn-old")?.value || "", novo = ($("#rn-new")?.value || "").trim();
     if(!old || !novo){ toast("Escolha o funcionário e digite o novo nome."); return; }
@@ -1653,7 +1729,7 @@ const A = {
     if(error){ b.disabled = false; toast(writeErr(dbErr(error))); return; }
     await loadOwner(); state.rendered = null; render(); toast(`${old} agora é ${novo} (${data||0} OS atualizadas).`);
   },
-  exportJson(){ const d = {sistema:"GAAP Gestão de Serviços", versao:2, exportadoEm:new Date().toISOString(), config:state.cfg, apontamentos:state.ap, orcamentos:state.orc, recebimentos:state.rec, fechamentos:state.fech, perfis:state.perfis||[]}; offerFile(`backup-gaap-${today()}.json`, JSON.stringify(d,null,1)); }
+  exportJson(){ const d = backupDados(); offerFile(`backup-gaap-${today()}.json`, JSON.stringify(d,null,1)); }
 };
 document.addEventListener("click", e=>{ const b = e.target.closest("[data-act]"); if(!b) return; const f = A[b.dataset.act]; if(f){ if(b.tagName==="BUTTON" && b.type!=="submit") e.preventDefault(); f(b,e); } });
 
