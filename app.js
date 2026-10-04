@@ -38,7 +38,7 @@ const ymLabel = k => { const [y,m]=k.split("-").map(Number); return `${MESES[m-1
 const shiftYm = (k,n) => { const [y,m]=k.split("-").map(Number); const d=new Date(y,m-1+n,1); return `${d.getFullYear()}-${pad(d.getMonth()+1)}`; };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,8);
 const clone = o => JSON.parse(JSON.stringify(o));
-function deepMerge(base, over){ const out = clone(base); if(!over||typeof over!=="object") return out; for(const k of Object.keys(over)){ const v=over[k]; out[k] = (v && typeof v==="object" && !Array.isArray(v) && out[k] && typeof out[k]==="object") ? deepMerge(out[k], v) : v; } return out; }
+function deepMerge(base, over){ const out = clone(base); if(!over||typeof over!=="object") return out; for(const k of Object.keys(over)){ const v=over[k]; if(v===undefined || v===null) continue; out[k] = (v && typeof v==="object" && !Array.isArray(v) && out[k] && typeof out[k]==="object") ? deepMerge(out[k], v) : v; } return out; }
 function extenso(d=new Date()){ const m=MESES[d.getMonth()]; return `${d.getDate()} de ${m[0].toUpperCase()+m.slice(1)} de ${d.getFullYear()}`; }
 
 /* ---------- feriados ---------- */
@@ -127,6 +127,59 @@ function overlaps(list){
   return bad;
 }
 
+/* ---------- descrição para relatórios (emergência + observações) ---------- */
+const MEIOS = ["Ligação","WhatsApp","Presencial","Rádio","Outro"];
+function emergTxt(e){ if(!e.emergencia) return ""; const a = e.acion||{};
+  return ["EMERGÊNCIA", a.por?`acionado por ${a.por}`:"", a.as?`às ${a.as}`:"", a.meio?`via ${a.meio}`:"", a.motivo?`(${a.motivo})`:""].filter(Boolean).join(" "); }
+function descRep(e){ return [e.descricao||"", emergTxt(e), e.obs?`Obs.: ${e.obs}`:""].filter(Boolean).join(" · "); }
+function acionadores(){ const m = {}; state.ap.forEach(e=>{ const p = e.acion?.por; if(p) m[p] = (m[p]||0)+1; }); return Object.keys(m).sort((a,b)=>m[b]-m[a]).slice(0,30); }
+/* ---------- ficha da contratante ---------- */
+const ficha = emp => ((state.cfg.contratantes||{})[emp]) || {};
+function osObrigatoria(emp){ return !!ficha(emp || state.cfg.contratante || "").exigirOS; }
+function medicao(emp, desloc=0){
+  const corte = +ficha(emp || state.cfg.contratante || "").corte || 0; if(!corte) return null;
+  const t = parseYmd(today()); let ate = new Date(t.getFullYear(), t.getMonth(), corte); if(ate < t) ate = new Date(t.getFullYear(), t.getMonth()+1, corte);
+  ate = new Date(ate.getFullYear(), ate.getMonth()+desloc, corte); const de = new Date(ate.getFullYear(), ate.getMonth()-1, corte+1);
+  return [ymd(de), ymd(ate)];
+}
+/* ---------- conferência: dias úteis sem lançamento e buracos na jornada ---------- */
+function conferencia(de, ate, quem){
+  const cfg = state.cfg, out = [], lim = ymd(addDays(parseYmd(today()), -1)); if(ate > lim) ate = lim;
+  const pessoas = quem ? [quem] : (profs().length ? profs() : [""]);
+  const aI = hm(cfg.almoco.ini), aF = hm(cfg.almoco.fim), inicio = {};
+  state.ap.forEach(e=>{ const k = e.profissional||""; if(!inicio[k] || e.data < inicio[k]) inicio[k] = e.data; if(!inicio._ || e.data < inicio._) inicio._ = e.data; });
+  for(let d = parseYmd(de), n = 0; ymd(d) <= ate && n < 120; d = addDays(d,1), n++){
+    const ds = ymd(d), j = cfg.jornada[d.getDay()] || {}, ji = hm(j.ini), jf = hm(j.fim);
+    if(ji==null || jf==null || d.getDay()===0 || holidayName(ds)) continue;
+    const janelas = (cfg.almoco.ativo && aI!=null && aF!=null && aI>ji && aF<jf) ? [[ji,aI],[aF,jf]] : [[ji,jf]];
+    const prevista = janelas.reduce((s,[a,b])=>s+b-a,0);
+    for(const p of pessoas){
+      const ini = p ? inicio[p] : inicio._; if(!ini || ds < ini) continue;
+      const list = state.ap.filter(e=>e.data===ds && (!p || e.profissional===p) && !e.andamento);
+      const iv = list.map(e=>{ const a = hm(e.inicio); let b = hm(e.fim); if(b<=a) b = 1440; return [a,b]; }).sort((x,y)=>x[0]-y[0]);
+      const buracos = []; let coberto = 0;
+      for(const [ja,jb] of janelas){
+        let cur = ja;
+        for(const [a,b] of iv){ if(b<=cur || a>=jb) continue; if(a>cur) buracos.push([cur, Math.min(a,jb)]); cur = Math.max(cur, Math.min(b,jb)); if(cur>=jb) break; }
+        if(cur<jb) buracos.push([cur,jb]);
+      }
+      const falta = buracos.filter(([a,b])=>b-a>=15).reduce((s,[a,b])=>s+b-a,0);
+      coberto = prevista - buracos.reduce((s,[a,b])=>s+b-a,0);
+      if(falta>0) out.push({data:ds, prof:p, prevista, coberto, falta, semNada:!list.length, buracos:buracos.filter(([a,b])=>b-a>=15)});
+    }
+  }
+  return out;
+}
+const hhmm = m => `${pad(Math.floor(m/60))}:${pad(m%60)}`;
+function confHtml(lista, titulo, max=8){
+  if(!lista.length) return "";
+  const tot = lista.reduce((s,x)=>s+x.falta,0);
+  return `<section class="section"><header><h2>${titulo}</h2><span class="pill warn">${lista.length} dia${lista.length>1?"s":""} · ${fh(tot)} sem lançamento</span></header>
+  <div class="list">${lista.slice(0,max).map(x=>`<button class="item confitem" data-act="confAbrir" data-d="${x.data}" data-p="${esc(x.prof)}" data-a="${x.buracos[0]?hhmm(x.buracos[0][0]):""}" data-b="${x.buracos[0]?hhmm(x.buracos[0][1]):""}">
+    <span><b>${WDS[parseYmd(x.data).getDay()]} ${fdate(x.data)}</b>${x.prof&&!state.worker?` · ${esc(x.prof)}`:""}<br><small class="muted">${x.semNada?"Nenhuma OS lançada":`${fh(x.coberto)} de ${fh(x.prevista)} · sem lançamento: ${x.buracos.map(([a,b])=>`${hhmm(a)}–${hhmm(b)}`).join(", ")}`}</small></span>
+    <span class="pill">Lançar</span></button>`).join("")}</div>
+  ${lista.length>max?`<p class="muted" style="margin:6px 0 0">E mais ${lista.length-max} dia(s).</p>`:""}</section>`;
+}
 /* ---------- orçamento ---------- */
 function orcTotals(o){ const sub=(o.itens||[]).reduce((s,i)=>s+numIn(i.qtd)*numIn(i.valor),0); const desc=sub*numIn(o.descontoPct)/100; return {sub,desc,total:Math.round((sub-desc)*100)/100}; }
 const orcRecebido = id => state.rec.filter(r=>r.origem==="orc"&&r.orcId===id).reduce((s,r)=>s+numIn(r.valor),0);
@@ -144,7 +197,7 @@ const state = {
 };
 const sb = window.supabase.createClient(window.GAAP_CONFIG.supabaseUrl, window.GAAP_CONFIG.supabaseKey, {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:true}});
 let session = null, perfil = null;
-const MSG_DB = {SEM_PERMISSAO:"Seu acesso ainda não foi liberado para lançar OS. Fale com o responsável.", NAO_E_SEU:"Esse lançamento não é seu.", DATA_INVALIDA:"Data inválida."};
+const MSG_DB = {SEM_PERMISSAO:"Seu acesso ainda não foi liberado para lançar OS. Fale com o responsável.", NAO_E_SEU:"Esse lançamento não é seu.", DATA_INVALIDA:"Data inválida.", OS_OBRIGATORIA:"Essa contratante exige o nº da OS.", NOME_VAZIO:"Digite o novo nome."};
 function dbErr(error){
   const m = String(error?.message||"");
   if(m.startsWith("PERIODO_FECHADO:")) return {code:"db", message:`Esse período já foi fechado (${m.split(":")[1]}). Fale com o responsável.`};
@@ -468,6 +521,7 @@ function vWorker(){
   const c = sumCalc(list), byDay = {}; list.forEach(e=>(byDay[e.data] ||= []).push(e));
   return `<div class="pagehead"><div><span class="eyebrow">Olá, ${esc(me)}</span><h1>Minhas OS</h1><p class="muted">Lance cada OS com o horário de início e de término.</p></div>
     <div class="row">${monthNav()}<button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
+  ${confHtml(conferencia(ymd(addDays(parseYmd(today()),-7)), today(), me), "Faltou lançar?", 5)}
   <div class="summary"><span><b>${list.length}</b> OS</span><span><i class="dot d-n"></i>Normal <b>${fdec(c.n)} h</b></span><span><i class="dot d-50"></i>Extra ${state.cfg.extraPct}% <b>${fdec(c.e50)} h</b></span><span><i class="dot d-100"></i>Extra ${state.cfg.feriadoPct}% <b>${fdec(c.e100)} h</b></span><span>Total <b>${fdec(c.total)} h</b></span></div>
   ${list.length ? `<div class="list">${Object.keys(byDay).sort().reverse().map(d=>`<div class="dayhead"><span>${WD[parseYmd(d).getDay()]}, ${fdate(d)}</span><span class="mono">${fdec(sumCalc(byDay[d]).total)} h</span></div>${byDay[d].sort((a,b)=>a.inicio.localeCompare(b.inicio)).map(e=>apItem(e,false,overlaps(byDay[d]))).join("")}`).join("")}</div>`
     : `<div class="empty"><b>Nenhuma OS em ${ymLabel(state.month)}</b>Toque em “Lançar OS do dia” para registrar suas ordens de serviço.</div>`}
@@ -510,6 +564,7 @@ function vPainel(){
   <section class="section"><header><h2>Valor por dia em ${ymLabel(state.month)}</h2>
     <div class="legend"><span><i class="dot d-n"></i>Normal</span><span><i class="dot d-50"></i>Extra ${state.cfg.extraPct}%</span><span><i class="dot d-100"></i>Domingo/feriado ${state.cfg.feriadoPct}%</span></div></header>
     <div class="panel"><div class="chartwrap" id="chart"></div></div></section>
+  ${confHtml(conferencia(ymd(addDays(parseYmd(today()),-14)), today()), "Conferência dos últimos 14 dias")}
   ${painelDims(mAp)}
   <div class="two">
     <section class="section"><header><h2>Últimos apontamentos</h2><button class="btn sm" data-act="nav" data-view="horas">Ver todos</button></header>
@@ -624,7 +679,7 @@ function osHistHtml(os){
   ${fotos.length?`<div class="thumbs" style="margin-bottom:12px">${thumbs(fotos,false)}</div>`:""}
   <div class="tablewrap"><table><thead><tr><th>Data</th><th>Funcionário</th><th>Início</th><th>Fim</th><th class="r">Horas</th><th class="r">Extra</th></tr></thead>
   <tbody>${g.rows.map(e=>{ const c=calc(e); return `<tr><td class="mono">${fdate(e.data)}</td><td>${esc(e.profissional||"-")}</td><td class="mono">${esc(e.inicio)}</td><td class="mono">${esc(e.fim)}</td><td class="r mono">${fdec(c.total)}</td><td class="r mono">${c.e50+c.e100?fdec(c.e50+c.e100):""}</td></tr>`; }).join("")}</tbody></table></div>
-  <footer><span></span><button class="btn primary" data-act="osLancar" data-os="${esc(os)}">Lançar mais horas nesta OS</button></footer>`;
+  <footer><button class="btn" data-act="osPdf" data-os="${esc(os)}">PDF desta OS</button><button class="btn primary" data-act="osLancar" data-os="${esc(os)}">Lançar mais horas nesta OS</button></footer>`;
 }
 document.addEventListener("input", e=>{ if(e.target.id==="h-os-q"){ state.osQ = e.target.value; const pos = e.target.selectionStart; render(); const i=$("#h-os-q"); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(err){} } } });
 function apForm(e){
@@ -656,6 +711,13 @@ function apForm(e){
     ${state.worker?"":`<label class="field"><span>Cálculo da hora</span><select id="f-tipo">${Object.entries(TIPOS).map(([k,l])=>`<option value="${k}" ${ (e.tipo||"auto")===k?"selected":""}>${l}</option>`).join("")}</select></label>`}
     ${state.cfg.almoco.ativo?`<label class="check"><input type="checkbox" id="f-noalm" ${e.noAlmoco?"checked":""}> Trabalhei no horário de almoço (${esc(state.cfg.almoco.ini)}–${esc(state.cfg.almoco.fim)} conta como extra 50%)</label>`:""}
     <label class="check"><input type="checkbox" id="f-emerg" ${e.emergencia?"checked":""}> Chamado de emergência (fora da escala)</label>
+    <div class="grid2 emergbox" id="f-acion" ${e.emergencia?"":"hidden"}>
+      <label class="field"><span>Quem acionou</span><input id="f-ac-por" list="acion-list" value="${esc(e.acion?.por||"")}" placeholder="Ex.: Carlos (supervisor)"></label>
+      <label class="field"><span>Acionado às</span><div class="row" style="flex-wrap:nowrap"><input type="time" id="f-ac-as" value="${esc(e.acion?.as||"")}"><button type="button" class="btn sm" data-act="now" data-t="f-ac-as">Agora</button></div></label>
+      <label class="field"><span>Como</span><select id="f-ac-meio"><option value="">—</option>${MEIOS.map(m=>`<option ${e.acion?.meio===m?"selected":""}>${m}</option>`).join("")}</select></label>
+      <label class="field"><span>Motivo / equipamento</span><input id="f-ac-mot" value="${esc(e.acion?.motivo||"")}" placeholder="Ex.: elevador 02 parado"></label>
+      <datalist id="acion-list">${acionadores().map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
+    </div>
     <label class="field"><span>Observações</span><textarea id="f-obs" rows="2" placeholder="Peças trocadas, pendências, quem solicitou…">${esc(e.obs||"")}</textarea></label>
     ${assets?`<div class="field"><span>Fotos do serviço</span><div class="thumbs" id="f-thumbs">${thumbs(state.apFotos, true)}</div><div><label class="btn sm" for="f-foto">+ Adicionar fotos</label><input type="file" id="f-foto" accept="image/*" multiple hidden></div></div>`:""}
     <div id="f-prev" class="preview"></div>
@@ -666,7 +728,7 @@ function apForm(e){
 function readApForm(){
   const id = $("#apForm").dataset.id;
   const old = state.ap.find(x=>x.id===id) || {};
-  return {...old, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo: $("#f-tipo") ? $("#f-tipo").value : (old.tipo||"auto"), noAlmoco: $("#f-noalm") ? $("#f-noalm").checked : !!old.noAlmoco, emergencia:$("#f-emerg").checked, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])]};
+  return {...old, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo: $("#f-tipo") ? $("#f-tipo").value : (old.tipo||"auto"), noAlmoco: $("#f-noalm") ? $("#f-noalm").checked : !!old.noAlmoco, emergencia:$("#f-emerg").checked, acion: $("#f-emerg").checked ? {por:$("#f-ac-por").value.trim(), as:$("#f-ac-as").value, meio:$("#f-ac-meio").value, motivo:$("#f-ac-mot").value.trim()} : undefined, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])]};
 }
 function lastEmp(){ let v=""; try{ v = localStorage.getItem("gaap-last-emp")||""; }catch(err){} return v || state.cfg.contratante || ""; }
 function selProfs(){ return [...document.querySelectorAll('input[name="f-prof"]:checked')].map(x=>x.value); }
@@ -708,9 +770,9 @@ function dayOpen(ds, opt={}){
     toast("Continuei o lançamento que não tinha sido salvo.");
     renderDayRows(); updateDay(); return;
   }
-  state.day = {data:ds, profs: state.worker ? [state.me] : last.filter(n=>ps.includes(n)), unid:opt.unid||"", emp:opt.emp||lastEmp(), orcId:opt.orcId||"", rows:[]};
+  state.day = {data:ds, profs: state.worker ? [state.me] : (opt.profs || last.filter(n=>ps.includes(n))), unid:opt.unid||"", emp:opt.emp||lastEmp(), orcId:opt.orcId||"", rows:[]};
   const ex = dayExisting(), pre = dayPresets(ds);
-  const r = {...blankRow(), ...(opt.row||{})}; r.ini = ex.length ? ex[ex.length-1].fim : (pre[0]?.[1] || "07:00");
+  const r = {...blankRow(), ...(opt.row||{})}; if(!opt.row?.ini) r.ini = ex.length ? ex[ex.length-1].fim : (pre[0]?.[1] || "07:00");
   state.day.rows.push(r);
   openModal(dayForm(), "wide");
   renderDayRows(); updateDay();
@@ -745,6 +807,7 @@ function dayForm(){
       <label class="field"><span>Nº de OS</span><input type="number" id="d-sp-n" min="1" max="12" value="4"></label>
       <button type="button" class="btn" data-act="daySplit" style="align-self:end">Criar linhas</button>
     </div></details>
+    <datalist id="acion-list">${acionadores().map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
     <datalist id="os-list">${Object.entries(used).slice(0,80).map(([o,ds])=>`<option value="${esc(o)}">${esc(ds)}</option>`).join("")}</datalist>
     <div id="d-tot" class="preview"></div>
     <footer><button type="button" class="btn" data-act="dayDescartar">Descartar</button><button class="btn primary" type="submit" id="d-save">Salvar</button></footer>
@@ -762,7 +825,12 @@ function renderDayRows(){
     <label class="field f-desc"><span>Serviço executado</span><input data-f="desc" value="${esc(r.desc)}" placeholder="Descrição da OS"></label>
     <label class="field f-cli"><span>Unidade</span><input data-f="cli" list="d-unid-list" value="${esc(r.cli)}" placeholder="${esc(d.unid||"Igual à de cima")}"></label>
     <label class="check emerg"><input type="checkbox" data-f="emerg" ${r.emerg?"checked":""}> Emergência</label>
-    ${state.cfg.almoco.ativo?`<label class="check emerg"><input type="checkbox" data-f="noAlm" ${r.noAlm?"checked":""}> Trabalhei no almoço</label>`:""}
+    ${state.cfg.almoco.ativo?`<label class="check noalm"><input type="checkbox" data-f="noAlm" ${r.noAlm?"checked":""}> Trabalhei no almoço (conta como extra)</label>`:""}
+    <label class="field f-obs"><span>Observação (sai no relatório)</span><input data-f="obs" value="${esc(r.obs||"")}" placeholder="Opcional: peças, pendências…"></label>
+    ${r.emerg?`<div class="acionrow"><label class="field"><span>Quem acionou</span><input data-f="acPor" list="acion-list" value="${esc(r.acPor||"")}" placeholder="Ex.: Carlos (supervisor)"></label>
+      <label class="field"><span>Acionado às</span><input type="time" data-f="acAs" value="${esc(r.acAs||"")}"></label>
+      <label class="field"><span>Como</span><select data-f="acMeio"><option value="">—</option>${MEIOS.map(m=>`<option ${r.acMeio===m?"selected":""}>${m}</option>`).join("")}</select></label>
+      <label class="field"><span>Motivo / equipamento</span><input data-f="acMot" value="${esc(r.acMot||"")}" placeholder="Ex.: elevador 02 parado"></label></div>`:""}
     ${assets?`<span class="fotos"><label class="btn sm" for="d-foto-${i}">Fotos${(r.fotos||[]).length?` (${r.fotos.length})`:""}</label><input type="file" id="d-foto-${i}" data-foto-row="${i}" accept="image/*" multiple hidden></span>`:""}
     <div class="info" id="d-info-${i}"></div>
   </div>`).join("");
@@ -816,6 +884,7 @@ document.addEventListener("change", e=>{
   const t = e.target, d = state.day;
   if(t.id==="d-unid"){ document.querySelectorAll('#d-rows [data-f="cli"]').forEach(x=>x.placeholder = d.unid || "Igual à de cima"); }
   if(!t.dataset.f) return;
+  if(t.dataset.f==="emerg"){ renderDayRows(); updateDay(); return; }
   const i = +t.closest(".dayrow").dataset.r, r = d.rows[i];
   if(t.dataset.f==="os" && r.os){
     const prev = [...state.ap].filter(x=>x.os===r.os).sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio))[0]
@@ -835,6 +904,7 @@ async function submitDay(){
   if(!rows.length){ toast("Preencha pelo menos uma OS."); return; }
   const bad = rows.find(r=>!r.ini || !r.fim || r.ini===r.fim);
   if(bad){ toast(`Linha ${bad.i+1}: confira início e fim.`); return; }
+  if(osObrigatoria(d.emp)){ const sem = rows.find(r=>!r.os.trim()); if(sem){ toast(`Linha ${sem.i+1}: a ${d.emp||state.cfg.contratante} exige o nº da OS.`); return; } }
   const btn = $("#d-save"); btn.disabled = true;
   const base = {...(state.worker ? {} : rateFor(d.emp || state.cfg.contratante || "")), tipo:"auto", obs:"", ...(d.orcId?{orcId:d.orcId}:{})};
   const col = "apontamentos", quem = state.worker ? [state.me] : who;
@@ -842,7 +912,7 @@ async function submitDay(){
   try{
     for(const r of rows) for(const pr of quem){
       const row = d.rows[r.i]; row.ids ||= {}; const id = row.ids[pr||"_"] ||= uid();
-      await save(col, {...base, id, noAlmoco:!!r.noAlm, data:d.data, os:r.os.trim(), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], criadoEm:new Date().toISOString()});
+      await save(col, {...base, id, noAlmoco:!!r.noAlm, obs:(r.obs||"").trim(), ...(r.emerg?{acion:{por:(r.acPor||"").trim(), as:r.acAs||"", meio:r.acMeio||"", motivo:(r.acMot||"").trim()}}:{}), data:d.data, os:r.os.trim(), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], criadoEm:new Date().toISOString()});
       n++;
     }
     try{ if(d.profs.length) localStorage.setItem("gaap-last-prof", JSON.stringify(d.profs)); if(d.emp) localStorage.setItem("gaap-last-emp", d.emp); }catch(err){}
@@ -850,6 +920,7 @@ async function submitDay(){
   }catch(err){ btn.disabled = false; toast(n ? `${n} salvos, mas parei por um erro. ${writeErr(err)} Toque em Salvar de novo: o que já foi salvo não será duplicado.` : writeErr(err)); }
 }
 document.addEventListener("input", e=>{ if(e.target.closest("#apForm")) updateApPreview(); });
+document.addEventListener("change", e=>{ if(e.target.id==="f-emerg"){ const b = $("#f-acion"); if(b) b.hidden = !e.target.checked; } });
 document.addEventListener("change", e=>{ if(e.target.closest("#apForm")) updateApPreview(); });
 document.addEventListener("submit", async e=>{
   if(e.target.id==="apForm"){
@@ -857,6 +928,7 @@ document.addEventListener("submit", async e=>{
     const d = readApForm();
     if(!d.data || !d.inicio || !d.fim){ toast("Preencha data, início e término."); return; }
     if(d.inicio===d.fim){ toast("Início e término iguais. Confira os horários."); return; }
+    if(!d.os && osObrigatoria(empOf(d))){ toast(`A ${empOf(d)} exige o nº da OS.`); return; }
     const multi = (!$("#f-prof1") && !state.worker) ? selProfs() : [];
     if(!d.id && profs().length && !multi.length && !state.worker){ toast("Marque quem trabalhou nessa OS."); return; }
     const lk = lockOf(d.data, empOf(d)); if(lk){ toast(lockMsg(lk)); return; }
@@ -900,7 +972,7 @@ function vRelatorios(){
     <div class="grid3">
       ${r.modo==="dia" ? `<label class="field"><span>Dia</span><input type="date" id="rep-dia" value="${r.dia}"></label>`
       : `<label class="field"><span>De</span><input type="date" id="rep-de" value="${r.de}"></label><label class="field"><span>Até</span><input type="date" id="rep-ate" value="${r.ate}"></label>
-         <div class="field"><span>Atalhos</span><div class="row"><button class="btn sm" data-act="repPreset" data-p="mes">Este mês</button><button class="btn sm" data-act="repPreset" data-p="ant">Mês passado</button></div></div>`}
+         <div class="field"><span>Atalhos</span><div class="row"><button class="btn sm" data-act="repPreset" data-p="mes">Este mês</button><button class="btn sm" data-act="repPreset" data-p="ant">Mês passado</button>${medicao(r.f.emp!==ALL?r.f.emp:"")?`<button class="btn sm" data-act="repPreset" data-p="med">Medição atual</button><button class="btn sm" data-act="repPreset" data-p="medAnt">Medição anterior</button>`:""}</div></div>`}
     </div>
     <div class="filtergrid">${filterBar("rep", r.f, r.by)}</div>
     <div class="row" style="gap:6px 18px">
@@ -913,7 +985,8 @@ function vRelatorios(){
     <div class="row">
       <button class="btn primary" data-act="repPdf">Baixar PDF</button>
       <button class="btn" data-act="repXlsx">Baixar Excel</button>
-      <button class="btn" data-act="repCopy">Copiar texto (WhatsApp)</button>
+      <button class="btn" data-act="repCopy">Copiar texto</button>
+      <button class="btn" data-act="repWhats">Enviar texto no WhatsApp</button>
       ${r.modo==="periodo"?`<button class="btn" data-act="fechAbrir">Fechar período…</button>`:""}
     </div>
   </div>
@@ -922,7 +995,7 @@ function vRelatorios(){
 function repRange(){ const r=state.rep; return r.modo==="dia" ? [r.dia, r.dia] : [r.de, r.ate]; }
 function repRows(){
   const [de, ate] = repRange();
-  return applyF(state.ap.filter(e=>e.data>=de && e.data<=ate && (state.rep.orc || !e.orcId)), state.rep.f)
+  return applyF(state.ap.filter(e=>e.data>=de && e.data<=ate && (state.rep.orc || state.rep.os || !e.orcId) && (!state.rep.os || (e.os||"(sem nº)")===state.rep.os) && !e.andamento), state.rep.f)
     .sort((a,b)=>(a.data+a.inicio+(a.profissional||"")).localeCompare(b.data+b.inicio+(b.profissional||"")));
 }
 function repGroups(){ return groupBy(repRows(), state.rep.by); }
@@ -939,6 +1012,7 @@ function repTitle(){ const r=state.rep; return r.modo==="dia" ? `${WD[parseYmd(r
 const oneOf = (rows, k) => { const s = new Set(rows.map(DIMS[k].get)); return s.size===1 ? [...s][0] : ""; };
 function repHeading(rows){
   const r = state.rep, emp = oneOf(rows,"emp");
+  if(r.os) return `Relatório de Atendimento - OS ${r.os}`;
   const sub = (r.by==="prof" || r.f.prof!==ALL) ? oneOf(rows,"prof") : (r.by==="unid" || r.f.unid!==ALL) ? oneOf(rows,"unid") : "";
   return `Controle de Ordens${emp?" "+emp:""}${sub?" - "+sub.toUpperCase():""}`;
 }
@@ -1002,7 +1076,7 @@ function repText(){
       const hol = holidayName(d.data);
       L.push("", `*${WDL[parseYmd(d.data).getDay()]}, ${fdate(d.data)}${hol?` - Feriado: ${hol}`:""}*`);
       d.rows.forEach(e=>{ const c=calc(e); const x = [c.e50?`${repH(c.e50)} a ${state.cfg.extraPct}%`:"", c.e100?`${repH(c.e100)} a ${state.cfg.feriadoPct}%`:""].filter(Boolean).join(", ");
-        L.push(`• OS ${e.os||"s/n"} | ${e.inicio} às ${e.fim} | ${repH(c.total)} h${x?` (extra: ${x})`:""}${e.emergencia?" | emergência":""}${repExtra(e,C).filter(Boolean).map(z=>" | "+z).join("")}${e.descricao?"\n   "+e.descricao:""}`); });
+        L.push(`• OS ${e.os||"s/n"} | ${e.inicio} às ${e.fim} | ${repH(c.total)} h${x?` (extra: ${x})`:""}${repExtra(e,C).filter(Boolean).map(z=>" | "+z).join("")}${descRep(e)?"\n   "+descRep(e):""}`); });
     });
     L.push("", "*RESUMO DE HORAS*");
     repSummary(t).forEach(r=>L.push(`${r[0]}: ${repH(r[1])} h${v?` - ${brl(r[2])}`:""}`));
@@ -1018,15 +1092,31 @@ async function copyText(txt){
   try{ await navigator.clipboard.writeText(txt); toast("Texto copiado. Cole no WhatsApp ou e-mail."); }
   catch(e){ openModal(`<header><h2>Copie o texto</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header><textarea class="copybox field" readonly id="copybox">${esc(txt)}</textarea><p class="muted">Selecione tudo e copie.</p>`); const b=$("#copybox"); b.focus(); b.select(); }
 }
+const MIME = {csv:"text/csv", json:"application/json", pdf:"application/pdf", zip:"application/zip", xlsx:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"};
 async function offerFile(filename, data){
-  const tipo = /\.csv$/.test(filename) ? "text/csv;charset=utf-8" : /\.json$/.test(filename) ? "application/json" : /\.pdf$/.test(filename) ? "application/pdf" : "application/octet-stream";
-  const blob = data instanceof Blob ? data : new Blob([data], {type:tipo});
+  const tipo = MIME[filename.split(".").pop().toLowerCase()] || "application/octet-stream";
+  let blob = data instanceof Blob ? data : new Blob([data], {type:tipo});
+  if(!blob.type) blob = new Blob([blob], {type:tipo});
+  let file = null; try{ file = new File([blob], filename, {type:tipo}); }catch(err){}
+  if(file && navigator.canShare && navigator.share){ let ok = false; try{ ok = navigator.canShare({files:[file]}); }catch(err){}
+    if(ok){
+      state.arquivo = {file, blob, filename};
+      openModal(`<header><h2>Arquivo pronto</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+        <div class="form"><p style="margin:0"><b>${esc(filename)}</b><br><span class="muted">${(blob.size/1024).toFixed(0)} KB</span></p>
+        <div class="row"><button class="btn primary" data-act="arqEnviar">Enviar (WhatsApp, e-mail, Arquivos…)</button><button class="btn" data-act="arqBaixar">Baixar</button></div></div>`);
+      return;
+    }
+  }
+  baixarBlob(blob, filename);
+}
+function baixarBlob(blob, filename){
   const url = URL.createObjectURL(blob), a = document.createElement("a");
   a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 10000); toast("Arquivo baixado.");
 }
 const slug = s => String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^\w]+/g,"-").replace(/^-|-$/g,"").toLowerCase();
 function repFileTag(){
+  if(state.rep.os) return `os-${slug(state.rep.os)}`;
   if(state.rep.fechNum) return `fechamento-${state.rep.fechNum}-${state.rep.f.emp!==ALL?slug(state.rep.f.emp)+"-":""}${state.rep.de}_a_${state.rep.ate}`;
   const r = state.rep, f = Object.keys(DIMS).filter(k=>r.f[k]!==ALL).map(k=>slug(r.f[k]));
   return [...f, r.by?`por-${slug(DIMS[r.by].label)}`:"", r.modo==="dia"?r.dia:`${r.de}_a_${r.ate}`].filter(Boolean).join("-");
@@ -1042,7 +1132,7 @@ function xlsxSheet(X, rows){
     list.forEach((e,i)=>{
       if(!e){ aoa.push(["", wdl(d.data), fdate(d.data)]); return; }
       const c = calc(e);
-      aoa.push([e.os||"", i?"":wdl(d.data), i?"":fdate(d.data), e.inicio, e.fim, (e.descricao||"")+(e.emergencia?" (EMERGÊNCIA)":""), H(c.total), c.e50?H(c.e50):"", c.e100?H(c.e100):"", ...(C.val?[c.valor]:[]), ...repExtra(e,C)]);
+      aoa.push([e.os||"", i?"":wdl(d.data), i?"":fdate(d.data), e.inicio, e.fim, descRep(e), H(c.total), c.e50?H(c.e50):"", c.e100?H(c.e100):"", ...(C.val?[c.valor]:[]), ...repExtra(e,C)]);
     });
     if(list.length>1){ merges.push({s:{r:start,c:1},e:{r:start+list.length-1,c:1}}, {s:{r:start,c:2},e:{r:start+list.length-1,c:2}}); }
   });
@@ -1111,10 +1201,20 @@ function updateFech(){
   $("#fx-prev").innerHTML = `<div class="line"><span>${rows.length} OS · ${new Set(rows.map(e=>e.profissional).filter(Boolean)).size} funcionário(s)</span><span class="mono">${fdec(t.total)} h</span></div>
     <div class="line"><span class="muted">Normal ${fdec(t.n)} h · Extra ${fdec(t.e50+t.e100)} h</span><span class="mono"><b>${brl(t.valor)}</b></span></div>
     ${cf?`<div class="warnbox">Esse período já tem o fechamento ${esc(cf.numero)} (${fdate(cf.de)} a ${fdate(cf.ate)}). Escolha outras datas.</div>`:""}
-    ${!rows.length?`<div class="warnbox">Não há OS nesse período.</div>`:""}`;
+    ${!rows.length?`<div class="warnbox">Não há OS nesse período.</div>`:""}
+    ${fechPendencias(de, ate, emp, rows)}`;
   $("#fx-ok").disabled = !!cf || !rows.length;
 }
 document.addEventListener("change", e=>{ if(e.target.closest && e.target.closest("#fechForm")) updateFech(); });
+function fechPendencias(de, ate, emp, rows){
+  const conf = conferencia(de, ate), sobre = overlaps(rows), semOS = rows.filter(e=>!e.os), forc = rows.filter(e=>e.tipo && e.tipo!=="auto");
+  const itens = [];
+  if(conf.length) itens.push(`${conf.length} dia(s) útil(eis) com horário da jornada sem lançamento (${fh(conf.reduce((s,x)=>s+x.falta,0))}). Confira no Painel.`);
+  if(sobre.size) itens.push(`${sobre.size} OS com horário sobreposto.`);
+  if(semOS.length) itens.push(`${semOS.length} lançamento(s) sem nº de OS.`);
+  if(forc.length) itens.push(`${forc.length} lançamento(s) com cálculo forçado (normal/50%/100%).`);
+  return itens.length ? `<div class="warnbox"><b>Antes de fechar, confira:</b><br>${itens.map(esc).join("<br>")}</div>` : `<div class="line"><span class="muted">Conferência: nenhuma pendência encontrada.</span></div>`;
+}
 async function submitFech(){
   const de = $("#fx-de").value, ate = $("#fx-ate").value, emp = $("#fx-emp").value || "";
   if(!de || !ate || de>ate){ toast("Confira as datas."); return; }
@@ -1192,7 +1292,7 @@ async function pdfGroup(doc, rows){
   let y = pdfHeader(doc, repHeading(rows).toUpperCase(), repPdfSub());
   doc.setFontSize(9.5); doc.setTextColor(...INK);
   const info = [["Prestador:", `${cfg.empresa.nome}${cfg.empresa.responsavel?" - "+cfg.empresa.responsavel:""}`]];
-  if(emp) info.push(["Contratante:", emp]);
+  if(emp){ const F = ficha(emp); info.push(["Contratante:", `${F.razao||emp}${F.cnpj?` - CNPJ ${F.cnpj}`:""}`]); }
   if(prof && !C.prof && profs().length) info.push(["Funcionário:", prof]);
   if(unid && !C.unid) info.push(["Unidade:", unid]);
   info.push(["Resumo:", `${nDias} ${nDias>1?"dias trabalhados":"dia trabalhado"} · ${rows.length} ordens de serviço · ${fdec(t.total)} horas`]);
@@ -1204,7 +1304,7 @@ async function pdfGroup(doc, rows){
     const dia = {content: wdl(d.data)+(hol?`\n${hol}`:""), rowSpan:k, styles:{halign:"center"}}, data = {content: fdate(d.data), rowSpan:k, styles:{halign:"center"}};
     if(!d.rows.length){ const st = (sun||hol) ? {fillColor:shade} : {}; body.push([{content:"",styles:st}, {...dia, styles:{...dia.styles,...st,textColor:GREY}}, {...data, styles:{...data.styles,...st,textColor:GREY}}, {content:"", colSpan:ncols-3, styles:st}]); return; }
     d.rows.forEach((e,i)=>{ const c = calc(e);
-      body.push([e.os||"-", ...(i===0?[dia,data]:[]), e.inicio, e.fim, (e.descricao||"")+(e.emergencia?" (emergência)":""), {content:repH(c.total),styles:{fontStyle:"bold"}}, repX(c.e50), repX(c.e100), ...(C.val?[brl(c.valor)]:[]), ...repExtra(e,C)]); });
+      body.push([e.os||"-", ...(i===0?[dia,data]:[]), e.inicio, e.fim, descRep(e), {content:repH(c.total),styles:{fontStyle:"bold"}}, repX(c.e50), repX(c.e100), ...(C.val?[brl(c.valor)]:[]), ...repExtra(e,C)]); });
   });
   const yellow = {fillColor:[255,240,150], textColor:INK, fontStyle:"bold"}, nExtra = ncols - 9 - (C.val?1:0);
   const foot = [[{content:"TOTAL",colSpan:6,styles:yellow}, ...[repH(t.total), repH(t.e50), repH(t.e100), ...(C.val?[brl(t.valor)]:[])].map(x=>({content:x,styles:{...yellow,halign:"right"}})), ...Array.from({length:nExtra},()=>({content:"",styles:yellow}))]];
@@ -1223,7 +1323,8 @@ async function pdfGroup(doc, rows){
     headStyles:{fillColor:[244,247,243],textColor:GREY,fontStyle:"bold",fontSize:8},
     columnStyles:{1:{halign:"right",cellWidth:22},2:{halign:"right",cellWidth:22},3:{halign:"right",cellWidth:30}}});
   y = doc.lastAutoTable.finalY + 6;
-  signature(doc, y, `${cfg.empresa.nome}${prof && !C.prof && profs().length?" - "+prof:cfg.empresa.responsavel?" - "+cfg.empresa.responsavel:""}`, `Responsável ${emp||"contratante"} (visto)`);
+  const F = ficha(emp), ap = F.aprovador ? `${F.aprovador}${F.cargo?" - "+F.cargo:""} (${emp})` : `Responsável ${emp||"contratante"} (visto)`;
+  signature(doc, y, `${cfg.empresa.nome}${prof && !C.prof && profs().length?" - "+prof:cfg.empresa.responsavel?" - "+cfg.empresa.responsavel:""}`, ap);
   if(state.rep.fotos) await pdfFotos(doc, rows);
 }
 async function repPdf(){
@@ -1536,6 +1637,22 @@ function vAjustes(){
       </tbody></table></div>
       <p class="muted" style="margin:0">Em branco usa o valor padrão (${brl(c.valorHora)}, ${c.extraPct}% e ${c.feriadoPct}%). Valores novos valem para os próximos lançamentos; os já lançados mantêm o valor da época.</p>
     </div>
+    <div class="panel form"><h3>Ficha das contratantes</h3>
+      <p class="muted" style="margin:0">Aparece no PDF (razão social, CNPJ e quem assina o visto) e define o período de medição e o prazo de pagamento.</p>
+      ${empresasCfg().map(n=>{ const F=(c.contratantes||{})[n]||{}; return `<details class="fichabox" data-ct="${esc(n)}" ${empresasCfg().length===1?"open":""}><summary><b>${esc(n)}</b>${F.cnpj?` <span class="muted">· ${esc(F.cnpj)}</span>`:""}</summary>
+        <div class="grid2" style="margin-top:8px">
+          <label class="field"><span>Razão social</span><input class="ct-razao" value="${esc(F.razao||"")}" placeholder="${esc(n)}"></label>
+          <label class="field"><span>CNPJ</span><input class="ct-cnpj" value="${esc(F.cnpj||"")}" inputmode="numeric" placeholder="00.000.000/0000-00"></label>
+          <label class="field"><span>Quem aprova as horas (assina o visto)</span><input class="ct-apr" value="${esc(F.aprovador||"")}" placeholder="Nome"></label>
+          <label class="field"><span>Cargo</span><input class="ct-cargo" value="${esc(F.cargo||"")}" placeholder="Ex.: Supervisor de manutenção"></label>
+          <label class="field"><span>WhatsApp do aprovador</span><input class="ct-whats" value="${esc(F.whats||"")}" inputmode="tel" placeholder="(62) 9 0000-0000"></label>
+          <label class="field"><span>E-mail do aprovador</span><input class="ct-email" value="${esc(F.email||"")}" inputmode="email"></label>
+          <label class="field"><span>Dia de corte da medição (0 = mês fechado)</span><input class="ct-corte" type="number" min="0" max="28" value="${F.corte||0}"></label>
+          <label class="field"><span>Prazo de pagamento (dias após o envio)</span><input class="ct-prazo" type="number" min="0" max="180" value="${F.prazo??30}"></label>
+        </div>
+        <label class="check"><input type="checkbox" class="ct-exos" ${F.exigirOS?"checked":""}> Exigir nº da OS em todo lançamento</label>
+      </details>`; }).join("")}
+    </div>
     <div class="panel form"><h3>Dados da empresa (aparecem nos PDFs)</h3>
       <div class="grid2"><label class="field"><span>Nome</span><input id="e-nome" value="${esc(E.nome)}"></label><label class="field"><span>CNPJ</span><input id="e-cnpj" value="${esc(E.cnpj)}"></label>
       <label class="field"><span>E-mail</span><input id="e-email" value="${esc(E.email)}"></label><label class="field"><span>Telefone</span><input id="e-tel" value="${esc(E.telefone)}"></label>
@@ -1603,6 +1720,8 @@ async function submitCfg(){
   c.feriados = {carnaval:$("#c-carn").checked, corpus:$("#c-corp").checked, extras:g("c-fer")};
   c.empresa = {nome:g("e-nome"), cnpj:g("e-cnpj"), email:g("e-email"), telefone:g("e-tel"), cidade:g("e-cid"), responsavel:g("e-resp"), sobre:g("e-sobre")};
   c.custos = {}; document.querySelectorAll("[data-cu]").forEach(tr=>{ const v = numIn(tr.querySelector(".cu-v").value); if(v>0) c.custos[tr.dataset.cu] = {tipo:tr.querySelector(".cu-t").value, valor:v}; });
+  c.contratantes = {}; document.querySelectorAll("[data-ct]").forEach(el=>{ const q = k=>el.querySelector(k);
+    c.contratantes[el.dataset.ct] = {razao:q(".ct-razao").value.trim(), cnpj:q(".ct-cnpj").value.trim(), aprovador:q(".ct-apr").value.trim(), cargo:q(".ct-cargo").value.trim(), whats:q(".ct-whats").value.trim(), email:q(".ct-email").value.trim(), corte:Math.min(28,Math.max(0,+q(".ct-corte").value||0)), prazo:Math.max(0,+q(".ct-prazo").value||0), exigirOS:q(".ct-exos").checked}; });
   c.taxas = {}; document.querySelectorAll("[data-tx]").forEach(tr=>{ const q = k=>tr.querySelector(k).value.trim(), t = {}; if(q(".tx-v")) t.valorHora = numIn(q(".tx-v")); if(q(".tx-p50")!=="") t.extraPct = +q(".tx-p50"); if(q(".tx-p100")!=="") t.feriadoPct = +q(".tx-p100"); if(Object.keys(t).length) c.taxas[tr.dataset.tx] = t; });
   const emps = lines(g("c-emps")), oldDef = state.cfg.contratante || "";
   c.empresas = emps.join("\n"); c.contratante = emps[0] || "";
@@ -1658,7 +1777,9 @@ const A = {
   closeModal,
   repModo(b){ state.rep.modo = b.dataset.m; render(); },
   repPdf, repXlsx,
-  repPreset(b){ const r=state.rep, t=today(); if(b.dataset.p==="mes"){ r.de=ym(t)+"-01"; r.ate=t; } else { const m=shiftYm(ym(t),-1); const [yy,mm]=m.split("-").map(Number); r.de=m+"-01"; r.ate=`${m}-${pad(new Date(yy,mm,0).getDate())}`; } render(); },
+  repPreset(b){ const r=state.rep, t=today();
+    if(b.dataset.p==="med" || b.dataset.p==="medAnt"){ const m = medicao(r.f.emp!==ALL?r.f.emp:"", b.dataset.p==="med"?0:-1); if(m){ [r.de, r.ate] = m; if(r.ate>t && b.dataset.p==="med") r.ate = t; } render(); return; }
+    if(b.dataset.p==="mes"){ r.de=ym(t)+"-01"; r.ate=t; } else { const m=shiftYm(ym(t),-1); const [yy,mm]=m.split("-").map(Number); r.de=m+"-01"; r.ate=`${m}-${pad(new Date(yy,mm,0).getDate())}`; } render(); },
   repCopy(){ const rows=repRows(); if(!rows.length){ toast("Nenhum apontamento nesse período."); return; } copyText(repText()); },
   orcFilter(b){ state.orcFilter = b.dataset.f; render(); },
   pby(b){ state.pby = b.dataset.k; render(); },
@@ -1692,6 +1813,14 @@ const A = {
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } try{ await removeDoc("recebimentos", b.dataset.id); toast("Recebimento excluído"); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   dayDescartar(){ rascunho.limpar(); closeModal(); },
+  async arqEnviar(){ const a = state.arquivo; if(!a) return; try{ await navigator.share({files:[a.file], title:a.filename}); closeModal(); }catch(err){ if(err && err.name==="AbortError") return; baixarBlob(a.blob, a.filename); closeModal(); } },
+  arqBaixar(){ const a = state.arquivo; if(!a) return; baixarBlob(a.blob, a.filename); closeModal(); },
+  repWhats(){ const rows=repRows(); if(!rows.length){ toast("Nenhum apontamento nesse período."); return; } const emp = oneOf(rows,"emp"), w = (ficha(emp).whats||"").replace(/\D/g,""); window.open(`https://wa.me/${w?(w.length<=11?"55"+w:w):""}?text=${encodeURIComponent(repText())}`, "_blank"); },
+  async osPdf(b){ const os = b.dataset.os, rows = state.ap.filter(e=>(e.os||"(sem nº)")===os).sort((x,y)=>(x.data+x.inicio).localeCompare(y.data+y.inicio)); if(!rows.length) return;
+    const saved = clone(state.rep); closeModal();
+    state.rep = {...state.rep, modo:"periodo", de:rows[0].data, ate:rows[rows.length-1].data, f:{prof:ALL,unid:ALL,emp:ALL}, by:"", vazios:false, os, fechNum:"", fotos:true};
+    try{ await repPdf(); } finally { state.rep = saved; } },
+  confAbrir(b){ const d = b.dataset, row = d.a ? {ini:d.a, fim:d.b} : {}; dayOpen(d.d, {row, profs: d.p ? [d.p] : undefined}); },
   async backupZip(b){
     b.disabled = true; const old = b.textContent;
     try{
