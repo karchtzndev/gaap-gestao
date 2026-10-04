@@ -7,7 +7,7 @@ const DEFAULT_CFG = {
   jornada:{"0":{ini:"",fim:""},"1":{ini:"07:00",fim:"16:00"},"2":{ini:"07:00",fim:"16:00"},"3":{ini:"07:00",fim:"16:00"},"4":{ini:"07:00",fim:"16:00"},"5":{ini:"07:00",fim:"16:00"},"6":{ini:"07:00",fim:"11:00"}},
   almoco:{ativo:false,ini:"11:00",fim:"12:00"},
   feriados:{carnaval:false,corpus:false,extras:"31/07 Aniversário de Anápolis"},
-  tolerancia:5, profissionais:"", unidades:"", empresas:"Brejeiro", custos:{}, taxas:{}
+  tolerancia:5, profissionais:"", unidades:"", empresas:"Brejeiro", custos:{}, taxas:{}, carimbo:true
 };
 const WD = ["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"];
 const WDS = ["dom","seg","ter","qua","qui","sex","sáb"];
@@ -121,7 +121,7 @@ function custo(e){
 const custoSum = list => Math.round(list.reduce((s,e)=>s+custo(e),0)*100)/100;
 function sumCalc(list){ const t={n:0,e50:0,e100:0,total:0,valor:0,vn:0,v50:0,v100:0}; list.forEach(e=>{const c=calc(e); for(const k in t) t[k]+=c[k];}); t.valor=Math.round(t.valor*100)/100; return t; }
 function overlaps(list){
-  const bad = new Set();
+  const bad = new Set(); list = list.filter(e=>!e.andamento && e.fim);
   const iv = list.map(e=>{const s=hm(e.inicio); let f=hm(e.fim); if(f<=s) f+=1440; const o=(parseYmd(e.data)-parseYmd("2000-01-01"))/864e5*1440; return {id:e.id,p:e.profissional||"",s:o+s,f:o+f};}).sort((a,b)=>a.s-b.s);
   for(let i=1;i<iv.length;i++) for(let j=0;j<i;j++) if(iv[i].p===iv[j].p && iv[i].s < iv[j].f){ bad.add(iv[i].id); bad.add(iv[j].id); }
   return bad;
@@ -319,6 +319,8 @@ function scheduleRender(){ cancelAnimationFrame(rq); rq = requestAnimationFrame(
 /* ---------- toast & modal ---------- */
 let tt;
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.hidden=false; clearTimeout(tt); tt=setTimeout(()=>t.hidden=true, 3200); }
+function toastAcao(msg, label, fn){ const t=$("#toast"); t.innerHTML = `<span>${esc(msg)}</span> <button type="button" class="btn sm" id="toast-acao">${esc(label)}</button>`; t.hidden=false; clearTimeout(tt);
+  $("#toast-acao").onclick = async ()=>{ t.hidden = true; try{ await fn(); }catch(err){ toast(writeErr(err)); } }; tt=setTimeout(()=>t.hidden=true, 8000); }
 function openModal(html, cls){ state.modalDirty = false; state.closeArmed = 0; const m=$("#modal"); m.innerHTML=`<div class="sheet ${cls||""}" role="dialog" aria-modal="true">${html}</div>`; m.hidden=false; const f=m.querySelector("input,select,textarea"); if(f && window.innerWidth>700) f.focus(); }
 function closeModal(){ const m=$("#modal"); m.hidden=true; m.innerHTML=""; state.apIds = null; state.modalDirty = false; }
 function tryCloseModal(){
@@ -361,7 +363,7 @@ function render(){
   if(!sessOk()){ document.body.classList.add("locked"); v.innerHTML = vLogin(); state.rendered = "login"; const f = $("#lg-email") || $("#lg-senha"); if(f && window.innerWidth>700) f.focus(); return; }
   document.body.classList.remove("locked");
   const fn = state.worker ? vWorker : ({painel:vPainel, horas:vHoras, relatorios:vRelatorios, orcamentos:vOrcamentos, orcEdit:vOrcEdit, financeiro:vFinanceiro, ajustes:vAjustes}[state.view] || vPainel);
-  v.innerHTML = fn();
+  v.innerHTML = cronoBar() + fn();
   state.rendered = state.view;
   if(state.view==="painel") drawChart();
   if(state.view==="relatorios") renderReport();
@@ -398,42 +400,61 @@ function orcSelect(id, cur){
 const assetUrls = {};
 const PIX = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
 const blobSrc = id => assetUrls[id] || PIX;
-async function compressImage(file){
+const EXIFR = "https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/lite.umd.js";
+async function dataDaFoto(file){
+  try{ if(!window.exifr) await loadScript(EXIFR); const x = await window.exifr.parse(file, ["DateTimeOriginal","CreateDate"]); const d = x && (x.DateTimeOriginal || x.CreateDate); if(d instanceof Date && !isNaN(d)) return d; }catch(err){}
+  return new Date(file.lastModified || Date.now());
+}
+const TIPO_FOTO = {antes:"ANTES", durante:"", depois:"DEPOIS"};
+async function compressImage(file, stamp){
   try{
     const url = URL.createObjectURL(file);
     const img = await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url; });
     const k = Math.min(1, 1600/Math.max(img.naturalWidth, img.naturalHeight));
     const c = document.createElement("canvas"); c.width = Math.round(img.naturalWidth*k); c.height = Math.round(img.naturalHeight*k);
-    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+    const g = c.getContext("2d"); g.drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+    if(stamp){ const fs = Math.max(10, Math.round(c.width/42)), mg = Math.round(fs*0.6), maxW = c.width - mg*2;
+      g.font = `600 ${fs}px Arial, sans-serif`;
+      const partes = stamp.split(" · "), linhas = [""];
+      partes.forEach(pt=>{ const cand = linhas[linhas.length-1] ? linhas[linhas.length-1] + " · " + pt : pt; if(g.measureText(cand).width <= maxW || !linhas[linhas.length-1]) linhas[linhas.length-1] = cand; else linhas.push(pt); });
+      const lh = Math.round(fs*1.25), h = lh*linhas.length + mg*2;
+      g.fillStyle = "rgba(0,0,0,.55)"; g.fillRect(0, c.height-h, c.width, h);
+      g.fillStyle = "#fff"; g.textBaseline = "top";
+      linhas.forEach((l,i)=>{ let t = l; while(g.measureText(t).width > maxW && t.length > 4) t = t.slice(0,-2); g.fillText(t===l?t:t+"…", mg, c.height - h + mg + i*lh); }); }
     const b = await new Promise(res=>c.toBlob(res, "image/jpeg", 0.8));
     return b || file;
   }catch(e){ return file; }
 }
 function photoErr(err){ const c = err && err.code; return c==="quota_or_state" ? "Espaço para fotos esgotado. Apague fotos antigas." : c==="too_large" ? "Foto muito grande." : c==="unsupported_type" ? "Formato de imagem não aceito. Use JPG ou PNG." : c==="rate_limited" ? "Muitas fotos de uma vez. Espere um pouco e tente de novo." : "Não consegui enviar a foto. Verifique a conexão."; }
-async function uploadPhotos(files){
+async function uploadPhotos(files, ctx){
   if(!assets){ toast("Fotos indisponíveis nesta visualização."); return []; }
   const ids = [], ok = ["image/jpeg","image/png","image/webp","image/gif"];
   for(const f of files){
-    try{ toast(`Enviando foto ${ids.length+1} de ${files.length}…`); const b = await compressImage(f); const r = await assets.upload(b, {type: ok.includes(b.type) ? b.type : "image/jpeg"}); assetUrls[r.id] = r.url; ids.push(r.id); }
+    try{ toast(`Enviando foto ${ids.length+1} de ${files.length}…`);
+      let stamp = "", em = null;
+      if(ctx){ em = await dataDaFoto(f); const dt = `${em.toLocaleDateString("pt-BR")} ${pad(em.getHours())}:${pad(em.getMinutes())}`;
+        if(state.cfg.carimbo!==false) stamp = [TIPO_FOTO[ctx.tipo]||"", ctx.os?`OS ${ctx.os}`:"", ctx.unid||"", dt].filter(Boolean).join(" · "); }
+      const b = await compressImage(f, stamp); const r = await assets.upload(b, {type: ok.includes(b.type) ? b.type : "image/jpeg"}); assetUrls[r.id] = r.url; ids.push(r.id); if(ctx) (state.fotoMetaNovo ||= {})[r.id] = {tipo:ctx.tipo||"durante", em: em ? em.toISOString() : ""}; }
     catch(err){ toast(photoErr(err)); break; }
   }
   if(ids.length) toast(`${ids.length} foto${ids.length>1?"s":""} adicionada${ids.length>1?"s":""}`);
   return ids;
 }
 function deleteAssetIfUnused(id, except=[]){ if(!assets || !id) return; if(state.ap.some(e=>!except.includes(e.id) && (e.fotos||[]).includes(id))) return; assets.delete(id).catch(()=>{}); }
-function thumbs(ids, removable){ return (ids||[]).map(id=>`<span class="thumb"><img src="${esc(blobSrc(id))}" data-fid="${esc(id)}" alt="Foto do serviço" data-act="fotoVer" data-id="${esc(id)}" loading="lazy">${removable?`<button type="button" class="thumbx" data-act="fotoDel" data-id="${esc(id)}" aria-label="Remover foto">✕</button>`:""}</span>`).join(""); }
+function fotoTipo(id){ const m = state.fotoMetaNovo?.[id] || state.ap.find(e=>e.fotoMeta && e.fotoMeta[id])?.fotoMeta[id]; return m && TIPO_FOTO[m.tipo] ? TIPO_FOTO[m.tipo] : ""; }
+function thumbs(ids, removable){ return (ids||[]).map(id=>`<span class="thumb">${fotoTipo(id)?`<i class="thumbtag">${fotoTipo(id)}</i>`:""}<img src="${esc(blobSrc(id))}" data-fid="${esc(id)}" alt="Foto do serviço" data-act="fotoVer" data-id="${esc(id)}" loading="lazy">${removable?`<button type="button" class="thumbx" data-act="fotoDel" data-id="${esc(id)}" aria-label="Remover foto">✕</button>`:""}</span>`).join(""); }
 document.addEventListener("change", async e=>{
   const t = e.target;
   if(t.id==="dp-foto" && t.files.length){ const ids = await uploadPhotos([...t.files]); state.dpFotos = [...(state.dpFotos||[]), ...ids]; const box=$("#dp-thumbs"); if(box) box.innerHTML = thumbs(state.dpFotos, false); t.value=""; }
   if(t.id==="dp-tipo"){ const k = t.value==="Km rodado"; $("#dp-km-w").hidden = !k; $("#dp-v-w").hidden = k; }
-  if(t.id==="f-foto" && t.files.length){ const ids = await uploadPhotos([...t.files]); state.apFotos = [...(state.apFotos||[]), ...ids]; const box=$("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); t.value=""; }
-  if(t.dataset && t.dataset.fotoRow!=null && t.files.length){ const i=+t.dataset.fotoRow, r=state.day.rows[i]; const ids = await uploadPhotos([...t.files]); r.fotos = [...(r.fotos||[]), ...ids]; const lb=document.querySelector(`label[for="d-foto-${i}"]`); if(lb) lb.textContent = `Fotos (${r.fotos.length})`; t.value=""; }
+  if(/^f-foto/.test(t.id) && t.files.length){ const ids = await uploadPhotos([...t.files], {tipo:t.dataset.tipo||"durante", os:$("#f-os")?.value.trim(), unid:$("#f-cli")?.value.trim()}); state.apFotos = [...(state.apFotos||[]), ...ids]; const box=$("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); t.value=""; }
+  if(t.dataset && t.dataset.fotoRow!=null && t.files.length){ const i=+t.dataset.fotoRow, r=state.day.rows[i]; const ids = await uploadPhotos([...t.files], {tipo:"durante", os:r.os, unid:r.cli||state.day.unid}); r.fotoMeta = {...(r.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; r.fotos = [...(r.fotos||[]), ...ids]; const lb=document.querySelector(`label[for="d-foto-${i}"]`); if(lb) lb.textContent = `Fotos (${r.fotos.length})`; t.value=""; }
 });
 function apItem(e, showDate, bad){
   const c = calc(e), lk = lockedE(e), nf = (e.fotos||[]).length;
   return `<button class="item" data-act="editAp" data-id="${e.id}">
-    <span class="t">${showDate?`${fdate(e.data).slice(0,5)}<br>`:""}${esc(e.inicio)}–${esc(e.fim)}</span>
-    <span class="main"><b>${e.os?`OS ${esc(e.os)}`:"Sem nº de OS"}${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.exemplo?' <span class="pill">Exemplo</span>':""}</b>
+    <span class="t">${showDate?`${fdate(e.data).slice(0,5)}<br>`:""}${esc(e.inicio)}–${e.andamento?"…":esc(e.fim)}</span>
+    <span class="main"><b>${e.os?`OS ${esc(e.os)}`:"Sem nº de OS"}${e.andamento?' <span class="pill info">Em andamento</span>':""}${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.exemplo?' <span class="pill">Exemplo</span>':""}</b>
       <span class="sub">${esc(e.descricao||"")}</span>
       <span class="sub" style="display:block">${[empOf(e), e.cliente].filter(Boolean).map(esc).join(" · ")}</span>
       ${e.profissional && !state.worker?`<span class="sub" style="display:block"><b style="display:inline;font-weight:600;color:var(--fg)">${esc(e.profissional)}</b></span>`:""}
@@ -525,7 +546,7 @@ function vWorker(){
   const mine = state.ap.filter(e=>e.profissional===me), list = mine.filter(e=>ym(e.data)===state.month).sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio));
   const c = sumCalc(list), byDay = {}; list.forEach(e=>(byDay[e.data] ||= []).push(e));
   return `<div class="pagehead"><div><span class="eyebrow">Olá, ${esc(me)}</span><h1>Minhas OS</h1><p class="muted">Lance cada OS com o horário de início e de término.</p></div>
-    <div class="row">${monthNav()}<button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
+    <div class="row">${monthNav()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button><button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
   ${confHtml(conferencia(ymd(addDays(parseYmd(today()),-7)), today(), me), "Faltou lançar?", 5)}
   <div class="summary"><span><b>${list.length}</b> OS</span><span><i class="dot d-n"></i>Normal <b>${fdec(c.n)} h</b></span><span><i class="dot d-50"></i>Extra ${state.cfg.extraPct}% <b>${fdec(c.e50)} h</b></span><span><i class="dot d-100"></i>Extra ${state.cfg.feriadoPct}% <b>${fdec(c.e100)} h</b></span><span>Total <b>${fdec(c.total)} h</b></span></div>
   ${list.length ? `<div class="list">${Object.keys(byDay).sort().reverse().map(d=>`<div class="dayhead"><span>${WD[parseYmd(d).getDay()]}, ${fdate(d)}</span><span class="mono">${fdec(sumCalc(byDay[d]).total)} h</span></div>${byDay[d].sort((a,b)=>a.inicio.localeCompare(b.inicio)).map(e=>apItem(e,false,overlaps(byDay[d]))).join("")}`).join("")}</div>`
@@ -554,7 +575,7 @@ function vPainel(){
   const recent = [...state.ap].sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio)).slice(0,5);
   const gear = `<svg class="gear" viewBox="0 0 100 100" fill="#fff"><path d="M43 2h14l2 12 8 3 10-7 10 10-7 10 3 8 12 2v14l-12 2-3 8 7 10-10 10-10-7-8 3-2 12H43l-2-12-8-3-10 7-10-10 7-10-3-8-12-2V43l12-2 3-8-7-10 10-10 10 7 8-3zM50 32a18 18 0 1 0 0 36 18 18 0 1 0 0-36z"/></svg>`;
   return `${exampleBanner()}
-  <div class="pagehead"><div><span class="eyebrow">${WD[new Date().getDay()]}, ${fdate(today())}</span><h1>Painel</h1></div>${monthNav()}</div>
+  <div class="pagehead"><div><span class="eyebrow">${WD[new Date().getDay()]}, ${fdate(today())}</span><h1>Painel</h1></div><div class="row">${monthNav()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button></div></div>
   <section class="hero">${gear}
     <div><div class="eyebrow">Total a receber</div><div class="big">${brl(t.horas+t.orc)}</div></div>
     <div class="split"><span>Horas trabalhadas <b>${brl(t.horas)}</b></span><span>Orçamentos aprovados <b>${brl(t.orc)}</b></span></div>
@@ -725,16 +746,40 @@ function apForm(e){
       <datalist id="acion-list">${acionadores().map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
     </div>
     <label class="field"><span>Observações</span><textarea id="f-obs" rows="2" placeholder="Peças trocadas, pendências, quem solicitou…">${esc(e.obs||"")}</textarea></label>
-    ${assets?`<div class="field"><span>Fotos do serviço</span><div class="thumbs" id="f-thumbs">${thumbs(state.apFotos, true)}</div><div><label class="btn sm" for="f-foto">+ Adicionar fotos</label><input type="file" id="f-foto" accept="image/*" multiple hidden></div></div>`:""}
+    ${assets?`<div class="field"><span>Fotos do serviço</span><div class="thumbs" id="f-thumbs">${thumbs(state.apFotos, true)}</div><div class="row"><label class="btn sm" for="f-foto-antes">+ Antes</label><label class="btn sm" for="f-foto">+ Durante</label><label class="btn sm" for="f-foto-depois">+ Depois</label>
+      <input type="file" id="f-foto-antes" data-tipo="antes" accept="image/*" multiple hidden><input type="file" id="f-foto" data-tipo="durante" accept="image/*" multiple hidden><input type="file" id="f-foto-depois" data-tipo="depois" accept="image/*" multiple hidden></div></div>`:""}
     <div id="f-prev" class="preview"></div>
+    ${!isNew && !state.worker?`<details class="fichabox" id="f-hist" data-id="${esc(e.id)}"><summary>Histórico de alterações</summary><div class="muted" id="f-hist-box">Carregando…</div></details>`:""}
     <footer>${isNew?"<span></span>":`<button type="button" class="btn danger" data-act="delAp" data-id="${e.id}">Excluir</button>`}
       <span class="row">${isNew?"":`<button type="button" class="btn" data-act="dupAp">Duplicar</button>`}<button class="btn primary" type="submit">${isNew?"Salvar apontamento":"Salvar alterações"}</button></span></footer>
   </form>`;
 }
+const CAMPOS = [["data","Data",fdate],["os","OS"],["inicio","Início"],["fim","Término"],["descricao","Serviço"],["profissional","Funcionário"],["empresa","Empresa"],["cliente","Unidade"],["tipo","Cálculo",v=>TIPOS[v]||v],["emergencia","Emergência",v=>v?"sim":"não"],["obs","Obs."],["noAlmoco","Trabalhou no almoço",v=>v?"sim":"não"],["orcId","Orçamento",v=>v?orcNum(v):"—"],["excluido","Excluído",v=>v?"sim":"não"]];
+function difHist(a, b){ a = a||{}; b = b||{}; return CAMPOS.filter(([k])=>JSON.stringify(a[k]??"")!==JSON.stringify(b[k]??"")).map(([k,l,f])=>{ const F = f || (v=>v); return `${l}: ${esc(F(a[k])||"—")} → <b>${esc(F(b[k])||"—")}</b>`; }); }
+async function carregarHist(id){
+  const box = $("#f-hist-box"); if(!box) return;
+  const {data, error} = await sb.rpc("historico_de", {p_tabela:"apontamentos", p_id:id});
+  if(error){ box.textContent = "Não consegui carregar o histórico."; return; }
+  state.hist = data || [];
+  box.classList.remove("muted");
+  box.innerHTML = state.hist.length ? `<div class="list">${state.hist.map((h,i)=>{ const dif = h.acao==="insert" ? ["Lançamento criado"] : difHist(h.antes, h.depois);
+    return `<div class="item" style="cursor:default;grid-template-columns:1fr auto"><span><small class="muted">${new Date(h.quando).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"})} · ${esc(h.quem_nome||"")}</small><br>${dif.join("<br>")||"Sem mudança nos campos principais"}</span>${h.acao!=="insert"&&h.antes?`<button type="button" class="btn sm" data-act="histVoltar" data-i="${i}">Desfazer esta</button>`:""}</div>`; }).join("")}</div>` : "Nenhuma alteração registrada.";
+}
+document.addEventListener("toggle", e=>{ if(e.target.id==="f-hist" && e.target.open) carregarHist(e.target.dataset.id); }, true);
+const TAB_LABEL = {apontamentos:"OS", despesas:"Despesa", recebimentos:"Recebimento", fechamentos:"Fechamento", orcamentos:"Orçamento"};
+async function carregarLixeira(){
+  const box = $("#lx-list"); if(!box) return;
+  const {data, error} = await sb.rpc("lixeira", {p_dias:90}); if(!$("#lx-list")) return;
+  if(error){ box.textContent = "Não consegui carregar a lixeira."; return; }
+  state.lixo = data || [];
+  box.classList.remove("muted");
+  box.innerHTML = state.lixo.length ? `<div class="bk-list">${state.lixo.map((x,i)=>{ const d = x.dados||{}; const res = x.tabela==="apontamentos" ? `OS ${d.os||"s/n"} · ${fdate(d.data)} ${d.inicio||""}–${d.fim||""}${d.profissional?` · ${d.profissional}`:""}` : x.tabela==="despesas" ? `${d.tipo||""} · ${fdate(d.data)} · ${brl(d.valor)}` : x.tabela==="recebimentos" ? `${fdate(d.data)} · ${brl(d.valor)}` : x.tabela==="fechamentos" ? `${d.numero||""} · ${fdate(d.de)} a ${fdate(d.ate)}` : `${d.numero||""} ${d.titulo||""}`;
+    return `<div class="bk-item"><span><b>${TAB_LABEL[x.tabela]||x.tabela}</b> ${esc(res)}<small class="muted">Excluído por ${esc(x.quem_nome||"")} em ${new Date(x.quando).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"})}</small></span><button class="btn sm" data-act="lixoRestaurar" data-i="${i}">Restaurar</button></div>`; }).join("")}</div>` : "A lixeira está vazia.";
+}
 function readApForm(){
   const id = $("#apForm").dataset.id;
   const old = state.ap.find(x=>x.id===id) || {};
-  return {...old, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo: $("#f-tipo") ? $("#f-tipo").value : (old.tipo||"auto"), noAlmoco: $("#f-noalm") ? $("#f-noalm").checked : !!old.noAlmoco, emergencia:$("#f-emerg").checked, acion: $("#f-emerg").checked ? {por:$("#f-ac-por").value.trim(), as:$("#f-ac-as").value, meio:$("#f-ac-meio").value, motivo:$("#f-ac-mot").value.trim()} : undefined, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])]};
+  return {...old, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo: $("#f-tipo") ? $("#f-tipo").value : (old.tipo||"auto"), noAlmoco: $("#f-noalm") ? $("#f-noalm").checked : !!old.noAlmoco, emergencia:$("#f-emerg").checked, acion: $("#f-emerg").checked ? {por:$("#f-ac-por").value.trim(), as:$("#f-ac-as").value, meio:$("#f-ac-meio").value, motivo:$("#f-ac-mot").value.trim()} : undefined, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])], fotoMeta: Object.fromEntries((state.apFotos||[]).map(id=>[id, (old.fotoMeta||{})[id] || state.fotoMetaNovo?.[id]]).filter(([,v])=>v))};
 }
 function lastEmp(){ let v=""; try{ v = localStorage.getItem("gaap-last-emp")||""; }catch(err){} return v || state.cfg.contratante || ""; }
 function selProfs(){ return [...document.querySelectorAll('input[name="f-prof"]:checked')].map(x=>x.value); }
@@ -918,7 +963,7 @@ async function submitDay(){
   try{
     for(const r of rows) for(const pr of quem){
       const row = d.rows[r.i]; row.ids ||= {}; const id = row.ids[pr||"_"] ||= uid();
-      await save(col, {...base, id, noAlmoco:!!r.noAlm, obs:(r.obs||"").trim(), ...(r.emerg?{acion:{por:(r.acPor||"").trim(), as:r.acAs||"", meio:r.acMeio||"", motivo:(r.acMot||"").trim()}}:{}), data:d.data, os:r.os.trim(), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], criadoEm:new Date().toISOString()});
+      await save(col, {...base, id, noAlmoco:!!r.noAlm, obs:(r.obs||"").trim(), ...(r.emerg?{acion:{por:(r.acPor||"").trim(), as:r.acAs||"", meio:r.acMeio||"", motivo:(r.acMot||"").trim()}}:{}), data:d.data, os:r.os.trim(), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], fotoMeta:r.fotoMeta||{}, criadoEm:new Date().toISOString()});
       n++;
     }
     try{ if(d.profs.length) localStorage.setItem("gaap-last-prof", JSON.stringify(d.profs)); if(d.emp) localStorage.setItem("gaap-last-emp", d.emp); }catch(err){}
@@ -926,7 +971,7 @@ async function submitDay(){
   }catch(err){ btn.disabled = false; toast(n ? `${n} salvos, mas parei por um erro. ${writeErr(err)} Toque em Salvar de novo: o que já foi salvo não será duplicado.` : writeErr(err)); }
 }
 document.addEventListener("input", e=>{ if(e.target.closest("#apForm")) updateApPreview(); });
-document.addEventListener("change", e=>{ if(e.target.id==="f-emerg"){ const b = $("#f-acion"); if(b) b.hidden = !e.target.checked; } });
+document.addEventListener("change", e=>{ if(e.target.id==="f-emerg"){ const b = $("#f-acion"); if(b) b.hidden = !e.target.checked; } if(e.target.id==="cr-emerg"){ const b = $("#cr-acion"); if(b) b.hidden = !e.target.checked; } });
 document.addEventListener("change", e=>{ if(e.target.closest("#apForm")) updateApPreview(); });
 document.addEventListener("submit", async e=>{
   if(e.target.id==="apForm"){
@@ -1182,7 +1227,58 @@ async function repXlsx(){
 }
 
 /* ---------- FECHAMENTOS ---------- */
-function fechRows(de, ate, emp){ return state.ap.filter(e=>e.data>=de && e.data<=ate && !e.orcId && (!emp || empOf(e)===emp)); }
+function fechRows(de, ate, emp){ return state.ap.filter(e=>e.data>=de && e.data<=ate && !e.orcId && !e.andamento && (!emp || empOf(e)===emp)); }
+const emAndamento = () => state.ap.filter(e=>e.andamento && (!state.worker || e.profissional===state.me)).sort((a,b)=>(a.data+a.inicio).localeCompare(b.data+b.inicio));
+function decorrido(e){ const ini = parseYmd(e.data); ini.setHours(0, hm(e.inicio)); return Math.max(0, Math.floor((Date.now()-ini.getTime())/60000)); }
+function cronoBar(){
+  const ls = emAndamento(); if(!ls.length) return "";
+  return `<div class="cronobar">${ls.map(e=>`<div class="crono"><span class="crono-dot"></span><span class="crono-txt"><b>OS ${esc(e.os||"s/n")}</b>${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.profissional&&!state.worker?` · ${esc(e.profissional)}`:""}<br><small>desde ${esc(e.inicio)}${e.data!==today()?` de ${fdate(e.data).slice(0,5)}`:""} · <span class="crono-t mono" data-id="${e.id}">${fh(decorrido(e))}</span></small></span>
+    <span class="row" style="flex-wrap:nowrap"><button class="btn sm" data-act="cronoTrocar" data-id="${e.id}">Trocar de OS</button><button class="btn sm primary" data-act="cronoEncerrar" data-id="${e.id}">Encerrar</button></span></div>`).join("")}</div>`;
+}
+setInterval(()=>{ document.querySelectorAll(".crono-t").forEach(el=>{ const e = state.ap.find(x=>x.id===el.dataset.id); if(e) el.textContent = fh(decorrido(e)); }); }, 30000);
+function cronoForm(pre={}){
+  const ps = profs(), used = {}; [...state.ap].sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio)).forEach(e=>{ if(e.os && !used[e.os]) used[e.os] = e.descricao||""; });
+  let last = []; try{ last = JSON.parse(localStorage.getItem("gaap-last-prof")||"[]"); }catch(err){}
+  const quem = pre.profs || last.filter(n=>ps.includes(n));
+  return `<header><h2>${pre.troca?"Trocar de OS":"Iniciar OS agora"}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <form class="form" id="cronoForm">
+    <p class="muted" style="margin:0">O início fica marcado agora (${nowHM()}). Quando terminar, toque em <b>Encerrar</b> na faixa do topo${pre.troca?"":" ou em <b>Trocar de OS</b> para passar direto para a próxima"}.</p>
+    <div class="grid2"><label class="field"><span>Nº da OS</span><input id="cr-os" list="os-list" inputmode="numeric" placeholder="Ex.: 2165557"></label>
+    <label class="field"><span>Unidade</span><input id="cr-unid" list="cr-unid-list" value="${esc(pre.unid||"")}"><datalist id="cr-unid-list">${repUnids().map(u=>`<option value="${esc(u)}">`).join("")}</datalist></label></div>
+    <label class="field"><span>Serviço</span><input id="cr-desc" placeholder="Pode completar depois"></label>
+    ${state.worker?"":`<label class="field"><span>Empresa</span><input id="cr-emp" list="emp-list" value="${esc(pre.emp||lastEmp())}"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>`}
+    ${ps.length && !state.worker?`<div class="field"><span>Quem está na OS</span><div class="filters" style="margin:0">${ps.map(n=>`<label class="chipcheck"><input type="checkbox" name="cr-prof" value="${esc(n)}" ${quem.includes(n)?"checked":""}><span>${esc(n)}</span></label>`).join("")}</div></div>`:""}
+    <label class="check"><input type="checkbox" id="cr-emerg" ${pre.emerg?"checked":""}> Chamado de emergência</label>
+    <div class="grid2 emergbox" id="cr-acion" ${pre.emerg?"":"hidden"}><label class="field"><span>Quem acionou</span><input id="cr-ac-por" list="acion-list"></label><label class="field"><span>Como</span><select id="cr-ac-meio"><option value="">—</option>${MEIOS.map(m=>`<option>${m}</option>`).join("")}</select></label><label class="field" style="grid-column:1/-1"><span>Motivo / equipamento</span><input id="cr-ac-mot"></label></div>
+    <datalist id="acion-list">${acionadores().map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
+    <datalist id="os-list">${Object.entries(used).slice(0,80).map(([o,ds])=>`<option value="${esc(o)}">${esc(ds)}</option>`).join("")}</datalist>
+    <footer><button type="button" class="btn" data-act="closeModal">Cancelar</button><button class="btn primary" type="submit">▶ Iniciar agora</button></footer>
+  </form>`;
+}
+async function encerrarOS(e, quando){
+  let f = quando || nowHM();
+  if(e.data===today() && hm(f)<=hm(e.inicio)){
+    if(quando){ await removeAp(e); return null; } // trocou no mesmo minuto: nada foi trabalhado nela
+    f = hhmm(Math.min(1439, hm(e.inicio)+1));
+  }
+  const novo = {...e, fim:f}; delete novo.andamento; await save("apontamentos", novo); return novo;
+}
+async function submitCrono(){
+  const os = $("#cr-os").value.trim(), emp = state.worker ? (state.cfg.contratante||"") : $("#cr-emp").value.trim();
+  if(!os && osObrigatoria(emp)){ toast(`A ${emp} exige o nº da OS.`); return; }
+  const quem = state.worker ? [state.me] : (profs().length ? [...document.querySelectorAll('input[name="cr-prof"]:checked')].map(x=>x.value) : [""]);
+  if(!quem.length){ toast("Marque quem está na OS."); return; }
+  const agora = nowHM(), data = today(), lk = lockOf(data, emp); if(lk){ toast(lockMsg(lk)); return; }
+  const em = $("#cr-emerg").checked;
+  const base = {...(state.worker ? {} : rateFor(emp)), data, inicio:agora, fim:"", andamento:true, tipo:"auto", os, descricao:$("#cr-desc").value.trim(), cliente:$("#cr-unid").value.trim(), empresa:emp, emergencia:em, criadoEm:new Date().toISOString(),
+    ...(em?{acion:{por:$("#cr-ac-por").value.trim(), as:agora, meio:$("#cr-ac-meio").value, motivo:$("#cr-ac-mot").value.trim()}}:{})};
+  try{
+    for(const pr of quem){ for(const r of state.ap.filter(x=>x.andamento && x.profissional===pr)) await encerrarOS(r, agora);
+      await save("apontamentos", {...base, id: (state.crIds ||= {})[pr||"_"] ||= uid(), profissional:pr}); }
+    state.crIds = null; try{ if(quem[0]) localStorage.setItem("gaap-last-prof", JSON.stringify(quem)); }catch(err){}
+    state.modalDirty = false; closeModal(); render(); toast(`OS ${os||"s/n"} iniciada às ${agora}.`);
+  }catch(err){ toast(writeErr(err)); }
+}
 function nextFech(ate){ const y = (ate||today()).slice(0,4); const n = state.fech.map(f=>f.numero||"").filter(x=>x.startsWith(`F-${y}-`)).map(x=>+x.split("-")[2]||0); return `F-${y}-${String((n.length?Math.max(...n):0)+1).padStart(3,"0")}`; }
 const fechRecebido = f => state.rec.filter(r=>r.origem==="fech" && r.fechId===f.id).reduce((s,r)=>s+recBruto(r),0);
 const fechGlosa = f => (f.glosas||[]).reduce((s,g)=>s+numIn(g.valor),0);
@@ -1232,6 +1328,7 @@ function fechPendencias(de, ate, emp, rows){
   if(sobre.size) itens.push(`${sobre.size} OS com horário sobreposto.`);
   if(semOS.length) itens.push(`${semOS.length} lançamento(s) sem nº de OS.`);
   if(forc.length) itens.push(`${forc.length} lançamento(s) com cálculo forçado (normal/50%/100%).`);
+  const and = state.ap.filter(e=>e.andamento && e.data>=de && e.data<=ate && (!emp || empOf(e)===emp)); if(and.length) itens.push(`${and.length} OS ainda em andamento (cronômetro aberto) — encerre antes de fechar, senão ficam de fora.`);
   return itens.length ? `<div class="warnbox"><b>Antes de fechar, confira:</b><br>${itens.map(esc).join("<br>")}</div>` : `<div class="line"><span class="muted">Conferência: nenhuma pendência encontrada.</span></div>`;
 }
 async function submitFech(){
@@ -1295,7 +1392,8 @@ async function imgData(id){
   }catch(e){ return null; }
 }
 async function pdfFotos(doc, rows){
-  const items = rows.flatMap(e=>(e.fotos||[]).map(id=>({id, e}))); if(!items.length) return;
+  const ordem = {antes:0, durante:1, depois:2};
+  const items = rows.flatMap(e=>(e.fotos||[]).map((id,k)=>({id, e, k, m:(e.fotoMeta||{})[id]||{}}))).sort((a,b)=>(a.e.os||"").localeCompare(b.e.os||"") || (a.e.data+a.e.inicio).localeCompare(b.e.data+b.e.inicio) || (ordem[a.m.tipo]??1)-(ordem[b.m.tipo]??1) || a.k-b.k); if(!items.length) return;
   doc.addPage(); let y = pdfHeader(doc, "REGISTRO FOTOGRÁFICO", repPdfSub()) + 2;
   const W = pw(doc), cols = 3, gap = 6, bw = (W-28-gap*(cols-1))/cols, bh = bw*0.68;
   let col = 0;
@@ -1306,7 +1404,8 @@ async function pdfFotos(doc, rows){
     if(im){ const k = Math.min(bw/im.w, bh/im.h), w = im.w*k, h = im.h*k; try{ doc.addImage(im.url, im.fmt, x+(bw-w)/2, y+(bh-h)/2, w, h); }catch(err){} }
     else { doc.setFontSize(8); doc.setTextColor(...GREY); doc.text("Foto indisponível", x+bw/2, y+bh/2, {align:"center"}); }
     doc.setFontSize(7.8); doc.setTextColor(...INK); doc.setFont("helvetica","normal");
-    doc.text(doc.splitTextToSize(`OS ${it.e.os||"s/n"} · ${fdate(it.e.data)} · ${it.e.descricao||""}`, bw)[0], x, y+bh+4);
+    const quando = it.m.em ? new Date(it.m.em) : null, tp = TIPO_FOTO[it.m.tipo] || "";
+    doc.text(doc.splitTextToSize(`${tp?tp+" · ":""}OS ${it.e.os||"s/n"} · ${quando?`${quando.toLocaleDateString("pt-BR")} ${pad(quando.getHours())}:${pad(quando.getMinutes())}`:fdate(it.e.data)} · ${it.e.descricao||""}`, bw)[0], x, y+bh+4);
     col++; if(col===cols){ col = 0; y += bh + 10; }
   }
 }
@@ -1699,6 +1798,7 @@ document.addEventListener("submit", async e=>{
     if(v > fechSaldo(f)+0.005){ toast(`A glosa não pode passar do saldo (${brl(fechSaldo(f))}).`); return; }
     try{ await save("fechamentos", {...f, glosas:[...(f.glosas||[]), g]}); closeModal(); toast(`Glosa de ${brl(v)} registrada`); }catch(err){ toast(writeErr(err)); } }
   if(e.target.id==="despForm"){ e.preventDefault(); submitDesp(); }
+  if(e.target.id==="cronoForm"){ e.preventDefault(); submitCrono(); }
 });
 document.addEventListener("change", e=>{ if(e.target.id==="gl-os"){ const op = e.target.selectedOptions[0]; if(op && op.dataset.v) $("#gl-v").value = String(Math.round(+op.dataset.v*100)/100).replace(".",","); } });
 async function submitRec(){
@@ -1714,7 +1814,7 @@ async function submitRec(){
 
 /* ---------- AJUSTES ---------- */
 function vAjustes(){
-  setTimeout(carregarBackups, 0);
+  setTimeout(()=>{ carregarBackups(); carregarLixeira(); }, 0);
   const c = state.cfg, E = c.empresa; const y = new Date().getFullYear();
   const hol = Object.entries(holidays(y)).sort();
   return `<div class="pagehead"><div><span class="eyebrow">Ajustes</span><h1>Empresa, valores e jornada</h1><p class="muted">Valores novos valem para os próximos apontamentos. Os já lançados mantêm o valor da hora da época.</p></div></div>
@@ -1730,6 +1830,7 @@ function vAjustes(){
       <div class="tablewrap"><table><thead><tr><th>Dia</th><th>Entrada</th><th>Saída</th></tr></thead><tbody>
       ${[1,2,3,4,5,6].map(d=>`<tr><td>${WD[d]}</td><td><input type="time" id="j-ini-${d}" value="${esc(c.jornada[d]?.ini||"")}" style="border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:4px 6px"></td><td><input type="time" id="j-fim-${d}" value="${esc(c.jornada[d]?.fim||"")}" style="border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:4px 6px"></td></tr>`).join("")}
       <tr><td>Domingo</td><td colspan="2" class="muted">Sempre extra ${c.feriadoPct}%</td></tr></tbody></table></div>
+      <label class="check"><input type="checkbox" id="c-carimbo" ${c.carimbo!==false?"checked":""}> Carimbar nas fotos o nº da OS, a unidade, a data e a hora em que a foto foi tirada</label>
       <label class="field" style="max-width:340px"><span>Tolerância (minutos)</span><input id="c-tol" type="number" min="0" max="30" value="${+c.tolerancia||0}"></label>
       <p class="muted" style="margin:0">Minutos antes da entrada ou depois da saída até esse limite contam como hora normal. A CLT admite até 5 minutos por marcação. Use 0 para contar tudo como extra.</p>
       <label class="check"><input type="checkbox" id="c-alm" ${c.almoco.ativo?"checked":""}> Não contar o horário de almoço</label>
@@ -1796,6 +1897,9 @@ function vAjustes(){
     </div>
     <div class="row" style="justify-content:flex-end"><button class="btn primary" type="submit">Salvar ajustes</button></div>
   </form>
+  <section class="section" id="lixeira"><header><h2>Lixeira</h2></header>
+    <div class="panel form"><p class="muted" style="margin:0">Tudo o que foi excluído nos últimos 90 dias, por você ou pelos funcionários. Toque em Restaurar para trazer de volta.</p><div id="lx-list" class="muted">Carregando…</div></div>
+  </section>
   <section class="section" id="backup"><header><h2>Backup</h2></header>
     <div class="panel form"><h3>Cópia completa para guardar fora (recomendado toda semana)</h3>
       <p class="muted" style="margin:0">Baixa um arquivo .zip com todos os dados <b>e as fotos</b>. Guarde no iCloud Drive, Google Drive ou no computador. Se um dia perder o sistema, é com ele que tudo volta.</p>
@@ -1850,7 +1954,7 @@ async function submitCfg(){
   c.valorHora = numIn(g("c-vh")) || 60; c.extraPct = +g("c-p50") || 0; c.feriadoPct = +g("c-p100") || 0;
   [1,2,3,4,5,6].forEach(d=>c.jornada[d] = {ini:g("j-ini-"+d), fim:g("j-fim-"+d)});
   c.almoco = {ativo:$("#c-alm").checked, ini:g("c-alm-ini"), fim:g("c-alm-fim")};
-  c.tolerancia = Math.max(0, +g("c-tol") || 0);
+  c.tolerancia = Math.max(0, +g("c-tol") || 0); c.carimbo = !!$("#c-carimbo")?.checked;
   c.profissionais = lines(g("c-profs")).join("\n"); c.unidades = lines(g("c-unids")).join("\n");
   c.feriados = {carnaval:$("#c-carn").checked, corpus:$("#c-corp").checked, extras:g("c-fer")};
   c.empresa = {nome:g("e-nome"), cnpj:g("e-cnpj"), email:g("e-email"), telefone:g("e-tel"), cidade:g("e-cid"), responsavel:g("e-resp"), sobre:g("e-sobre")};
@@ -1904,7 +2008,7 @@ const A = {
   newAp(){ const last = [...state.ap].filter(e=>e.data===today()).sort((a,b)=>b.fim.localeCompare(a.fim))[0]; openModal(apForm({data:today(), inicio:last?last.fim:"07:00", fim:"", cliente:last?last.cliente:""})); updateApPreview(); },
   editAp(b){ const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; const lk = lockedE(e); if(lk){ toast(lockMsg(lk)); return; } openModal(apForm(e)); updateApPreview(); },
   dupAp(){ const e = readApForm(); delete e.id; delete e.exemplo; delete e.valorHora; delete e.extraPct; delete e.feriadoPct; e.data = today(); openModal(apForm(e)); updateApPreview(); },
-  async delAp(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; const lk = lockedE(e); if(lk){ toast(lockMsg(lk)); return; } try{ await removeAp(e); (e.fotos||[]).forEach(id=>deleteAssetIfUnused(id,[e.id])); closeModal(); toast("Apontamento excluído"); }catch(err){ toast(writeErr(err)); } },
+  async delAp(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; const lk = lockedE(e); if(lk){ toast(lockMsg(lk)); return; } try{ await removeAp(e); closeModal(); toastAcao(`OS ${e.os||"s/n"} excluída.`, "Desfazer", async ()=>{ const r = {...e}; delete r.excluido; await save("apontamentos", r); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   fotoDel(b){ state.apFotos = (state.apFotos||[]).filter(x=>x!==b.dataset.id); const box=$("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); },
   async fotoVer(b){ await assinarFotos([b.dataset.id]); const src = blobSrc(b.dataset.id); const back = $("#modal").hidden ? null : $("#modal").innerHTML; const m=$("#modal"); const prevHtml = back; m.innerHTML = `<div class="sheet wide" role="dialog" aria-modal="true"><header><h2>Foto</h2><button class="iconbtn" data-act="${prevHtml?"fotoVoltar":"closeModal"}" aria-label="Fechar">✕</button></header><img src="${esc(src)}" alt="Foto do serviço" style="width:100%;border-radius:8px"></div>`; m.hidden=false; state.fotoBack = prevHtml; },
   fotoVoltar(){ const m=$("#modal"); if(state.fotoBack){ m.innerHTML = state.fotoBack; state.fotoBack=null; } else closeModal(); },
@@ -1923,7 +2027,7 @@ const A = {
   fechPdfBtn(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(f) fechPdf(f, !!b.dataset.atual); },
   newDesp(){ state.dpId = null; openModal(despForm({})); },
   editDesp(b){ const x = state.desp.find(d=>d.id===b.dataset.id); if(x){ state.dpId = null; openModal(despForm(x)); } },
-  async delDesp(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const lk = state.fech.find(f=>(f.despIds||[]).includes(b.dataset.id)); if(lk){ toast(`Essa despesa está no fechamento ${lk.numero}.`); return; } try{ await removeDoc("despesas", b.dataset.id); closeModal(); toast("Despesa excluída"); }catch(err){ toast(writeErr(err)); } },
+  async delDesp(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const lk = state.fech.find(f=>(f.despIds||[]).includes(b.dataset.id)); if(lk){ toast(`Essa despesa está no fechamento ${lk.numero}.`); return; } const x = state.desp.find(d=>d.id===b.dataset.id); try{ await removeDoc("despesas", b.dataset.id); closeModal(); toastAcao("Despesa excluída.", "Desfazer", async ()=>{ await save("despesas", {...x}); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   irFechar(b){ state.view = "relatorios"; state.rep = {...state.rep, modo:"periodo", de:b.dataset.de, ate:ymd(addDays(parseYmd(today()),-1))}; state.rendered = null; render(); setTimeout(()=>{ openModal(fechFormHtml()); updateFech(); }, 30); },
   async fechCobrar(b){
     const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return;
@@ -1979,9 +2083,22 @@ const A = {
   dupOrc(){ const o = clone(state.orcDraft); delete o.id; delete o.numero; o.status="rascunho"; o.data=today(); o.titulo = o.titulo ? o.titulo+" (cópia)" : ""; state.orcDraft=o; state.orcDirty=true; state.rendered=null; render(); toast("Cópia criada. Salve para gerar um novo número."); },
   async delOrc(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } try{ await removeDoc("orcamentos", state.orcDraft.id); state.orcDirty=false; state.view="orcamentos"; state.rendered=null; render(); toast("Orçamento excluído"); }catch(err){ toast(writeErr(err)); } },
   newRec(b){ openModal(recForm({o:b.dataset.o, m:b.dataset.m, e:b.dataset.e, v:b.dataset.v?Math.round(+b.dataset.v*100)/100:"", id:b.dataset.id})); },
-  async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } try{ await removeDoc("recebimentos", b.dataset.id); toast("Recebimento excluído"); }catch(err){ toast(writeErr(err)); } },
+  async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ await save("recebimentos", {...x}); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   dayDescartar(){ rascunho.limpar(); closeModal(); },
+  cronoNovo(){ state.crIds = null; openModal(cronoForm()); setTimeout(()=>$("#cr-os")?.focus(), 50); },
+  async cronoEncerrar(b){ const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; b.disabled = true;
+    try{ const n = await encerrarOS(e); render(); toastAcao(`OS ${n.os||"s/n"} encerrada: ${n.inicio}–${n.fim} (${fh(calc(n).total)}).`, "Revisar", ()=>{ const x = state.ap.find(y=>y.id===n.id); if(x){ openModal(apForm(x)); updateApPreview(); } }); }
+    catch(err){ b.disabled = false; toast(writeErr(err)); } },
+  cronoTrocar(b){ const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; const quem = state.ap.filter(x=>x.andamento && x.os===e.os && x.inicio===e.inicio && x.data===e.data).map(x=>x.profissional).filter(Boolean);
+    state.crIds = null; openModal(cronoForm({troca:true, profs: quem.length?quem:(e.profissional?[e.profissional]:[]), unid:e.cliente, emp:e.empresa})); setTimeout(()=>$("#cr-os")?.focus(), 50); },
+  async histVoltar(b){ const h = (state.hist||[])[+b.dataset.i], id = $("#f-hist")?.dataset.id; if(!h || !id) return;
+    if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; }
+    const atual = state.ap.find(x=>x.id===id); const lk = atual && lockedE(atual); if(lk){ toast(lockMsg(lk)); return; }
+    try{ await save("apontamentos", {...h.antes, id}); closeModal(); toast("Versão anterior restaurada."); }catch(err){ toast(writeErr(err)); } },
+  async lixoRestaurar(b){ const x = (state.lixo||[])[+b.dataset.i]; if(!x) return; b.disabled = true;
+    const d = {...x.dados, id:x.registro_id}; delete d.excluido; delete d.excluidoEm; delete d.excluidoPor;
+    try{ await save(x.tabela, d); await loadOwner(); toast(`${TAB_LABEL[x.tabela]||"Item"} restaurado.`); carregarLixeira(); }catch(err){ b.disabled = false; toast(writeErr(err)); } },
   async arqEnviar(){ const a = state.arquivo; if(!a) return; try{ await navigator.share({files:[a.file], title:a.filename}); closeModal(); }catch(err){ if(err && err.name==="AbortError") return; baixarBlob(a.blob, a.filename); closeModal(); } },
   arqBaixar(){ const a = state.arquivo; if(!a) return; baixarBlob(a.blob, a.filename); closeModal(); },
   repWhats(){ const rows=repRows(); if(!rows.length){ toast("Nenhum apontamento nesse período."); return; } const emp = oneOf(rows,"emp"), w = (ficha(emp).whats||"").replace(/\D/g,""); window.open(`https://wa.me/${w?(w.length<=11?"55"+w:w):""}?text=${encodeURIComponent(repText())}`, "_blank"); },

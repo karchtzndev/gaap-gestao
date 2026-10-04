@@ -291,3 +291,14 @@ tr.click:hover td{background:var(--surface-2)}
 .fc-acts{flex-wrap:wrap;gap:6px}
 .kpis.aging{margin:0 0 12px}
 .banner.warn{border-color:var(--warn,#c98a00)}
+
+/* cronômetro */
+.cronobar{display:grid;gap:8px;margin:0 0 14px}
+.crono{display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap;padding:10px 12px;border-radius:12px;background:var(--surface);border:1px solid var(--green,#1b7a3d);box-shadow:0 1px 0 rgba(0,0,0,.04)}
+.crono-txt{flex:1;min-width:160px}
+.crono-dot{width:10px;height:10px;border-radius:50%;background:#d23b3b;box-shadow:0 0 0 0 rgba(210,59,59,.6);animation:pulsar 1.6s infinite}
+@keyframes pulsar{0%{box-shadow:0 0 0 0 rgba(210,59,59,.6)}70%{box-shadow:0 0 0 9px rgba(210,59,59,0)}100%{box-shadow:0 0 0 0 rgba(210,59,59,0)}}
+@media (prefers-reduced-motion:reduce){.crono-dot{animation:none}}
+/* etiqueta antes/depois nas fotos */
+.thumb{position:relative}
+.thumbtag{position:absolute;left:4px;top:4px;font-style:normal;font-size:.62rem;font-weight:700;letter-spacing:.04em;background:rgba(0,0,0,.65);color:#fff;padding:1px 5px;border-radius:4px;pointer-events:none}
