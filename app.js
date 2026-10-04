@@ -269,6 +269,7 @@ async function boot(){
     state.worker = perfil?.papel==="funcionario"; state.me = state.worker ? (perfil.nome||"") : "";
     if(state.worker) state.view = "worker"; else if(state.view==="worker") state.view = "painel";
     await carregar();
+    await pushEstado();
   }catch(err){ toast("Não consegui carregar os dados. Verifique a conexão e recarregue a página."); }
   state.ready = true; render();
 }
@@ -551,6 +552,7 @@ function vWorker(){
   <div class="summary"><span><b>${list.length}</b> OS</span><span><i class="dot d-n"></i>Normal <b>${fdec(c.n)} h</b></span><span><i class="dot d-50"></i>Extra ${state.cfg.extraPct}% <b>${fdec(c.e50)} h</b></span><span><i class="dot d-100"></i>Extra ${state.cfg.feriadoPct}% <b>${fdec(c.e100)} h</b></span><span>Total <b>${fdec(c.total)} h</b></span></div>
   ${list.length ? `<div class="list">${Object.keys(byDay).sort().reverse().map(d=>`<div class="dayhead"><span>${WD[parseYmd(d).getDay()]}, ${fdate(d)}</span><span class="mono">${fdec(sumCalc(byDay[d]).total)} h</span></div>${byDay[d].sort((a,b)=>a.inicio.localeCompare(b.inicio)).map(e=>apItem(e,false,overlaps(byDay[d]))).join("")}`).join("")}</div>`
     : `<div class="empty"><b>Nenhuma OS em ${ymLabel(state.month)}</b>Toque em “Lançar OS do dia” para registrar suas ordens de serviço.</div>`}
+  <div style="margin-top:16px">${lembretesHtml()}</div>
   <p class="muted" style="margin-top:16px">Você está lançando como <b>${esc(me)}</b>. <button class="btn sm" data-act="sair">Sair</button></p>`;
 }
 /* ---------- PAINEL ---------- */
@@ -1228,6 +1230,27 @@ async function repXlsx(){
 
 /* ---------- FECHAMENTOS ---------- */
 function fechRows(de, ate, emp){ return state.ap.filter(e=>e.data>=de && e.data<=ate && !e.orcId && !e.andamento && (!emp || empOf(e)===emp)); }
+/* ---------- lembretes (notificações no celular) ---------- */
+const ehIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
+const instalado = () => window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
+const pushSuportado = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+function b64u(s){ const p = "=".repeat((4 - s.length % 4) % 4), b = atob((s + p).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from(b, c=>c.charCodeAt(0)); }
+async function pushEstado(){
+  if(!pushSuportado()) return;
+  try{ const reg = await navigator.serviceWorker.register("/sw.js"); const sub = await reg.pushManager.getSubscription(); state.pushOn = !!sub; }catch(err){}
+}
+function lembretesHtml(){
+  let corpo;
+  if(!pushSuportado()) corpo = ehIOS() && !instalado()
+    ? `<p style="margin:0">No iPhone os lembretes só funcionam com o app instalado:</p><ol style="margin:4px 0 0 18px;padding:0"><li>Abra este endereço no <b>Safari</b>.</li><li>Toque em <b>Compartilhar</b> (quadrado com seta) → <b>Adicionar à Tela de Início</b>.</li><li>Abra o GAAP pelo ícone novo e volte aqui para ativar.</li></ol>`
+    : `<p class="muted" style="margin:0">Este navegador não aceita notificações. No iPhone, instale o app pela Tela de Início (Safari → Compartilhar → Adicionar à Tela de Início).</p>`;
+  else if(Notification.permission==="denied") corpo = `<p style="margin:0">As notificações estão bloqueadas para este app. Libere em Ajustes do celular → Notificações → GAAP e toque em Ativar de novo.</p><div class="row"><button class="btn" data-act="pushAtivar">Ativar de novo</button></div>`;
+  else if(state.pushOn) corpo = `<p style="margin:0"><span class="pill good">Ativado neste aparelho</span></p><div class="row"><button class="btn" data-act="pushTestar">Enviar um teste</button><button class="btn" data-act="pushDesativar">Desativar</button></div>`;
+  else corpo = `<div class="row"><button class="btn primary" data-act="pushAtivar">Ativar lembretes neste aparelho</button></div>`;
+  return `<div class="panel form" id="lembretes"><h3>Lembretes no celular</h3>
+    <p class="muted" style="margin:0">${state.worker ? "Uns 20 minutos depois do fim do expediente, se você não tiver lançado as OS do dia (ou se esqueceu um cronômetro aberto), o celular avisa." : "Uns 20 minutos depois do fim do expediente você recebe um resumo: quem ficou sem lançar, cronômetros abertos e cadastros aguardando liberação. Cada funcionário ativa no próprio celular."}</p>
+    ${corpo}</div>`;
+}
 const emAndamento = () => state.ap.filter(e=>e.andamento && (!state.worker || e.profissional===state.me)).sort((a,b)=>(a.data+a.inicio).localeCompare(b.data+b.inicio));
 function decorrido(e){ const ini = parseYmd(e.data); ini.setHours(0, hm(e.inicio)); return Math.max(0, Math.floor((Date.now()-ini.getTime())/60000)); }
 function cronoBar(){
@@ -1852,6 +1875,7 @@ function vAjustes(){
         <button type="button" class="btn" data-act="renomearProf" style="align-self:end">Renomear</button></div></details>`:""}
       <p class="muted" style="margin:0">Funcionários, unidades e empresas aparecem como filtros e na opção “Separar por” em Horas, Relatórios e Painel. Ao apontar uma OS feita por mais de um funcionário, marque todos e o sistema cria um apontamento para cada.</p>
     </div>
+    ${lembretesHtml()}
     <div class="panel form" id="acessos"><h3>Acessos</h3>
       <p class="muted" style="margin:0">Cada pessoa entra com o próprio e-mail e senha. Quem criar conta aparece aqui como “Aguardando”: escolha qual funcionário é e toque em Liberar. O funcionário só vê as próprias OS, sem valores.</p>
       <div class="tablewrap"><table class="inputs"><thead><tr><th>E-mail</th><th>Situação</th><th>Funcionário</th><th></th></tr></thead><tbody>
@@ -2086,6 +2110,22 @@ const A = {
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ await save("recebimentos", {...x}); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   dayDescartar(){ rascunho.limpar(); closeModal(); },
+  async pushAtivar(b){
+    b.disabled = true;
+    try{
+      const perm = await Notification.requestPermission();
+      if(perm!=="granted"){ toast("Sem permissão para notificações."); state.rendered=null; render(); return; }
+      const reg = await navigator.serviceWorker.register("/sw.js"); await navigator.serviceWorker.ready;
+      const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64u(window.GAAP_CONFIG.vapidPublica)});
+      const {error} = await sb.from("push_inscricoes").upsert({endpoint:sub.endpoint, sub:sub.toJSON(), aparelho:navigator.userAgent.slice(0,140)});
+      if(error) throw dbErr(error);
+      state.pushOn = true; state.rendered = null; render(); toast("Lembretes ativados. Enviando um teste…");
+      await sb.functions.invoke("lembretes", {body:{teste:true}});
+    }catch(err){ toast(err && err.code==="db" ? writeErr(err) : "Não consegui ativar os lembretes neste aparelho."); }
+    finally{ b.disabled = false; }
+  },
+  async pushTestar(b){ b.disabled = true; const {data, error} = await sb.functions.invoke("lembretes", {body:{teste:true}}); b.disabled = false; toast(error ? "Não consegui enviar o teste." : data?.enviados ? "Teste enviado. Deve chegar em instantes." : "Nenhum aparelho ativo encontrado. Toque em Desativar e ative de novo."); },
+  async pushDesativar(){ try{ const reg = await navigator.serviceWorker.getRegistration("/sw.js") || await navigator.serviceWorker.ready; const sub = await reg?.pushManager.getSubscription(); if(sub){ await sb.from("push_inscricoes").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); } }catch(err){} state.pushOn = false; state.rendered = null; render(); toast("Lembretes desativados neste aparelho."); },
   cronoNovo(){ state.crIds = null; openModal(cronoForm()); setTimeout(()=>$("#cr-os")?.focus(), 50); },
   async cronoEncerrar(b){ const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; b.disabled = true;
     try{ const n = await encerrarOS(e); render(); toastAcao(`OS ${n.os||"s/n"} encerrada: ${n.inicio}–${n.fim} (${fh(calc(n).total)}).`, "Revisar", ()=>{ const x = state.ap.find(y=>y.id===n.id); if(x){ openModal(apForm(x)); updateApPreview(); } }); }

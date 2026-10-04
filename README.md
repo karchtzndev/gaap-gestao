@@ -16,7 +16,10 @@ orçamentos, fechamentos e valores a receber.
 | `config.js` | Endereço e chave **pública** (anon) do Supabase |
 | `logo.js`, `logo.jpg`, `icon-*.png`, `manifest.webmanifest` | Logo e ícones (pode instalar no celular) |
 | `vercel.json` | Cabeçalhos de segurança e cache |
-| `supabase/migrations/` | Estrutura completa do banco, regras de acesso e funções |
+| `supabase/migrations/` | Estrutura completa do banco, regras de acesso e funções (rodar em ordem) |
+| `supabase/functions/lembretes/` | Função do servidor que envia os lembretes no celular |
+| `sw.js` | Recebe as notificações no celular |
+| `.github/workflows/manter-ativo.yml` | Chama o banco todo dia para o plano gratuito não pausar |
 
 ## Como funciona o acesso
 
@@ -55,3 +58,19 @@ e cole o conteúdo de cada arquivo no modelo correspondente:
 |---|---|---|
 | Confirm signup | `Confirme seu e-mail – GAAP Gestão` | `confirmar-cadastro.html` |
 | Reset password | `Redefinir sua senha – GAAP Gestão` | `recuperar-senha.html` |
+
+## Rotinas automáticas
+
+| O quê | Quando | Onde |
+|---|---|---|
+| Cópia dos dados no servidor (guarda 30 dias) | Todo dia às 03:00 | pg_cron `gaap-backup-diario` |
+| Lembretes no celular (fim do expediente + 20 min) | Seg a sáb | pg_cron `gaap-lembretes` → função `lembretes` |
+| Manter o banco ativo | Todo dia às 08:17 | GitHub Actions |
+
+As chaves das notificações (VAPID) e a senha do agendamento ficam na tabela `segredos`
+do banco, que só o servidor lê. Elas **não** estão neste repositório.
+
+## Montar em outro projeto Supabase (continuação)
+
+3. Gere um par de chaves VAPID e grave em `segredos` (`vapid_publica`, `vapid_privada`); copie a pública para `config.js`.
+4. Publique a função `supabase/functions/lembretes` com verificação de JWT desligada (ela confere a senha do agendamento).

@@ -19,7 +19,7 @@
       ]
     },
     {
-      "source": "/(app.js|style.css|config.js)",
+      "source": "/(app.js|style.css|config.js|sw.js)",
       "headers": [
         {
           "key": "Cache-Control",
