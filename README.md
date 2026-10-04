@@ -45,3 +45,13 @@ Sem isso, os links de confirmação de e‑mail e de "esqueci a senha" apontam p
 
 Qualquer push na branch `main` (com o repositório ligado à Vercel) publica uma nova versão.
 Também funciona servindo a pasta localmente: `python3 -m http.server 8080`.
+
+## E-mails do Supabase em português
+
+Os modelos estão em `supabase/emails/`. Para usar, abra **Authentication → Emails** no Supabase
+e cole o conteúdo de cada arquivo no modelo correspondente:
+
+| Modelo no Supabase | Assunto sugerido | Arquivo |
+|---|---|---|
+| Confirm signup | `Confirme seu e-mail – GAAP Gestão` | `confirmar-cadastro.html` |
+| Reset password | `Redefinir sua senha – GAAP Gestão` | `recuperar-senha.html` |
