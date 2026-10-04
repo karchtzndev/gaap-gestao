@@ -279,3 +279,15 @@ tr.click:hover td{background:var(--surface-2)}
 .confitem{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}
 .fichabox{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg)}
 .fichabox summary{cursor:pointer}
+
+/* fechamentos em cartões */
+.fechlist{display:grid;gap:10px}
+.fechcard{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:12px 14px;display:grid;gap:10px;min-width:0}
+.fc-top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.fc-vals{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+.fc-vals>span{display:grid;gap:1px;font-size:.82rem;color:var(--muted)}
+.fc-vals b{color:var(--fg);font-size:1rem}
+.fc-vals small{font-size:.75rem}
+.fc-acts{flex-wrap:wrap;gap:6px}
+.kpis.aging{margin:0 0 12px}
+.banner.warn{border-color:var(--warn,#c98a00)}

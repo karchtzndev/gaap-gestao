@@ -182,15 +182,18 @@ function confHtml(lista, titulo, max=8){
 }
 /* ---------- orçamento ---------- */
 function orcTotals(o){ const sub=(o.itens||[]).reduce((s,i)=>s+numIn(i.qtd)*numIn(i.valor),0); const desc=sub*numIn(o.descontoPct)/100; return {sub,desc,total:Math.round((sub-desc)*100)/100}; }
-const orcRecebido = id => state.rec.filter(r=>r.origem==="orc"&&r.orcId===id).reduce((s,r)=>s+numIn(r.valor),0);
+const RETS = [["iss","ISS"],["inss","INSS"],["ir","IR"],["outras","Outras"]];
+const retTot = r => RETS.reduce((s,[k])=>s+numIn((r.ret||{})[k]),0);
+const recBruto = r => numIn(r.valor) + retTot(r);
+const orcRecebido = id => state.rec.filter(r=>r.origem==="orc"&&r.orcId===id).reduce((s,r)=>s+recBruto(r),0);
 const orcAberto = o => ["aprovado","concluido"].includes(o.status);
 function orcValidade(o){ if(!o.data) return null; return ymd(addDays(parseYmd(o.data), +o.validadeDias||0)); }
 
 /* ---------- dados (Supabase) ---------- */
-const COLS = ["apontamentos","orcamentos","recebimentos","fechamentos"];
-const KEY = {apontamentos:"ap",orcamentos:"orc",recebimentos:"rec",fechamentos:"fech"};
+const COLS = ["apontamentos","orcamentos","recebimentos","fechamentos","despesas"];
+const KEY = {apontamentos:"ap",orcamentos:"orc",recebimentos:"rec",fechamentos:"fech",despesas:"desp"};
 const state = {
-  ready:false, cfg:clone(DEFAULT_CFG), ap:[], orc:[], rec:[], fech:[], perfis:[], worker:false, me:"", pub:null, hmode:"dia", osQ:"",
+  ready:false, cfg:clone(DEFAULT_CFG), ap:[], orc:[], rec:[], fech:[], desp:[], perfis:[], worker:false, me:"", pub:null, hmode:"dia", osQ:"",
   view:"painel", month:ym(today()), orcFilter:"todos", orcDraft:null, auth:"entrar",
   rep:{modo:"dia", dia:today(), de:ym(today())+"-01", ate:today(), valores:true, f:{prof:"__all",unid:"__all",emp:"__all"}, by:"", vazios:true, fmt:"dec"},
   hf:{f:{prof:"__all",unid:"__all",emp:"__all"}, by:""}, pby:"prof"
@@ -274,7 +277,7 @@ async function initStore(){
   sb.auth.onAuthStateChange((ev, s)=>{
     const tinha = !!session; session = s;
     if(ev==="PASSWORD_RECOVERY"){ state.auth = "nova-senha"; state.ready = true; render(); return; }
-    if(ev==="SIGNED_OUT"){ perfil = null; Object.assign(state, {worker:false, me:"", ap:[], orc:[], rec:[], fech:[], perfis:[], pub:null, view:"painel", auth:"entrar"}); render(); return; }
+    if(ev==="SIGNED_OUT"){ perfil = null; Object.assign(state, {worker:false, me:"", ap:[], orc:[], rec:[], fech:[], desp:[], perfis:[], pub:null, view:"painel", auth:"entrar"}); render(); return; }
     if(ev==="SIGNED_IN" && !tinha) boot();
   });
   if(!session){ state.ready = true; render(); return; }
@@ -325,7 +328,7 @@ function tryCloseModal(){
 }
 $("#modal").addEventListener("click", e=>{ if(e.target.id==="modal") tryCloseModal(); });
 document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("#modal").hidden) tryCloseModal(); });
-document.addEventListener("input", e=>{ if(e.target.closest("#apForm,#dayForm,#fechForm,#recForm")) state.modalDirty = true; });
+document.addEventListener("input", e=>{ if(e.target.closest("#apForm,#dayForm,#fechForm,#recForm,#despForm")) state.modalDirty = true; });
 const rascunho = {
   key(){ return "gaap-rascunho-dia-" + (session?.user?.id || ""); },
   salvar(){ try{ const d = state.day; if(d && d.rows.some(r=>r.os||r.desc||r.fim)) localStorage.setItem(this.key(), JSON.stringify(d)); }catch(err){} },
@@ -421,6 +424,8 @@ function deleteAssetIfUnused(id, except=[]){ if(!assets || !id) return; if(state
 function thumbs(ids, removable){ return (ids||[]).map(id=>`<span class="thumb"><img src="${esc(blobSrc(id))}" data-fid="${esc(id)}" alt="Foto do serviço" data-act="fotoVer" data-id="${esc(id)}" loading="lazy">${removable?`<button type="button" class="thumbx" data-act="fotoDel" data-id="${esc(id)}" aria-label="Remover foto">✕</button>`:""}</span>`).join(""); }
 document.addEventListener("change", async e=>{
   const t = e.target;
+  if(t.id==="dp-foto" && t.files.length){ const ids = await uploadPhotos([...t.files]); state.dpFotos = [...(state.dpFotos||[]), ...ids]; const box=$("#dp-thumbs"); if(box) box.innerHTML = thumbs(state.dpFotos, false); t.value=""; }
+  if(t.id==="dp-tipo"){ const k = t.value==="Km rodado"; $("#dp-km-w").hidden = !k; $("#dp-v-w").hidden = k; }
   if(t.id==="f-foto" && t.files.length){ const ids = await uploadPhotos([...t.files]); state.apFotos = [...(state.apFotos||[]), ...ids]; const box=$("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); t.value=""; }
   if(t.dataset && t.dataset.fotoRow!=null && t.files.length){ const i=+t.dataset.fotoRow, r=state.day.rows[i]; const ids = await uploadPhotos([...t.files]); r.fotos = [...(r.fotos||[]), ...ids]; const lb=document.querySelector(`label[for="d-foto-${i}"]`); if(lb) lb.textContent = `Fotos (${r.fotos.length})`; t.value=""; }
 });
@@ -530,11 +535,12 @@ function vWorker(){
 /* ---------- PAINEL ---------- */
 function totalsReceber(){
   const prod = sumCalc(state.ap).valor;
-  const recH = state.rec.filter(r=>r.origem==="horas" || r.origem==="fech").reduce((s,r)=>s+numIn(r.valor),0);
+  const recH = state.rec.filter(r=>r.origem==="horas" || r.origem==="fech").reduce((s,r)=>s+recBruto(r),0);
+  const glosas = state.fech.reduce((s,f)=>s+fechGlosa(f),0), reemb = state.fech.reduce((s,f)=>s+(+f.reemb||0),0);
   const orcs = state.orc.filter(orcAberto);
   const orcTot = orcs.reduce((s,o)=>s+orcTotals(o).total,0);
   const recO = orcs.reduce((s,o)=>s+orcRecebido(o.id),0);
-  return {horas:Math.max(0,prod-recH), orc:Math.max(0,orcTot-recO), prod, recH, orcTot, recO};
+  return {horas:Math.max(0,prod+reemb-recH-glosas), orc:Math.max(0,orcTot-recO), prod, recH, orcTot, recO, glosas, reemb};
 }
 function vPainel(){
   const t = totalsReceber();
@@ -556,8 +562,8 @@ function vPainel(){
   <div class="kpis">
     <div class="kpi"><span class="eyebrow">Hoje</span><span class="v">${fh(tc.total)}</span><span class="s">${tdAp.length} OS · ${brl(tc.valor)}</span></div>
     <div class="kpi"><span class="eyebrow">Em ${MESES[+state.month.slice(5)-1]}</span><span class="v">${fh(mc.total)}</span><span class="s">${brl(mc.valor)} em ${new Set(mAp.map(e=>e.data)).size} dias</span></div>
-    ${(()=>{ const ct = mAp.filter(e=>!e.orcId), fat = sumCalc(ct).valor, cu = custoSum(ct);
-      return temCustos() ? `<div class="kpi"><span class="eyebrow">Lucro em ${MESES[+state.month.slice(5)-1]}</span><span class="v" style="color:${fat-cu>=0?"var(--good)":"var(--bad)"}">${brl(fat-cu)}</span><span class="s">${brl(fat)} faturado − ${brl(cu)} de equipe${fat>0?` · margem ${Math.round(100*(fat-cu)/fat)}%`:""}</span></div>`
+    ${(()=>{ const ct = mAp.filter(e=>!e.orcId), fat = sumCalc(ct).valor, cu = custoSum(ct) + state.desp.filter(x=>ym(x.data)===state.month && !x.reembolsavel).reduce((s,x)=>s+despValor(x),0);
+      return temCustos() ? `<div class="kpi"><span class="eyebrow">Lucro em ${MESES[+state.month.slice(5)-1]}</span><span class="v" style="color:${fat-cu>=0?"var(--good)":"var(--bad)"}">${brl(fat-cu)}</span><span class="s">${brl(fat)} faturado − ${brl(cu)} de equipe e despesas${fat>0?` · margem ${Math.round(100*(fat-cu)/fat)}%`:""}</span></div>`
         : `<div class="kpi"><span class="eyebrow">Lucro do mês</span><span class="v">—</span><span class="s">Informe o custo de cada funcionário em <button class="btn sm" data-act="nav" data-view="ajustes" style="padding:1px 6px">Ajustes</button></span></div>`; })()}
     <div class="kpi"><span class="eyebrow">Orçamentos enviados</span><span class="v">${abertos.length}</span><span class="s">${brl(abertosV)} aguardando${taxa!=null?` · ${taxa}% aprovados`:""}</span></div>
   </div>
@@ -1177,9 +1183,22 @@ async function repXlsx(){
 
 /* ---------- FECHAMENTOS ---------- */
 function fechRows(de, ate, emp){ return state.ap.filter(e=>e.data>=de && e.data<=ate && !e.orcId && (!emp || empOf(e)===emp)); }
-function nextFech(){ const y = new Date().getFullYear(); const n = state.fech.map(f=>f.numero||"").filter(x=>x.startsWith(`F-${y}-`)).map(x=>+x.split("-")[2]||0); return `F-${y}-${String((n.length?Math.max(...n):0)+1).padStart(3,"0")}`; }
-const fechRecebido = f => state.rec.filter(r=>r.origem==="fech" && r.fechId===f.id).reduce((s,r)=>s+numIn(r.valor),0);
-const fechSaldo = f => Math.max(0, Math.round(((+f.valor||0) - fechRecebido(f))*100)/100);
+function nextFech(ate){ const y = (ate||today()).slice(0,4); const n = state.fech.map(f=>f.numero||"").filter(x=>x.startsWith(`F-${y}-`)).map(x=>+x.split("-")[2]||0); return `F-${y}-${String((n.length?Math.max(...n):0)+1).padStart(3,"0")}`; }
+const fechRecebido = f => state.rec.filter(r=>r.origem==="fech" && r.fechId===f.id).reduce((s,r)=>s+recBruto(r),0);
+const fechGlosa = f => (f.glosas||[]).reduce((s,g)=>s+numIn(g.valor),0);
+const fechDevido = f => Math.round(((+f.valor||0) + (+f.reemb||0) - fechGlosa(f))*100)/100;
+const fechSaldo = f => Math.max(0, Math.round((fechDevido(f) - fechRecebido(f))*100)/100);
+const diasEntre = (a,b) => Math.round((parseYmd(b)-parseYmd(a))/864e5);
+function fechVenc(f){ if(f.vencimento) return f.vencimento; const pz = ficha(f.empresa||state.cfg.contratante||"").prazo; return ymd(addDays(parseYmd(f.enviadoEm||f.ate||today()), pz==null||pz===""?30:+pz)); }
+function fechSituacao(f){
+  const sd = fechSaldo(f), rc = fechRecebido(f); if(sd<=0.005) return ["good","Recebido"];
+  const d = diasEntre(fechVenc(f), today());
+  if(d>0) return ["bad", `Vencido há ${d} dia${d>1?"s":""}${rc>0?" · parcial":""}`];
+  return [rc>0?"warn":"info", d===0?"Vence hoje":`Vence em ${-d} dia${d<-1?"s":""}${rc>0?" · parcial":""}`];
+}
+function despReemb(de, ate, emp){ return state.desp.filter(x=>x.reembolsavel && x.data>=de && x.data<=ate && (!emp || (x.empresa||state.cfg.contratante||"")===emp)); }
+const despValor = x => Math.round((x.tipo==="Km rodado" ? numIn(x.km)*numIn(x.valorKm) : numIn(x.valor))*100)/100;
+function fechAlterado(f){ if(!f.snap) return false; const cur = fechRows(f.de, f.ate, f.empresa||""); return cur.length!==f.snap.aps.length || Math.abs(sumCalc(cur).valor - (+f.valor||0)) > 0.01; }
 function fechConflict(de, ate, emp){ return state.fech.find(f=>f.de<=ate && f.ate>=de && (!f.empresa || !emp || f.empresa===emp)); }
 function fechFormHtml(){
   const r = state.rep, emps = dimVals("emp"), cur = r.f.emp!==ALL ? r.f.emp : (emps.length===1 ? emps[0] : "");
@@ -1221,15 +1240,20 @@ async function submitFech(){
   const rows = fechRows(de, ate, emp); if(!rows.length){ toast("Não há OS nesse período."); return; }
   if(fechConflict(de, ate, emp)){ toast("Esse período já foi fechado."); return; }
   const t = sumCalc(rows);
-  const f = {numero:nextFech(), de, ate, empresa:emp, os:rows.length, horas:t.total, valor:t.valor, enviadoEm:today(), criadoEm:new Date().toISOString()};
+  const C = state.cfg, rb = despReemb(de, ate, emp);
+  const f = {numero:nextFech(ate), de, ate, empresa:emp, os:rows.length, horas:t.total, valor:t.valor, enviadoEm:today(), criadoEm:new Date().toISOString(),
+    reemb: Math.round(rb.reduce((s,x)=>s+despValor(x),0)*100)/100, despIds: rb.map(x=>x.id),
+    snap:{aps: clone(rows), desp: clone(rb), cfg: clone({jornada:C.jornada, almoco:C.almoco, tolerancia:C.tolerancia, feriados:C.feriados, valorHora:C.valorHora, extraPct:C.extraPct, feriadoPct:C.feriadoPct, taxas:C.taxas})}};
+  f.vencimento = fechVenc(f);
   $("#fx-ok").disabled = true;
   try{ f.id = await save("fechamentos", f); if(!state.fech.find(x=>x.id===f.id)) state.fech = [...state.fech, f]; closeModal(); toast(`Fechamento ${f.numero} criado`); await fechPdf(f); }
   catch(err){ $("#fx-ok").disabled = false; toast(writeErr(err)); }
 }
-async function fechPdf(f){
-  const saved = clone(state.rep);
-  state.rep = {...state.rep, modo:"periodo", orc:false, de:f.de, ate:f.ate, f:{prof:ALL, unid:ALL, emp:f.empresa||ALL}, fechNum:f.numero};
-  try{ await repPdf(); } finally { state.rep = saved; }
+async function fechPdf(f, atual){
+  const saved = clone(state.rep), ap = state.ap, desp = state.desp, cfg = state.cfg;
+  state.rep = {...state.rep, modo:"periodo", orc:false, os:"", de:f.de, ate:f.ate, f:{prof:ALL, unid:ALL, emp:f.empresa||ALL}, fechNum:f.numero, reembIds:f.despIds||null};
+  if(f.snap && !atual){ state.ap = f.snap.aps; state.desp = f.snap.desp||[]; state.cfg = {...cfg, ...f.snap.cfg}; holCache = {}; mmCache.ref = null; }
+  try{ await repPdf(); } finally { state.rep = saved; state.ap = ap; state.desp = desp; state.cfg = cfg; holCache = {}; mmCache.ref = null; }
 }
 /* ---------- PDF ---------- */
 const GREEN=[27,122,61], NAVY=[29,63,143], INK=[23,33,26], GREY=[95,105,98];
@@ -1327,6 +1351,17 @@ async function pdfGroup(doc, rows){
   signature(doc, y, `${cfg.empresa.nome}${prof && !C.prof && profs().length?" - "+prof:cfg.empresa.responsavel?" - "+cfg.empresa.responsavel:""}`, ap);
   if(state.rep.fotos) await pdfFotos(doc, rows);
 }
+function pdfDespesas(doc, ds, horas){
+  doc.addPage(); let y = pdfHeader(doc, "DESPESAS REEMBOLSÁVEIS", repPdfSub()) + 2;
+  const tot = ds.reduce((s,x)=>s+despValor(x),0);
+  doc.autoTable({startY:y, theme:"grid", margin:{left:14,right:14},
+    head:[["DATA","TIPO","DESCRIÇÃO","OS / UNIDADE","VALOR"]],
+    body: ds.sort((a,b)=>a.data.localeCompare(b.data)).map(x=>[fdate(x.data), x.tipo||"", (x.tipo==="Km rodado"?`${numIn(x.km)} km × ${brl(numIn(x.valorKm))} · `:"")+(x.obs||""), [x.os?`OS ${x.os}`:"", x.unidade||""].filter(Boolean).join(" · "), brl(despValor(x))]),
+    foot:[[{content:"TOTAL DE DESPESAS",colSpan:4},brl(tot)],[{content:"TOTAL GERAL (HORAS + DESPESAS)",colSpan:4},brl(horas+tot)]],
+    styles:{fontSize:8.5,cellPadding:1.6,textColor:INK,lineColor:[205,212,201],lineWidth:0.2}, headStyles:{fillColor:GREEN,textColor:255}, footStyles:{fillColor:[255,240,150],textColor:INK},
+    columnStyles:{0:{cellWidth:24},1:{cellWidth:32},4:{cellWidth:32,halign:"right"}}});
+  doc.setFontSize(8.5); doc.setTextColor(...GREY); doc.text(`Comprovantes disponíveis mediante solicitação.`, 14, doc.lastAutoTable.finalY+6);
+}
 async function repPdf(){
   const groups = repGroups(), all = repRows();
   if(!all.length){ toast("Nenhum apontamento nesse período."); return; }
@@ -1345,6 +1380,8 @@ async function repPdf(){
   }
   if(state.rep.fotos) toast("Gerando PDF com fotos…");
   for(const [i,g] of groups.entries()){ if(groups.length>1 || i>0) doc.addPage(); await pdfGroup(doc, g.rows); }
+  const rr = state.rep;
+  if(rr.modo==="periodo" && v){ const emp = rr.f.emp!==ALL ? rr.f.emp : ""; const ds = rr.reembIds ? state.desp.filter(x=>rr.reembIds.includes(x.id)) : despReemb(rr.de, rr.ate, emp); if(ds.length) pdfDespesas(doc, ds, sumCalc(all).valor); }
   pdfFooter(doc);
   offerFile(`controle-ordens-${repFileTag()}.pdf`, doc.output("blob"));
 }
@@ -1427,7 +1464,7 @@ function nextNumero(){ const y = new Date().getFullYear(); const n = state.orc.m
 function newOrcDraft(){ return {cliente:{nome:"",documento:"",contato:"",telefone:"",email:"",cidade:""}, titulo:"", escopo:"", itens:[{tipo:"mo",desc:"Mão de obra - montagem/manutenção mecânica",un:"h",qtd:"8",valor:String(state.cfg.valorHora)}], descontoPct:"", pagamento:"50% na aprovação e 50% na conclusão dos serviços", prazo:"", validadeDias:15, obs:"", status:"rascunho", data:today(), apresentacao:true}; }
 function orcAndamento(o){
   const prev = (o.itens||[]).filter(i=>i.tipo==="mo" || String(i.un||"").trim().toLowerCase()==="h").reduce((s,i)=>s+numIn(i.qtd),0);
-  const ents = state.ap.filter(e=>e.orcId===o.id), h = sumCalc(ents).total/60, cu = custoSum(ents);
+  const ents = state.ap.filter(e=>e.orcId===o.id), h = sumCalc(ents).total/60, cu = custoSum(ents) + state.desp.filter(x=>x.orcId===o.id).reduce((s,x)=>s+despValor(x),0);
   return {prev, ents, h, cu, pct: prev ? Math.round(100*h/prev) : null};
 }
 function vOrcEdit(){
@@ -1505,6 +1542,70 @@ async function saveOrc(){
 }
 
 /* ---------- FINANCEIRO ---------- */
+const TIPOS_DESP = ["Km rodado","Combustível","Pedágio","Alimentação","Hospedagem","Material / peça","Ferramenta","Outro"];
+function despSection(){
+  const m = state.month, ls = state.desp.filter(x=>ym(x.data)===m).sort((a,b)=>b.data.localeCompare(a.data)), tot = ls.reduce((s,x)=>s+despValor(x),0), re = ls.filter(x=>x.reembolsavel).reduce((s,x)=>s+despValor(x),0);
+  return `<section class="section"><header><h2>Despesas de ${ymLabel(m)}</h2><span class="row">${monthNav()}<button class="btn sm primary" data-act="newDesp">+ Despesa</button></span></header>
+  ${ls.length?`<p class="muted" style="margin:0 0 8px">Total ${brl(tot)} · reembolsável ${brl(re)} · por sua conta ${brl(tot-re)}</p><div class="list">${ls.map(x=>`<button class="item" data-act="editDesp" data-id="${x.id}"><span class="mono">${fdate(x.data)}</span><span><b>${esc(x.tipo||"")}</b>${x.os?` · OS ${esc(x.os)}`:""}${x.unidade?` · ${esc(x.unidade)}`:""}<br><small class="muted">${x.tipo==="Km rodado"?`${numIn(x.km)} km × ${brl(numIn(x.valorKm))} `:""}${esc(x.obs||"")}</small></span><span class="r"><b class="mono">${brl(despValor(x))}</b><br>${x.reembolsavel?'<span class="pill info">Reembolsável</span>':'<span class="pill">Custo</span>'}${(x.fotos||[]).length?' <span class="pill">📎</span>':""}</span></button>`).join("")}</div>`
+  :`<div class="empty"><b>Nenhuma despesa em ${ymLabel(m)}</b>Lance combustível, km, pedágio, alimentação e material. As reembolsáveis entram no fechamento da empresa.</div>`}</section>`;
+}
+function despForm(x){
+  state.dpFotos = [...(x.fotos||[])]; const km = x.tipo==="Km rodado" || !x.id;
+  let vk = ""; try{ vk = localStorage.getItem("gaap-valor-km")||""; }catch(err){}
+  return `<header><h2>${x.id?"Editar":"Lançar"} despesa</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <form class="form" id="despForm" data-id="${x.id||""}">
+    <div class="grid2"><label class="field"><span>Data</span><input type="date" id="dp-data" value="${esc(x.data||today())}" required></label>
+    <label class="field"><span>Tipo</span><select id="dp-tipo">${TIPOS_DESP.map(t=>`<option ${(x.tipo||"Km rodado")===t?"selected":""}>${t}</option>`).join("")}</select></label></div>
+    <div class="grid2" id="dp-km-w" ${km?"":"hidden"}><label class="field"><span>Km rodados</span><input id="dp-km" inputmode="decimal" value="${esc(x.km??"")}"></label><label class="field"><span>Valor por km (R$)</span><input id="dp-vkm" inputmode="decimal" value="${esc(x.valorKm??vk)}" placeholder="Ex.: 1,20"></label></div>
+    <label class="field" id="dp-v-w" ${km?"hidden":""}><span>Valor (R$)</span><input id="dp-valor" inputmode="decimal" value="${x.valor!=null?String(x.valor).replace(".",","):""}"></label>
+    <div class="grid2"><label class="field"><span>Empresa</span><input id="dp-emp" list="emp-list" value="${esc(x.empresa||lastEmp())}"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>
+    <label class="field"><span>Unidade</span><input id="dp-unid" list="dp-unid-list" value="${esc(x.unidade||"")}"><datalist id="dp-unid-list">${repUnids().map(u=>`<option value="${esc(u)}">`).join("")}</datalist></label></div>
+    <div class="grid2"><label class="field"><span>Nº da OS (opcional)</span><input id="dp-os" value="${esc(x.os||"")}" inputmode="numeric"></label>${orcSelect("dp-orc", x.orcId)}</div>
+    <label class="check"><input type="checkbox" id="dp-reemb" ${x.reembolsavel?"checked":""}> Reembolsável (cobrar da empresa no fechamento)</label>
+    <label class="field"><span>Observação</span><input id="dp-obs" value="${esc(x.obs||"")}" placeholder="Ex.: ida e volta Uruaçu"></label>
+    <div class="field"><span>Comprovante</span><div class="thumbs" id="dp-thumbs">${thumbs(state.dpFotos, false)}</div><div><label class="btn sm" for="dp-foto">+ Foto do comprovante</label><input type="file" id="dp-foto" accept="image/*" multiple hidden></div></div>
+    <footer>${x.id?`<button type="button" class="btn danger" data-act="delDesp" data-id="${x.id}">Excluir</button>`:"<span></span>"}<button class="btn primary" type="submit">Salvar despesa</button></footer>
+  </form>`;
+}
+async function submitDesp(){
+  const id = $("#despForm").dataset.id, tipo = $("#dp-tipo").value;
+  const x = {...(state.desp.find(d=>d.id===id)||{}), id:id||undefined, data:$("#dp-data").value, tipo, empresa:$("#dp-emp").value.trim(), unidade:$("#dp-unid").value.trim(), os:$("#dp-os").value.trim(), orcId:$("#dp-orc")?$("#dp-orc").value:"", reembolsavel:$("#dp-reemb").checked, obs:$("#dp-obs").value.trim(), fotos:[...(state.dpFotos||[])]};
+  if(tipo==="Km rodado"){ x.km = numIn($("#dp-km").value); x.valorKm = numIn($("#dp-vkm").value); x.valor = Math.round(x.km*x.valorKm*100)/100; try{ localStorage.setItem("gaap-valor-km", $("#dp-vkm").value); }catch(err){} }
+  else { x.valor = numIn($("#dp-valor").value); delete x.km; delete x.valorKm; }
+  if(!x.data || !(x.valor>0)){ toast("Informe a data e o valor (ou os km e o valor por km)."); return; }
+  const lk = x.reembolsavel && state.fech.find(f=>(f.despIds||[]).includes(x.id)); if(lk){ toast(`Essa despesa já foi cobrada no fechamento ${lk.numero}.`); return; }
+  try{ x.id = id || (state.dpId ||= uid()); await save("despesas", x); state.dpId = null; state.modalDirty = false; closeModal(); toast(`Despesa de ${brl(x.valor)} salva`); }
+  catch(err){ toast(writeErr(err)); }
+}
+function fechCard(f){
+  const rc = fechRecebido(f), gl = fechGlosa(f), sd = fechSaldo(f), [cl, st] = fechSituacao(f), nf = f.nf||{}, ult = (f.cobrancas||[]).slice(-1)[0];
+  return `<div class="fechcard">
+    <div class="fc-top"><span><b class="mono">${esc(f.numero)}</b> · ${fdate(f.de)} a ${fdate(f.ate)}${f.empresa?` · ${esc(f.empresa)}`:""}</span><span class="pill ${cl}">${st}</span></div>
+    <div class="fc-vals">
+      <span>Horas <b class="mono">${brl(+f.valor||0)}</b><small>${f.os||0} OS · ${fdec(+f.horas||0)} h</small></span>
+      ${+f.reemb?`<span>Despesas <b class="mono">${brl(+f.reemb)}</b><small>reembolsáveis</small></span>`:""}
+      ${gl?`<span>Glosado <b class="mono">−${brl(gl)}</b><small>${(f.glosas||[]).length} item(ns)</small></span>`:""}
+      <span>Recebido <b class="mono">${brl(rc)}</b><small>vence ${fdate(fechVenc(f))}</small></span>
+      <span>Saldo <b class="mono">${brl(sd)}</b><small>${nf.numero?`NF ${esc(nf.numero)}${nf.status==="cancelada"?" (cancelada)":""}`:'<span class="pill warn" style="padding:0 6px">Sem NF</span>'}</small></span>
+    </div>
+    ${fechAlterado(f)?`<div class="warnbox">Há OS deste período alteradas depois do fechamento. O PDF continua igual ao que foi enviado; use “PDF atual” para ver como ficaria hoje.</div>`:""}
+    ${ult?`<p class="muted" style="margin:0;font-size:.85rem">Última cobrança em ${fdate(ult)}${(f.cobrancas||[]).length>1?` (${f.cobrancas.length} no total)`:""}.</p>`:""}
+    <div class="row fc-acts"><button class="btn sm" data-act="fechPdfBtn" data-id="${f.id}">PDF enviado</button>${fechAlterado(f)?`<button class="btn sm" data-act="fechPdfBtn" data-id="${f.id}" data-atual="1">PDF atual</button>`:""}
+      ${sd>0.005?`<button class="btn sm primary" data-act="newRec" data-o="fech" data-id="${f.id}" data-v="${sd}">Receber</button><button class="btn sm" data-act="fechCobrar" data-id="${f.id}">Cobrar</button>`:""}
+      <button class="btn sm" data-act="fechNF" data-id="${f.id}">Nota fiscal / vencimento</button>${sd>0.005?`<button class="btn sm" data-act="fechGlosa" data-id="${f.id}">Glosa</button>`:""}
+      <button class="btn sm danger" data-act="fechReabrir" data-id="${f.id}">Reabrir</button></div>
+  </div>`;
+}
+function agingHtml(fechs){
+  const ab = fechs.filter(f=>fechSaldo(f)>0.005); if(!ab.length) return "";
+  const b = {av:0, a30:0, a60:0, a90:0}; ab.forEach(f=>{ const d = diasEntre(fechVenc(f), today()), v = fechSaldo(f); if(d<=0) b.av+=v; else if(d<=30) b.a30+=v; else if(d<=60) b.a60+=v; else b.a90+=v; });
+  return `<div class="kpis aging"><div class="kpi"><span class="eyebrow">A vencer</span><span class="v">${brl(b.av)}</span></div><div class="kpi"><span class="eyebrow">Vencido 1–30 dias</span><span class="v" style="color:${b.a30?"var(--bad)":"inherit"}">${brl(b.a30)}</span></div><div class="kpi"><span class="eyebrow">Vencido 31–60</span><span class="v" style="color:${b.a60?"var(--bad)":"inherit"}">${brl(b.a60)}</span></div><div class="kpi"><span class="eyebrow">Mais de 60 dias</span><span class="v" style="color:${b.a90?"var(--bad)":"inherit"}">${brl(b.a90)}</span></div></div>`;
+}
+function naoFechadoHtml(){
+  const ate = ymd(addDays(parseYmd(today()),-1)), ls = state.ap.filter(e=>!e.orcId && !e.andamento && e.data<=ate && !lockOf(e.data, empOf(e)));
+  if(!ls.length) return ""; const t = sumCalc(ls), first = ls.reduce((m,e)=>e.data<m?e.data:m, ls[0].data), d = diasEntre(first, today());
+  return `<div class="banner ${d>35?"warn":""}"><span><b>${brl(t.valor)}</b> trabalhado e ainda não fechado (${ls.length} OS desde ${fdate(first)}${d>35?` — há ${d} dias`:""}).</span><button class="btn sm" data-act="irFechar" data-de="${first}">Fechar período</button></div>`;
+}
 function vFinanceiro(){
   const t = totalsReceber();
   const recH = state.rec.filter(r=>r.origem==="horas"), recEmp = r => r.empresa || state.cfg.contratante || "";
@@ -1514,8 +1615,9 @@ function vFinanceiro(){
   const fechRecs = state.rec.filter(r=>r.origem==="fech"), shareCache = {};
   const share = (f, m, emp) => { const key = f.id+"|"+m+"|"+emp; if(key in shareCache) return shareCache[key]; const rows = fechRows(f.de, f.ate, f.empresa||""), tot = sumCalc(rows).valor; return shareCache[key] = tot ? sumCalc(rows.filter(e=>ym(e.data)===m && (!multiEmp || empOf(e)===emp))).valor/tot : 0; };
   const mrows = keys.map(k=>{ const [m,emp] = k.split("|"); const c=sumCalc(apH.filter(e=>ym(e.data)===m && (!multiEmp || empOf(e)===emp)));
-    const rec = recH.filter(r=>r.competencia===m && (!multiEmp || recEmp(r)===emp)).reduce((s,r)=>s+numIn(r.valor),0)
-      + fechRecs.reduce((s,r)=>{ const f = state.fech.find(x=>x.id===r.fechId); return s + (f ? numIn(r.valor)*share(f, m, emp) : 0); }, 0);
+    const rec = recH.filter(r=>r.competencia===m && (!multiEmp || recEmp(r)===emp)).reduce((s,r)=>s+recBruto(r),0)
+      + fechRecs.reduce((s,r)=>{ const f = state.fech.find(x=>x.id===r.fechId); return s + (f ? recBruto(r)*share(f, m, emp) : 0); }, 0)
+      + state.fech.reduce((s,f)=>s + fechGlosa(f)*share(f, m, emp), 0);
     return {m,emp,c,rec,saldo:Math.round((c.valor-rec)*100)/100}; });
   const fechs = [...state.fech].sort((a,b)=>(b.de||"").localeCompare(a.de||""));
   const aguard = fechs.reduce((s,f)=>s+fechSaldo(f),0);
@@ -1527,16 +1629,19 @@ function vFinanceiro(){
   <div class="pagehead"><div><span class="eyebrow">Financeiro</span><h1>A receber</h1><p class="muted">Horas por mês de competência e orçamentos aprovados. Registre cada pagamento recebido para baixar o saldo.</p></div><button class="btn primary" data-act="newRec">+ Registrar recebimento</button></div>
   <div class="kpis" style="margin:0">
     <div class="kpi"><span class="eyebrow">A receber total</span><span class="v">${brl(t.horas+t.orc)}</span><span class="s">horas + orçamentos</span></div>
-    <div class="kpi"><span class="eyebrow">Horas a receber</span><span class="v">${brl(t.horas)}</span><span class="s">${brl(t.prod)} produzido · ${brl(t.recH)} recebido</span></div>
+    <div class="kpi"><span class="eyebrow">Horas a receber</span><span class="v">${brl(t.horas)}</span><span class="s">${brl(t.prod)} produzido${t.reemb?` + ${brl(t.reemb)} despesas`:""} · ${brl(t.recH)} recebido${t.glosas?` · ${brl(t.glosas)} glosado`:""}</span></div>
     <div class="kpi"><span class="eyebrow">Orçamentos a receber</span><span class="v">${brl(t.orc)}</span><span class="s">${brl(t.orcTot)} aprovado · ${brl(t.recO)} recebido</span></div>
     <div class="kpi"><span class="eyebrow">Fechamentos aguardando</span><span class="v">${brl(aguard)}</span><span class="s">${fechs.filter(f=>fechSaldo(f)>0.005).length} enviado(s) sem pagamento completo</span></div>
   </div>
+  ${agingHtml(fechs)}
+  ${naoFechadoHtml()}
   <section class="section"><header><h2>Fechamentos enviados</h2><button class="btn sm" data-act="nav" data-view="relatorios">Fechar um período</button></header>
-  ${fechs.length?`<div class="tablewrap"><table><thead><tr><th>Nº</th><th>Período</th><th>Empresa</th><th class="r">OS</th><th class="r">Horas</th><th class="r">Valor</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
+  ${fechs.length?`<div class="fechlist">${fechs.map(fechCard).join("")}</div>`:""}
+  ${false?`<div class="tablewrap"><table><thead><tr><th>Nº</th><th>Período</th><th>Empresa</th><th class="r">OS</th><th class="r">Horas</th><th class="r">Valor</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
   <tbody>${fechs.map(f=>{ const rc = fechRecebido(f), sd = fechSaldo(f); return `<tr><td class="mono"><b>${esc(f.numero)}</b></td><td class="mono">${fdate(f.de)} a ${fdate(f.ate)}</td><td>${esc(f.empresa||"Todas")}</td><td class="r mono">${f.os||0}</td><td class="r mono">${fdec(+f.horas||0)}</td><td class="r mono">${brl(+f.valor||0)}</td><td class="r mono">${brl(rc)}</td><td class="r mono">${brl(sd)}</td>
     <td>${sd<=0.005?'<span class="pill good">Recebido</span>':rc>0?'<span class="pill warn">Parcial</span>':'<span class="pill info">Enviado, aguardando</span>'}</td>
     <td><span class="row" style="flex-wrap:nowrap"><button class="btn sm" data-act="fechPdfBtn" data-id="${f.id}">PDF</button>${sd>0.005?`<button class="btn sm" data-act="newRec" data-o="fech" data-id="${f.id}" data-v="${sd}">Receber</button>`:""}<button class="btn sm danger" data-act="fechReabrir" data-id="${f.id}">Reabrir</button></span></td></tr>`; }).join("")}</tbody></table></div>`
-  :`<div class="empty"><b>Nenhum período fechado</b>Em Relatórios, escolha “Período / fechamento” e toque em “Fechar período…” quando mandar o relatório para a empresa.</div>`}</section>
+  :fechs.length?"":`<div class="empty"><b>Nenhum período fechado</b>Em Relatórios, escolha “Período / fechamento” e toque em “Fechar período…” quando mandar o relatório para a empresa.</div>`}</section>
   ${byEmp.length?`<section class="section"><header><h2>Horas a receber por empresa</h2></header><div class="tablewrap"><table><thead><tr><th>Empresa</th><th class="r">Produzido</th><th class="r">Recebido</th><th class="r">A receber</th></tr></thead><tbody>${byEmp.map(r=>`<tr><td>${esc(r.emp||"(sem empresa)")}</td><td class="r mono">${brl(r.v)}</td><td class="r mono">${brl(r.rc)}</td><td class="r mono"><b>${brl(r.saldo)}</b></td></tr>`).join("")}</tbody></table></div></section>`:""}
   <section class="section"><header><h2>Horas por mês${multiEmp?" e empresa":""}</h2></header>
   ${mrows.length?`<div class="tablewrap"><table><thead><tr><th>Competência</th>${multiEmp?"<th>Empresa</th>":""}<th class="r">Normal</th><th class="r">Extra ${state.cfg.extraPct}%</th><th class="r">Extra ${state.cfg.feriadoPct}%</th><th class="r">Valor</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
@@ -1546,6 +1651,7 @@ function vFinanceiro(){
   ${orcs.length?`<div class="tablewrap"><table><thead><tr><th>Nº</th><th>Cliente</th><th class="r">Total</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
   <tbody>${orcs.map(o=>{const T=orcTotals(o).total, rec=orcRecebido(o.id), s=Math.round((T-rec)*100)/100; return `<tr><td class="mono">${esc(o.numero)}</td><td>${esc(o.cliente?.nome)}<br><span class="muted">${esc(o.titulo||"")}</span></td><td class="r mono">${brl(T)}</td><td class="r mono">${brl(rec)}</td><td class="r mono">${brl(Math.max(0,s))}</td><td>${stPill(s,rec)}</td><td>${s>0.005?`<button class="btn sm" data-act="newRec" data-o="orc" data-id="${o.id}" data-v="${s}">Receber</button>`:""}</td></tr>`;}).join("")}</tbody></table></div>`
   :`<div class="empty"><b>Nenhum orçamento aprovado</b>Quando você marcar um orçamento como Aprovado, ele entra aqui como valor a receber.</div>`}</section>
+  ${despSection()}
   <section class="section"><header><h2>Recebimentos registrados</h2><span class="muted">${brl(state.rec.filter(r=>ym(r.data||"")===ym(today())).reduce((s,r)=>s+numIn(r.valor),0))} recebido em ${ymLabel(ym(today()))}</span></header>
   ${recs.length?`<div class="tablewrap"><table><thead><tr><th>Data</th><th>Origem</th><th>Observação</th><th class="r">Valor</th><th></th></tr></thead>
   <tbody>${recs.map(r=>`<tr><td class="mono">${fdate(r.data)}</td><td>${r.origem==="fech"?`Fechamento ${esc(state.fech.find(f=>f.id===r.fechId)?.numero||"(reaberto)")}${r.empresa?` · ${esc(r.empresa)}`:""}`:r.origem==="horas"?`Horas · <span style="text-transform:capitalize">${ymLabel(r.competencia||"2000-01")}</span>${multiEmp?` · ${esc(recEmp(r))}`:""}`:`Orçamento ${esc(state.orc.find(o=>o.id===r.orcId)?.numero||"(excluído)")}`}${r.exemplo?' <span class="pill">Exemplo</span>':""}</td><td>${esc(r.obs||"")}</td><td class="r mono">${brl(numIn(r.valor))}</td><td><button class="btn sm danger" data-act="delRec" data-id="${r.id}">Excluir</button></td></tr>`).join("")}</tbody></table></div>`
@@ -1562,18 +1668,47 @@ function recForm(o){
     <div class="grid2" id="r-comp-w" ${o.o==="orc"||o.o==="fech"?"hidden":""}><label class="field"><span>Mês de competência</span><input type="month" id="r-comp" value="${o.m||ym(today())}"></label>
     <label class="field"><span>Empresa que pagou</span><select id="r-emp">${dimVals("emp").map(v=>`<option ${v===(o.e||state.cfg.contratante)?"selected":""}>${esc(v)}</option>`).join("")||'<option value="">(sem empresa)</option>'}</select></label></div>
     <label class="field" id="r-orc-w" ${o.o==="orc"?"":"hidden"}><span>Orçamento</span><select id="r-orc">${orcs.map(x=>`<option value="${x.id}" ${x.id===o.id?"selected":""}>${esc(x.numero)} · ${esc(x.cliente?.nome)} · ${brl(orcTotals(x).total)}</option>`).join("")}</select></label>
-    <label class="field"><span>Observação</span><input id="r-obs" placeholder="Ex.: PIX, nota fiscal 123"></label>
+    <details class="fichabox"><summary>Houve retenção de impostos? (ISS, INSS, IR)</summary>
+      <p class="muted" style="margin:6px 0">O valor recebido é o que caiu na conta. As retenções também baixam o saldo e ficam anotadas para o contador.</p>
+      <div class="grid2">${RETS.map(([k,l])=>`<label class="field"><span>${l} retido (R$)</span><input id="r-ret-${k}" inputmode="decimal" placeholder="0,00"></label>`).join("")}</div>
+    </details>
+    <div class="grid2"><label class="field"><span>Forma</span><select id="r-forma"><option>PIX</option><option>TED / transferência</option><option>Boleto</option><option>Dinheiro</option><option>Cheque</option></select></label>
+    <label class="field"><span>Observação</span><input id="r-obs" placeholder="Ex.: nota fiscal 123"></label></div>
     <footer><span></span><button class="btn primary" type="submit">Salvar recebimento</button></footer>
   </form>`;
 }
 document.addEventListener("change", e=>{ if(e.target.id==="r-origem"){ const v=e.target.value; $("#r-comp-w").hidden=v!=="horas"; $("#r-orc-w").hidden=v!=="orc"; $("#r-fech-w").hidden=v!=="fech"; } });
+function nfTexto(f){
+  const aps = (f.snap?.aps) || fechRows(f.de, f.ate, f.empresa||""), cfg = f.snap?.cfg || state.cfg, T = rateFor(f.empresa||state.cfg.contratante||"");
+  const c = (()=>{ const ap = state.ap, cf = state.cfg; state.ap = aps; state.cfg = {...cf, ...cfg}; holCache = {}; try{ return sumCalc(aps); } finally { state.ap = ap; state.cfg = cf; holCache = {}; } })();
+  const F = ficha(f.empresa||state.cfg.contratante||""), oss = [...new Set(aps.map(e=>e.os).filter(Boolean))];
+  return `Prestação de serviços de manutenção mecânica industrial${F.razao||f.empresa?` para ${F.razao||f.empresa}`:""}, conforme fechamento ${f.numero}, período de ${fdate(f.de)} a ${fdate(f.ate)}.
+Ordens de serviço: ${oss.length?oss.join(", "):"-"}.
+Horas normais: ${fdec(c.n)} h; horas extras ${T.extraPct}%: ${fdec(c.e50)} h; horas extras ${T.feriadoPct}% (domingos e feriados): ${fdec(c.e100)} h. Total: ${fdec(c.total)} h.
+Valor da hora: ${brl(T.valorHora)}. Valor dos serviços: ${brl(+f.valor||0)}.${+f.reemb?`
+Despesas reembolsáveis: ${brl(+f.reemb)}. Total: ${brl((+f.valor||0)+(+f.reemb))}.`:""}`;
+}
+document.addEventListener("submit", async e=>{
+  if(e.target.id==="nfForm"){ e.preventDefault(); const f = state.fech.find(x=>x.id===e.target.dataset.id); if(!f) return;
+    const nf = {numero:$("#nf-num").value.trim(), data:$("#nf-data").value, status:$("#nf-st").value};
+    try{ await save("fechamentos", {...f, nf, vencimento:$("#nf-venc").value || fechVenc(f)}); closeModal(); toast("Nota fiscal salva"); }catch(err){ toast(writeErr(err)); } }
+  if(e.target.id==="glosaForm"){ e.preventDefault(); const f = state.fech.find(x=>x.id===e.target.dataset.id); if(!f) return;
+    const v = numIn($("#gl-v").value); if(!(v>0)){ toast("Informe o valor glosado."); return; }
+    const o = $("#gl-os"), ap = (f.snap?.aps||state.ap).find(x=>x.id===o.value);
+    const g = {data:today(), valor:v, motivo:$("#gl-mot").value, obs:$("#gl-obs").value.trim(), ...(ap?{apId:ap.id, os:ap.os||""}:{})};
+    if(v > fechSaldo(f)+0.005){ toast(`A glosa não pode passar do saldo (${brl(fechSaldo(f))}).`); return; }
+    try{ await save("fechamentos", {...f, glosas:[...(f.glosas||[]), g]}); closeModal(); toast(`Glosa de ${brl(v)} registrada`); }catch(err){ toast(writeErr(err)); } }
+  if(e.target.id==="despForm"){ e.preventDefault(); submitDesp(); }
+});
+document.addEventListener("change", e=>{ if(e.target.id==="gl-os"){ const op = e.target.selectedOptions[0]; if(op && op.dataset.v) $("#gl-v").value = String(Math.round(+op.dataset.v*100)/100).replace(".",","); } });
 async function submitRec(){
-  const r = {data:$("#r-data").value, valor:numIn($("#r-valor").value), origem:$("#r-origem").value, obs:$("#r-obs").value.trim()};
+  const r = {data:$("#r-data").value, valor:numIn($("#r-valor").value), origem:$("#r-origem").value, obs:$("#r-obs").value.trim(), forma:$("#r-forma").value, ret:{}};
+  RETS.forEach(([k])=>{ const v = numIn($("#r-ret-"+k).value); if(v>0) r.ret[k] = v; });
   if(r.origem==="horas"){ r.competencia = $("#r-comp").value; r.empresa = $("#r-emp").value; }
   else if(r.origem==="fech"){ r.fechId = $("#r-fech").value; const f = state.fech.find(x=>x.id===r.fechId); if(!f){ toast("Escolha o fechamento."); return; } r.empresa = f.empresa||""; }
   else r.orcId = $("#r-orc").value;
   if(!r.data || !(r.valor>0)){ toast("Informe a data e um valor maior que zero."); return; }
-  try{ await save("recebimentos", r); closeModal(); toast(`Recebimento de ${brl(r.valor)} registrado`); }
+  try{ await save("recebimentos", r); closeModal(); toast(`Recebimento de ${brl(r.valor)} registrado${retTot(r)?` + ${brl(retTot(r))} de retenções`:""}`); }
   catch(err){ toast(writeErr(err)); }
 }
 
@@ -1678,7 +1813,7 @@ function vAjustes(){
     </div>
   </section>`;
 }
-function backupDados(){ return {sistema:"GAAP Gestão de Serviços", versao:2, exportadoEm:new Date().toISOString(), config:state.cfg, apontamentos:state.ap, orcamentos:state.orc, recebimentos:state.rec, fechamentos:state.fech, perfis:state.perfis||[]}; }
+function backupDados(){ return {sistema:"GAAP Gestão de Serviços", versao:2, exportadoEm:new Date().toISOString(), config:state.cfg, apontamentos:state.ap, orcamentos:state.orc, recebimentos:state.rec, fechamentos:state.fech, despesas:state.desp, perfis:state.perfis||[]}; }
 function backupIdade(){
   const b = state.cfg.backupBaixadoEm; if(!b) return `<span class="pill warn">Você ainda não baixou nenhuma cópia completa.</span>`;
   const dias = Math.floor((Date.now() - new Date(b).getTime())/86400000);
@@ -1785,7 +1920,41 @@ const A = {
   pby(b){ state.pby = b.dataset.k; render(); },
   hmode(b){ state.hmode = b.dataset.m; render(); },
   fechAbrir(){ openModal(fechFormHtml()); updateFech(); },
-  fechPdfBtn(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(f) fechPdf(f); },
+  fechPdfBtn(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(f) fechPdf(f, !!b.dataset.atual); },
+  newDesp(){ state.dpId = null; openModal(despForm({})); },
+  editDesp(b){ const x = state.desp.find(d=>d.id===b.dataset.id); if(x){ state.dpId = null; openModal(despForm(x)); } },
+  async delDesp(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const lk = state.fech.find(f=>(f.despIds||[]).includes(b.dataset.id)); if(lk){ toast(`Essa despesa está no fechamento ${lk.numero}.`); return; } try{ await removeDoc("despesas", b.dataset.id); closeModal(); toast("Despesa excluída"); }catch(err){ toast(writeErr(err)); } },
+  irFechar(b){ state.view = "relatorios"; state.rep = {...state.rep, modo:"periodo", de:b.dataset.de, ate:ymd(addDays(parseYmd(today()),-1))}; state.rendered = null; render(); setTimeout(()=>{ openModal(fechFormHtml()); updateFech(); }, 30); },
+  async fechCobrar(b){
+    const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return;
+    const F = ficha(f.empresa||state.cfg.contratante||""), d = diasEntre(fechVenc(f), today()), w = (F.whats||"").replace(/\D/g,"");
+    const msg = `Olá${F.aprovador?" "+F.aprovador.split(" ")[0]:""}, tudo bem?\nSegue a posição do fechamento *${f.numero}* (${fdate(f.de)} a ${fdate(f.ate)})${f.empresa?` - ${f.empresa}`:""}:\n• Valor: ${brl(fechDevido(f))}${fechRecebido(f)?`\n• Já recebido: ${brl(fechRecebido(f))}`:""}\n• Saldo: *${brl(fechSaldo(f))}*\n• Vencimento: ${fdate(fechVenc(f))}${d>0?` (vencido há ${d} dia${d>1?"s":""})`:""}${f.nf?.numero?`\n• Nota fiscal: ${f.nf.numero}`:""}\nPode me confirmar a previsão de pagamento?\nObrigado!\n${state.cfg.empresa.nome}`;
+    window.open(`https://wa.me/${w?(w.length<=11?"55"+w:w):""}?text=${encodeURIComponent(msg)}`, "_blank");
+    try{ await save("fechamentos", {...f, cobrancas:[...(f.cobrancas||[]), today()]}); }catch(err){}
+  },
+  fechNF(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; const nf = f.nf||{};
+    openModal(`<header><h2>Nota fiscal · ${esc(f.numero)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+    <form class="form" id="nfForm" data-id="${f.id}">
+      <div class="grid2"><label class="field"><span>Nº da NF</span><input id="nf-num" value="${esc(nf.numero||"")}" inputmode="numeric"></label>
+      <label class="field"><span>Data de emissão</span><input type="date" id="nf-data" value="${esc(nf.data||"")}"></label>
+      <label class="field"><span>Situação</span><select id="nf-st">${[["emitir","A emitir"],["emitida","Emitida"],["cancelada","Cancelada"]].map(([k,l])=>`<option value="${k}" ${(nf.status||(nf.numero?"emitida":"emitir"))===k?"selected":""}>${l}</option>`).join("")}</select></label>
+      <label class="field"><span>Vencimento do pagamento</span><input type="date" id="nf-venc" value="${esc(fechVenc(f))}"></label></div>
+      <div class="field"><span>Texto para a nota (discriminação do serviço)</span><textarea id="nf-txt" rows="7" readonly>${esc(nfTexto(f))}</textarea></div>
+      <footer><button type="button" class="btn" data-act="nfCopiar">Copiar texto</button><button class="btn primary" type="submit">Salvar</button></footer>
+    </form>`); },
+  nfCopiar(){ copyText($("#nf-txt").value); },
+  fechGlosa(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; const aps = (f.snap?.aps)||fechRows(f.de,f.ate,f.empresa||"");
+    openModal(`<header><h2>Registrar glosa · ${esc(f.numero)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+    <form class="form" id="glosaForm" data-id="${f.id}">
+      <p class="muted" style="margin:0">Use quando a empresa não aceitar parte do fechamento (OS recusada, horário contestado, acordo). O valor glosado sai do saldo a receber.</p>
+      <label class="field"><span>OS glosada (opcional)</span><select id="gl-os"><option value="">— valor livre —</option>${aps.map(e=>`<option value="${esc(e.id)}" data-v="${calc(e).valor}">OS ${esc(e.os||"s/n")} · ${fdate(e.data)} ${esc(e.inicio)}–${esc(e.fim)} · ${brl(calc(e).valor)}</option>`).join("")}</select></label>
+      <div class="grid2"><label class="field"><span>Valor glosado (R$)</span><input id="gl-v" inputmode="decimal" required></label>
+      <label class="field"><span>Motivo</span><select id="gl-mot"><option>Sem nº de OS</option><option>Horário não reconhecido</option><option>OS duplicada</option><option>Fora do contrato</option><option>Acordo / desconto</option><option>Outro</option></select></label></div>
+      <label class="field"><span>Observação</span><input id="gl-obs"></label>
+      ${(f.glosas||[]).length?`<div class="list">${f.glosas.map((g,i)=>`<div class="item" style="cursor:default"><span>${fdate(g.data)}</span><span>${esc(g.motivo)}${g.os?` · OS ${esc(g.os)}`:""}${g.obs?`<br><small class="muted">${esc(g.obs)}</small>`:""}</span><span><b class="mono">${brl(numIn(g.valor))}</b> <button type="button" class="btn sm danger" data-act="glosaDel" data-id="${f.id}" data-i="${i}">✕</button></span></div>`).join("")}</div>`:""}
+      <footer><span></span><button class="btn primary" type="submit">Registrar glosa</button></footer>
+    </form>`); },
+  async glosaDel(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; const g = [...(f.glosas||[])]; g.splice(+b.dataset.i,1); try{ await save("fechamentos", {...f, glosas:g}); closeModal(); toast("Glosa removida"); }catch(err){ toast(writeErr(err)); } },
   async fechReabrir(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; if(fechRecebido(f)>0){ toast("Esse fechamento tem recebimento registrado. Exclua o recebimento antes de reabrir."); return; } if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } try{ await removeDoc("fechamentos", f.id); toast(`Fechamento ${f.numero} reaberto. As OS podem ser alteradas de novo.`); }catch(err){ toast(writeErr(err)); } },
   osHist(b){ openModal(osHistHtml(b.dataset.os), "wide"); },
   osLancar(b){ const g = osGroups(state.ap.filter(e=>(e.os||"(sem nº)")===b.dataset.os))[0]; const l = g ? g.rows[g.rows.length-1] : {}; closeModal(); dayOpen(today(), {emp:empOf(l)||lastEmp(), orcId:l.orcId||"", row:{os:b.dataset.os==="(sem nº)"?"":b.dataset.os, desc:l.descricao||"", cli:l.cliente||""}}); },
