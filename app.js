@@ -2,12 +2,12 @@
 const SOBRE = "A GAAP ENGENHARIA é uma empresa especializada no ramo de montagem e manutenção mecânica industrial, para empresas voltadas para manipulação de grãos, cervejarias e farmacêuticas. Fabricação e montagem de galpões e estruturas metálicas no geral. Atuamos na área de engenharia Mecânica, Civil e de Segurança do Trabalho; projetos, laudos, ART e treinamentos de segurança. A empresa está estrategicamente localizada na cidade de Anápolis GO, onde se encontra o maior polo industrial do Centro-Oeste.";
 const DEFAULT_CFG = {
   empresa:{nome:"GAAP ENGENHARIA",cnpj:"58.486.529/0001-47",email:"gaapengenharia3m@gmail.com",telefone:"(62) 9 9310-3507",cidade:"Anápolis GO",responsavel:"",sobre:SOBRE},
-  contratante:"",
+  contratante:"Brejeiro",
   valorHora:60, extraPct:50, feriadoPct:100,
   jornada:{"0":{ini:"",fim:""},"1":{ini:"07:00",fim:"16:00"},"2":{ini:"07:00",fim:"16:00"},"3":{ini:"07:00",fim:"16:00"},"4":{ini:"07:00",fim:"16:00"},"5":{ini:"07:00",fim:"16:00"},"6":{ini:"07:00",fim:"11:00"}},
   almoco:{ativo:false,ini:"11:00",fim:"12:00"},
   feriados:{carnaval:false,corpus:false,extras:"31/07 Aniversário de Anápolis"},
-  tolerancia:0, profissionais:"", unidades:"", empresas:"", custos:{}, taxas:{}
+  tolerancia:5, profissionais:"", unidades:"", empresas:"Brejeiro", custos:{}, taxas:{}
 };
 const WD = ["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"];
 const WDS = ["dom","seg","ter","qua","qui","sex","sáb"];
@@ -81,8 +81,8 @@ function calc(e){
     if(e.tipo==="normal") b="n"; else if(e.tipo==="e50") b="e50"; else if(e.tipo==="e100") b="e100";
     else if(info.special) b="e100";
     else if(info.ji!=null && info.jf!=null && mod>=info.ji && mod<info.jf){
-      if(cfg.almoco.ativo && aIni!=null && aFim!=null && mod>=aIni && mod<aFim) continue;
-      b="n";
+      if(cfg.almoco.ativo && aIni!=null && aFim!=null && mod>=aIni && mod<aFim){ if(!e.noAlmoco) continue; b="e50"; }
+      else b="n";
     } else { b="e50"; if(info.ji!=null && info.jf!=null){ if(mod<info.ji) early++; else late++; } }
     r[b]++;
   }
@@ -263,10 +263,23 @@ function scheduleRender(){ cancelAnimationFrame(rq); rq = requestAnimationFrame(
 /* ---------- toast & modal ---------- */
 let tt;
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.hidden=false; clearTimeout(tt); tt=setTimeout(()=>t.hidden=true, 3200); }
-function openModal(html, cls){ const m=$("#modal"); m.innerHTML=`<div class="sheet ${cls||""}" role="dialog" aria-modal="true">${html}</div>`; m.hidden=false; const f=m.querySelector("input,select,textarea"); if(f && window.innerWidth>700) f.focus(); }
-function closeModal(){ const m=$("#modal"); m.hidden=true; m.innerHTML=""; }
-$("#modal").addEventListener("click", e=>{ if(e.target.id==="modal") closeModal(); });
-document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("#modal").hidden) closeModal(); });
+function openModal(html, cls){ state.modalDirty = false; state.closeArmed = 0; const m=$("#modal"); m.innerHTML=`<div class="sheet ${cls||""}" role="dialog" aria-modal="true">${html}</div>`; m.hidden=false; const f=m.querySelector("input,select,textarea"); if(f && window.innerWidth>700) f.focus(); }
+function closeModal(){ const m=$("#modal"); m.hidden=true; m.innerHTML=""; state.apIds = null; state.modalDirty = false; }
+function tryCloseModal(){
+  if(state.modalDirty && Date.now() - (state.closeArmed||0) > 4000){ state.closeArmed = Date.now(); toast("Há dados não salvos. Toque fora de novo para descartar."); return; }
+  if($("#dayForm")) rascunho.limpar();
+  closeModal();
+}
+$("#modal").addEventListener("click", e=>{ if(e.target.id==="modal") tryCloseModal(); });
+document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("#modal").hidden) tryCloseModal(); });
+document.addEventListener("input", e=>{ if(e.target.closest("#apForm,#dayForm,#fechForm,#recForm")) state.modalDirty = true; });
+const rascunho = {
+  key(){ return "gaap-rascunho-dia-" + (session?.user?.id || ""); },
+  salvar(){ try{ const d = state.day; if(d && d.rows.some(r=>r.os||r.desc||r.fim)) localStorage.setItem(this.key(), JSON.stringify(d)); }catch(err){} },
+  ler(){ try{ return JSON.parse(localStorage.getItem(this.key())||"null"); }catch(err){ return null; } },
+  limpar(){ try{ localStorage.removeItem(this.key()); }catch(err){} }
+};
+window.addEventListener("pagehide", ()=>{ if($("#dayForm")) rascunho.salvar(); });
 
 /* ---------- nav ---------- */
 const ICONS = {
@@ -448,7 +461,7 @@ async function submitLogin(form){
 /* ---------- FUNCIONÁRIO ---------- */
 function vWorker(){
   const me = state.me, ps = profs();
-  if(!state.pub || !state.pub.cfg) return `<div class="pagehead"><div><span class="eyebrow">Acesso do funcionário</span><h1>Aguardando liberação</h1><p class="muted">O responsável ainda precisa compartilhar este sistema com você como <b>Editor</b>. Depois disso, recarregue a página.</p></div></div>`;
+  if(!state.pub || !state.pub.cfg) return `<div class="pagehead"><div><span class="eyebrow">Acesso do funcionário</span><h1>Aguardando liberação</h1><p class="muted">Não consegui carregar a configuração. Verifique a conexão e toque em Atualizar.</p><button class="btn primary" data-act="reverificar">Atualizar</button><p></p></div></div>`;
   const mine = state.ap.filter(e=>e.profissional===me), list = mine.filter(e=>ym(e.data)===state.month).sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio));
   const c = sumCalc(list), byDay = {}; list.forEach(e=>(byDay[e.data] ||= []).push(e));
   return `<div class="pagehead"><div><span class="eyebrow">Olá, ${esc(me)}</span><h1>Minhas OS</h1><p class="muted">Lance cada OS com o horário de início e de término.</p></div>
@@ -634,11 +647,12 @@ function apForm(e){
       <label class="field"><span>Término</span><span class="timepair"><input type="time" id="f-fim" value="${esc(e.fim||"")}" required><button type="button" class="btn sm" data-act="now" data-t="f-fim">Agora</button></span></label>
     </div>
     <div class="grid2">
-      <label class="field"><span>Empresa</span><input id="f-emp" list="emp-list" value="${esc(e.empresa || lastEmp())}" placeholder="Ex.: Branil"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>
+      <label class="field"><span>Empresa</span><input id="f-emp" list="emp-list" value="${esc(e.empresa || lastEmp())}" placeholder="Ex.: Brejeiro"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>
       <label class="field"><span>Unidade / local</span><input id="f-cli" list="cli-list" value="${esc(e.cliente||"")}" placeholder="Ex.: Uruaçu, Novo Planalto"><datalist id="cli-list">${clientes.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></label>
     </div>
     ${orcSelect("f-orc", e.orcId)}
-    <label class="field"><span>Cálculo da hora</span><select id="f-tipo">${Object.entries(TIPOS).map(([k,l])=>`<option value="${k}" ${ (e.tipo||"auto")===k?"selected":""}>${l}</option>`).join("")}</select></label>
+    ${state.worker?"":`<label class="field"><span>Cálculo da hora</span><select id="f-tipo">${Object.entries(TIPOS).map(([k,l])=>`<option value="${k}" ${ (e.tipo||"auto")===k?"selected":""}>${l}</option>`).join("")}</select></label>`}
+    ${state.cfg.almoco.ativo?`<label class="check"><input type="checkbox" id="f-noalm" ${e.noAlmoco?"checked":""}> Trabalhei no horário de almoço (${esc(state.cfg.almoco.ini)}–${esc(state.cfg.almoco.fim)} conta como extra 50%)</label>`:""}
     <label class="check"><input type="checkbox" id="f-emerg" ${e.emergencia?"checked":""}> Chamado de emergência (fora da escala)</label>
     <label class="field"><span>Observações</span><textarea id="f-obs" rows="2" placeholder="Peças trocadas, pendências, quem solicitou…">${esc(e.obs||"")}</textarea></label>
     ${assets?`<div class="field"><span>Fotos do serviço</span><div class="thumbs" id="f-thumbs">${thumbs(state.apFotos, true)}</div><div><label class="btn sm" for="f-foto">+ Adicionar fotos</label><input type="file" id="f-foto" accept="image/*" multiple hidden></div></div>`:""}
@@ -650,7 +664,7 @@ function apForm(e){
 function readApForm(){
   const id = $("#apForm").dataset.id;
   const old = state.ap.find(x=>x.id===id) || {};
-  return {...old, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo:$("#f-tipo").value, emergencia:$("#f-emerg").checked, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])]};
+  return {...old, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo: $("#f-tipo") ? $("#f-tipo").value : (old.tipo||"auto"), noAlmoco: $("#f-noalm") ? $("#f-noalm").checked : !!old.noAlmoco, emergencia:$("#f-emerg").checked, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])]};
 }
 function lastEmp(){ let v=""; try{ v = localStorage.getItem("gaap-last-emp")||""; }catch(err){} return v || state.cfg.contratante || ""; }
 function selProfs(){ return [...document.querySelectorAll('input[name="f-prof"]:checked')].map(x=>x.value); }
@@ -673,7 +687,7 @@ function updateApPreview(){
     ${ov?`<div class="warnbox">Esse horário se sobrepõe a outro apontamento do mesmo profissional nesse dia.</div>`:""}`;
 }
 /* ---------- LANÇAR OS DO DIA ---------- */
-const blankRow = () => ({os:"", desc:"", ini:"", fim:"", cli:"", emerg:false});
+const blankRow = () => ({os:"", desc:"", ini:"", fim:"", cli:"", emerg:false, noAlm:false, ids:{}});
 function nextStart(fim){ const a = state.cfg.almoco; return (a.ini && a.fim && fim===a.ini) ? a.fim : fim; }
 function dayPresets(ds){
   const cfg = state.cfg, j = cfg.jornada[parseYmd(ds).getDay()] || {}, a = cfg.almoco;
@@ -685,6 +699,13 @@ function dayOpen(ds, opt={}){
   ds = ds || today();
   let last = []; try{ last = JSON.parse(localStorage.getItem("gaap-last-prof")||"[]"); }catch(err){}
   const ps = profs();
+  const draft = (!opt.row && !opt.orcId) ? rascunho.ler() : null;
+  if(draft && draft.rows && draft.rows.length){
+    state.day = draft;
+    openModal(dayForm(), "wide"); state.modalDirty = true;
+    toast("Continuei o lançamento que não tinha sido salvo.");
+    renderDayRows(); updateDay(); return;
+  }
   state.day = {data:ds, profs: state.worker ? [state.me] : last.filter(n=>ps.includes(n)), unid:opt.unid||"", emp:opt.emp||lastEmp(), orcId:opt.orcId||"", rows:[]};
   const ex = dayExisting(), pre = dayPresets(ds);
   const r = {...blankRow(), ...(opt.row||{})}; r.ini = ex.length ? ex[ex.length-1].fim : (pre[0]?.[1] || "07:00");
@@ -705,7 +726,7 @@ function dayForm(){
   <form class="form" id="dayForm">
     <div class="grid3">
       <label class="field"><span>Data</span><input type="date" id="d-data" value="${esc(d.data)}" required></label>
-      <label class="field"><span>Empresa</span><input id="d-emp" list="emp-list" value="${esc(d.emp)}" placeholder="Ex.: Branil"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>
+      <label class="field"><span>Empresa</span><input id="d-emp" list="emp-list" value="${esc(d.emp)}" placeholder="Ex.: Brejeiro"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>
       <label class="field"><span>Unidade (vale para todas as linhas)</span><input id="d-unid" list="d-unid-list" value="${esc(d.unid)}" placeholder="Ex.: Uruaçu"><datalist id="d-unid-list">${unids.map(u=>`<option value="${esc(u)}">`).join("")}</datalist></label>
     </div>
     ${orcSelect("d-orc", d.orcId)}
@@ -724,7 +745,7 @@ function dayForm(){
     </div></details>
     <datalist id="os-list">${Object.entries(used).slice(0,80).map(([o,ds])=>`<option value="${esc(o)}">${esc(ds)}</option>`).join("")}</datalist>
     <div id="d-tot" class="preview"></div>
-    <footer><button type="button" class="btn" data-act="closeModal">Cancelar</button><button class="btn primary" type="submit" id="d-save">Salvar</button></footer>
+    <footer><button type="button" class="btn" data-act="dayDescartar">Descartar</button><button class="btn primary" type="submit" id="d-save">Salvar</button></footer>
   </form>`;
 }
 function renderDayRows(){
@@ -739,6 +760,7 @@ function renderDayRows(){
     <label class="field f-desc"><span>Serviço executado</span><input data-f="desc" value="${esc(r.desc)}" placeholder="Descrição da OS"></label>
     <label class="field f-cli"><span>Unidade</span><input data-f="cli" list="d-unid-list" value="${esc(r.cli)}" placeholder="${esc(d.unid||"Igual à de cima")}"></label>
     <label class="check emerg"><input type="checkbox" data-f="emerg" ${r.emerg?"checked":""}> Emergência</label>
+    ${state.cfg.almoco.ativo?`<label class="check emerg"><input type="checkbox" data-f="noAlm" ${r.noAlm?"checked":""}> Trabalhei no almoço</label>`:""}
     ${assets?`<span class="fotos"><label class="btn sm" for="d-foto-${i}">Fotos${(r.fotos||[]).length?` (${r.fotos.length})`:""}</label><input type="file" id="d-foto-${i}" data-foto-row="${i}" accept="image/*" multiple hidden></span>`:""}
     <div class="info" id="d-info-${i}"></div>
   </div>`).join("");
@@ -785,7 +807,7 @@ document.addEventListener("input", e=>{
   if(t.id==="d-orc"){ d.orcId = t.value; const o = orcOpts().find(x=>x.id===d.orcId); if(o && o.cliente){ d.emp = o.cliente; const ie=$("#d-emp"); if(ie) ie.value = o.cliente; } }
   if(t.id==="d-data" && t.value) d.data = t.value;
   if(t.name==="d-prof") d.profs = [...document.querySelectorAll('input[name="d-prof"]:checked')].map(x=>x.value);
-  updateDay();
+  updateDay(); clearTimeout(state.rascT); state.rascT = setTimeout(()=>rascunho.salvar(), 600);
 });
 document.addEventListener("change", e=>{
   if(!e.target.closest("#dayForm")) return;
@@ -817,12 +839,13 @@ async function submitDay(){
   let n = 0;
   try{
     for(const r of rows) for(const pr of quem){
-      await save(col, {...base, data:d.data, os:r.os.trim(), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], criadoEm:new Date().toISOString()});
+      const row = d.rows[r.i]; row.ids ||= {}; const id = row.ids[pr||"_"] ||= uid();
+      await save(col, {...base, id, noAlmoco:!!r.noAlm, data:d.data, os:r.os.trim(), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], criadoEm:new Date().toISOString()});
       n++;
     }
     try{ if(d.profs.length) localStorage.setItem("gaap-last-prof", JSON.stringify(d.profs)); if(d.emp) localStorage.setItem("gaap-last-emp", d.emp); }catch(err){}
-    closeModal(); state.month = ym(d.data); render(); toast(`${n} apontamento${n>1?"s":""} salvo${n>1?"s":""}`);
-  }catch(err){ btn.disabled = false; toast(n ? `${n} salvos, mas parei por um erro. ${writeErr(err)}` : writeErr(err)); }
+    rascunho.limpar(); state.modalDirty = false; closeModal(); state.month = ym(d.data); render(); toast(`${n} apontamento${n>1?"s":""} salvo${n>1?"s":""}`);
+  }catch(err){ btn.disabled = false; toast(n ? `${n} salvos, mas parei por um erro. ${writeErr(err)} Toque em Salvar de novo: o que já foi salvo não será duplicado.` : writeErr(err)); }
 }
 document.addEventListener("input", e=>{ if(e.target.closest("#apForm")) updateApPreview(); });
 document.addEventListener("change", e=>{ if(e.target.closest("#apForm")) updateApPreview(); });
@@ -835,17 +858,18 @@ document.addEventListener("submit", async e=>{
     const multi = (!$("#f-prof1") && !state.worker) ? selProfs() : [];
     if(!d.id && profs().length && !multi.length && !state.worker){ toast("Marque quem trabalhou nessa OS."); return; }
     const lk = lockOf(d.data, empOf(d)); if(lk){ toast(lockMsg(lk)); return; }
-    const prev = d.id ? state.ap.find(x=>x.id===d.id) : null;
-    if(!d.id){ d.criadoEm = new Date().toISOString(); delete d.exemplo; }
+    const prev = d.id ? state.ap.find(x=>x.id===d.id) : null, novo = !prev;
+    state.apIds ||= {};
+    if(novo){ d.criadoEm = state.apIds._criado ||= new Date().toISOString(); delete d.exemplo; if(!d.id) d.id = state.apIds._ ||= uid(); }
     if(state.worker){ delete d.valorHora; delete d.extraPct; delete d.feriadoPct; }
     else if(!prev || (prev.empresa||"")!==(d.empresa||"")){ Object.assign(d, rateFor(empOf(d))); }
     const col = "apontamentos";
     const btn = e.target.querySelector('[type="submit"]'); if(btn) btn.disabled = true;
     try{
-      if(!d.id && multi.length){ for(const pr of multi) await save(col, {...d, profissional:pr}); try{ localStorage.setItem("gaap-last-prof", JSON.stringify(multi)); }catch(err){} }
+      if(novo && multi.length){ for(const pr of multi) await save(col, {...d, id: state.apIds[pr] ||= uid(), profissional:pr}); try{ localStorage.setItem("gaap-last-prof", JSON.stringify(multi)); }catch(err){} }
       else await save(col, d);
       (prev?.fotos||[]).filter(id=>!(d.fotos||[]).includes(id)).forEach(id=>deleteAssetIfUnused(id, [d.id]));
-      closeModal(); toast(d.id ? "Apontamento atualizado" : multi.length>1 ? `${multi.length} apontamentos salvos (um por profissional)` : "Apontamento salvo"); state.month = ym(d.data); render();
+      state.modalDirty = false; closeModal(); toast(!novo ? "Apontamento atualizado" : multi.length>1 ? `${multi.length} apontamentos salvos (um por profissional)` : "Apontamento salvo"); state.month = ym(d.data); render();
     }
     catch(err){ if(btn) btn.disabled = false; toast(writeErr(err)); }
   }
@@ -881,6 +905,7 @@ function vRelatorios(){
       ${sel("rep-fmt","Horas em",r.fmt,[["dec","Decimal (4,50)"],["hm","Horas e minutos (4h30)"]])}
       <label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" id="rep-val" ${r.valores?"checked":""}> Mostrar valores em R$</label>
       ${r.modo==="periodo"?`<label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" id="rep-vaz" ${r.vazios?"checked":""}> Listar dias sem OS</label>`:""}
+      ${state.ap.some(e=>e.orcId)?`<label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" id="rep-orc" ${r.orc?"checked":""}> Incluir horas de orçamento (empreitada)</label>`:""}
       <label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" id="rep-fotos" ${r.fotos?"checked":""}> Incluir fotos no PDF</label>
     </div>
     <div class="row">
@@ -895,7 +920,7 @@ function vRelatorios(){
 function repRange(){ const r=state.rep; return r.modo==="dia" ? [r.dia, r.dia] : [r.de, r.ate]; }
 function repRows(){
   const [de, ate] = repRange();
-  return applyF(state.ap.filter(e=>e.data>=de && e.data<=ate), state.rep.f)
+  return applyF(state.ap.filter(e=>e.data>=de && e.data<=ate && (state.rep.orc || !e.orcId)), state.rep.f)
     .sort((a,b)=>(a.data+a.inicio+(a.profissional||"")).localeCompare(b.data+b.inicio+(b.profissional||"")));
 }
 function repGroups(){ return groupBy(repRows(), state.rep.by); }
@@ -962,6 +987,7 @@ document.addEventListener("change", e=>{
   if(map[id]){ r[map[id]] = e.target.value || (id==="rep-dia"?today():r[map[id]]); renderReport(); }
   if(id==="rep-val"){ r.valores = e.target.checked; renderReport(); }
   if(id==="rep-vaz"){ r.vazios = e.target.checked; renderReport(); }
+  if(id==="rep-orc"){ r.orc = e.target.checked; renderReport(); }
   if(id==="rep-fotos"){ r.fotos = e.target.checked; }
 });
 function repText(){
@@ -1058,7 +1084,7 @@ async function repXlsx(){
 }
 
 /* ---------- FECHAMENTOS ---------- */
-function fechRows(de, ate, emp){ return state.ap.filter(e=>e.data>=de && e.data<=ate && (!emp || empOf(e)===emp)); }
+function fechRows(de, ate, emp){ return state.ap.filter(e=>e.data>=de && e.data<=ate && !e.orcId && (!emp || empOf(e)===emp)); }
 function nextFech(){ const y = new Date().getFullYear(); const n = state.fech.map(f=>f.numero||"").filter(x=>x.startsWith(`F-${y}-`)).map(x=>+x.split("-")[2]||0); return `F-${y}-${String((n.length?Math.max(...n):0)+1).padStart(3,"0")}`; }
 const fechRecebido = f => state.rec.filter(r=>r.origem==="fech" && r.fechId===f.id).reduce((s,r)=>s+numIn(r.valor),0);
 const fechSaldo = f => Math.max(0, Math.round(((+f.valor||0) - fechRecebido(f))*100)/100);
@@ -1100,7 +1126,7 @@ async function submitFech(){
 }
 async function fechPdf(f){
   const saved = clone(state.rep);
-  state.rep = {...state.rep, modo:"periodo", de:f.de, ate:f.ate, f:{prof:ALL, unid:ALL, emp:f.empresa||ALL}, fechNum:f.numero};
+  state.rep = {...state.rep, modo:"periodo", orc:false, de:f.de, ate:f.ate, f:{prof:ALL, unid:ALL, emp:f.empresa||ALL}, fechNum:f.numero};
   try{ await repPdf(); } finally { state.rep = saved; }
 }
 /* ---------- PDF ---------- */
@@ -1479,7 +1505,11 @@ function vAjustes(){
     <div class="panel form"><h3>Funcionários, unidades e empresas</h3>
       <div class="grid2"><label class="field"><span>Funcionários (um por linha)</span><textarea id="c-profs" rows="4" placeholder="Ex.: Juliano de Oliveira">${esc(c.profissionais)}</textarea></label>
       <label class="field"><span>Unidades / locais (um por linha)</span><textarea id="c-unids" rows="4" placeholder="Ex.: Uruaçu">${esc(c.unidades)}</textarea></label></div>
-      <label class="field"><span>Empresas contratantes (uma por linha; a primeira é a padrão)</span><textarea id="c-emps" rows="3" placeholder="Ex.: Branil">${esc(empresasCfg().join("\n"))}</textarea></label>
+      <label class="field"><span>Empresas contratantes (uma por linha; a primeira é a padrão)</span><textarea id="c-emps" rows="3" placeholder="Ex.: Brejeiro">${esc(empresasCfg().join("\n"))}</textarea></label>
+      ${profs().length?`<details><summary class="muted" style="cursor:pointer">Renomear um funcionário sem perder o histórico e o acesso</summary>
+        <div class="grid3" style="margin-top:8px"><label class="field"><span>Nome atual</span><select id="rn-old">${profs().map(n=>`<option>${esc(n)}</option>`).join("")}</select></label>
+        <label class="field"><span>Novo nome</span><input id="rn-new" placeholder="Nome completo"></label>
+        <button type="button" class="btn" data-act="renomearProf" style="align-self:end">Renomear</button></div></details>`:""}
       <p class="muted" style="margin:0">Funcionários, unidades e empresas aparecem como filtros e na opção “Separar por” em Horas, Relatórios e Painel. Ao apontar uma OS feita por mais de um funcionário, marque todos e o sistema cria um apontamento para cada.</p>
     </div>
     <div class="panel form" id="acessos"><h3>Acessos</h3>
@@ -1540,11 +1570,13 @@ document.addEventListener("change", async e=>{
   try{
     const d = JSON.parse(await e.target.files[0].text());
     if(!d || !Array.isArray(d.apontamentos)) throw new Error("formato");
-    toast("Importando…");
+    const tot = COLS.reduce((n,c)=>n+(d[c]||[]).length,0);
+    if(!confirm(`Importar ${tot} registros deste backup? Registros com o mesmo código serão substituídos.`)){ e.target.value = ""; return; }
+    let n = 0;
     if(d.config) await saveCfg(d.config);
-    for(const col of COLS) for(const row of (d[col]||[])) await save(col, row);
-    toast("Backup importado");
-  }catch(err){ toast("Arquivo inválido. Use um backup exportado por este sistema."); }
+    for(const col of ["fechamentos", ...COLS.filter(c=>c!=="fechamentos")]) for(const row of (d[col]||[])){ if(!row || !row.id) continue; await save(col, row); n++; if(n%20===0) toast(`Importando… ${n} de ${tot}`); }
+    toast(`Backup importado: ${n} registros`);
+  }catch(err){ toast(err && err.code==="db" ? writeErr(err) : "Arquivo inválido. Use um backup exportado por este sistema."); }
   e.target.value = "";
 });
 
@@ -1609,7 +1641,19 @@ const A = {
   newRec(b){ openModal(recForm({o:b.dataset.o, m:b.dataset.m, e:b.dataset.e, v:b.dataset.v?Math.round(+b.dataset.v*100)/100:"", id:b.dataset.id})); },
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } try{ await removeDoc("recebimentos", b.dataset.id); toast("Recebimento excluído"); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
-  exportJson(){ const d = {sistema:"GAAP Gestão de Serviços", versao:1, exportadoEm:new Date().toISOString(), config:state.cfg, apontamentos:state.ap, orcamentos:state.orc, recebimentos:state.rec}; offerFile(`backup-gaap-${today()}.json`, JSON.stringify(d,null,1)); }
+  dayDescartar(){ rascunho.limpar(); closeModal(); },
+  async renomearProf(b){
+    const old = $("#rn-old")?.value || "", novo = ($("#rn-new")?.value || "").trim();
+    if(!old || !novo){ toast("Escolha o funcionário e digite o novo nome."); return; }
+    if(old===novo) return;
+    if(profs().includes(novo)){ toast(`Já existe um funcionário chamado ${novo}.`); return; }
+    if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent=`Confirmar: ${old} → ${novo}`; return; }
+    b.disabled = true;
+    const {data, error} = await sb.rpc("renomear_profissional", {p_antigo:old, p_novo:novo});
+    if(error){ b.disabled = false; toast(writeErr(dbErr(error))); return; }
+    await loadOwner(); state.rendered = null; render(); toast(`${old} agora é ${novo} (${data||0} OS atualizadas).`);
+  },
+  exportJson(){ const d = {sistema:"GAAP Gestão de Serviços", versao:2, exportadoEm:new Date().toISOString(), config:state.cfg, apontamentos:state.ap, orcamentos:state.orc, recebimentos:state.rec, fechamentos:state.fech, perfis:state.perfis||[]}; offerFile(`backup-gaap-${today()}.json`, JSON.stringify(d,null,1)); }
 };
 document.addEventListener("click", e=>{ const b = e.target.closest("[data-act]"); if(!b) return; const f = A[b.dataset.act]; if(f){ if(b.tagName==="BUTTON" && b.type!=="submit") e.preventDefault(); f(b,e); } });
 

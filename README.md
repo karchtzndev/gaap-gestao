@@ -16,7 +16,7 @@ orçamentos, fechamentos e valores a receber.
 | `config.js` | Endereço e chave **pública** (anon) do Supabase |
 | `logo.js`, `logo.jpg`, `icon-*.png`, `manifest.webmanifest` | Logo e ícones (pode instalar no celular) |
 | `vercel.json` | Cabeçalhos de segurança e cache |
-| `supabase/schema.sql` | Estrutura completa do banco, regras de acesso e funções |
+| `supabase/migrations/` | Estrutura completa do banco, regras de acesso e funções |
 
 ## Como funciona o acesso
 
@@ -38,7 +38,7 @@ Sem isso, os links de confirmação de e‑mail e de "esqueci a senha" apontam p
 
 ## Montar em outro projeto Supabase
 
-1. Crie o projeto e rode `supabase/schema.sql` no **SQL Editor**.
+1. Crie o projeto e rode os arquivos de `supabase/migrations/` em ordem no **SQL Editor**.
 2. Copie a **Project URL** e a chave **anon** (Settings → API) para `config.js`.
 
 ## Publicar
