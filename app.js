@@ -1,0 +1,1617 @@
+"use strict";
+const SOBRE = "A GAAP ENGENHARIA é uma empresa especializada no ramo de montagem e manutenção mecânica industrial, para empresas voltadas para manipulação de grãos, cervejarias e farmacêuticas. Fabricação e montagem de galpões e estruturas metálicas no geral. Atuamos na área de engenharia Mecânica, Civil e de Segurança do Trabalho; projetos, laudos, ART e treinamentos de segurança. A empresa está estrategicamente localizada na cidade de Anápolis GO, onde se encontra o maior polo industrial do Centro-Oeste.";
+const DEFAULT_CFG = {
+  empresa:{nome:"GAAP ENGENHARIA",cnpj:"58.486.529/0001-47",email:"gaapengenharia3m@gmail.com",telefone:"(62) 9 9310-3507",cidade:"Anápolis GO",responsavel:"",sobre:SOBRE},
+  contratante:"",
+  valorHora:60, extraPct:50, feriadoPct:100,
+  jornada:{"0":{ini:"",fim:""},"1":{ini:"07:00",fim:"16:00"},"2":{ini:"07:00",fim:"16:00"},"3":{ini:"07:00",fim:"16:00"},"4":{ini:"07:00",fim:"16:00"},"5":{ini:"07:00",fim:"16:00"},"6":{ini:"07:00",fim:"11:00"}},
+  almoco:{ativo:false,ini:"11:00",fim:"12:00"},
+  feriados:{carnaval:false,corpus:false,extras:"31/07 Aniversário de Anápolis"},
+  tolerancia:0, profissionais:"", unidades:"", empresas:"", custos:{}, taxas:{}
+};
+const WD = ["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"];
+const WDS = ["dom","seg","ter","qua","qui","sex","sáb"];
+const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+const ST = {rascunho:["Rascunho",""],enviado:["Enviado","info"],aprovado:["Aprovado","good"],concluido:["Concluído","good"],recusado:["Recusado","bad"]};
+const TIPOS = {auto:"Automático pelo horário",normal:"Forçar hora normal",e50:"Forçar extra 50%",e100:"Forçar extra 100%"};
+
+/* ---------- utils ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const brl = v => (Number(v)||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+const num = v => { const n = parseFloat(String(v ?? "").replace(/\./g,"").replace(",", ".")); return isFinite(n) ? n : 0; };
+const numIn = v => { const s=String(v??"").trim(); if(!s) return 0; if(s.includes(",")) return num(s); const n=parseFloat(s); return isFinite(n)?n:0; };
+const pad = n => String(n).padStart(2,"0");
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const parseYmd = s => { const [y,m,d] = s.split("-").map(Number); return new Date(y,m-1,d); };
+const addDays = (d,n) => new Date(d.getFullYear(), d.getMonth(), d.getDate()+n);
+const today = () => ymd(new Date());
+const nowHM = () => { const d=new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const hm = s => { if(!s) return null; const [h,m]=s.split(":").map(Number); return h*60+m; };
+const fh = m => `${Math.floor(m/60)}h${pad(Math.round(m%60))}`;
+const fdec = m => (m/60).toFixed(2).replace(".",",");
+const lines = s => String(s||"").split("\n").map(x=>x.trim()).filter(Boolean);
+const profs = () => lines(state.cfg.profissionais);
+const fdate = s => s ? s.split("-").reverse().join("/") : "";
+const ym = s => s.slice(0,7);
+const ymLabel = k => { const [y,m]=k.split("-").map(Number); return `${MESES[m-1]} ${y}`; };
+const shiftYm = (k,n) => { const [y,m]=k.split("-").map(Number); const d=new Date(y,m-1+n,1); return `${d.getFullYear()}-${pad(d.getMonth()+1)}`; };
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+const clone = o => JSON.parse(JSON.stringify(o));
+function deepMerge(base, over){ const out = clone(base); if(!over||typeof over!=="object") return out; for(const k of Object.keys(over)){ const v=over[k]; out[k] = (v && typeof v==="object" && !Array.isArray(v) && out[k] && typeof out[k]==="object") ? deepMerge(out[k], v) : v; } return out; }
+function extenso(d=new Date()){ const m=MESES[d.getMonth()]; return `${d.getDate()} de ${m[0].toUpperCase()+m.slice(1)} de ${d.getFullYear()}`; }
+
+/* ---------- feriados ---------- */
+function easter(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),da=((h+l-7*m+114)%31)+1;return new Date(y,mo-1,da);}
+let holCache = {};
+function holidays(y){
+  const key = y+JSON.stringify(state.cfg.feriados);
+  if(holCache[key]) return holCache[key];
+  const map = {};
+  const put = (d,n) => { map[ymd(d)] = n; };
+  [["01-01","Confraternização Universal"],["04-21","Tiradentes"],["05-01","Dia do Trabalho"],["09-07","Independência do Brasil"],["10-12","Nossa Senhora Aparecida"],["11-02","Finados"],["11-15","Proclamação da República"],["11-20","Consciência Negra"],["12-25","Natal"]].forEach(([md,n])=>map[`${y}-${md}`]=n);
+  const e = easter(y);
+  put(addDays(e,-2),"Sexta-feira Santa");
+  if(state.cfg.feriados.carnaval){ put(addDays(e,-48),"Carnaval"); put(addDays(e,-47),"Carnaval"); }
+  if(state.cfg.feriados.corpus) put(addDays(e,60),"Corpus Christi");
+  String(state.cfg.feriados.extras||"").split("\n").forEach(line=>{
+    const m = line.trim().match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\s*(.*)$/);
+    if(!m) return; if(m[3] && +m[3]!==y) return;
+    map[`${y}-${pad(+m[2])}-${pad(+m[1])}`] = m[4] || "Feriado";
+  });
+  return holCache[key] = map;
+}
+const holidayName = ds => holidays(+ds.slice(0,4))[ds] || null;
+
+/* ---------- cálculo de horas ---------- */
+function calc(e){
+  const cfg = state.cfg;
+  const r = {n:0,e50:0,e100:0,total:0,valor:0,vn:0,v50:0,v100:0};
+  const s0 = hm(e.inicio), f0 = hm(e.fim);
+  if(!e.data || s0==null || f0==null) return r;
+  let f = f0; if(f <= s0) f += 1440;
+  const base = parseYmd(e.data), days = {};
+  const aIni = hm(cfg.almoco.ini), aFim = hm(cfg.almoco.fim);
+  let early = 0, late = 0;
+  for(let t=s0; t<f; t++){
+    const dn = Math.floor(t/1440), mod = t%1440;
+    let info = days[dn];
+    if(!info){ const dt=addDays(base,dn), wd=dt.getDay(), j=cfg.jornada[wd]||{}; info = days[dn] = {special: wd===0 || !!holidayName(ymd(dt)), ji:hm(j.ini), jf:hm(j.fim)}; }
+    let b;
+    if(e.tipo==="normal") b="n"; else if(e.tipo==="e50") b="e50"; else if(e.tipo==="e100") b="e100";
+    else if(info.special) b="e100";
+    else if(info.ji!=null && info.jf!=null && mod>=info.ji && mod<info.jf){
+      if(cfg.almoco.ativo && aIni!=null && aFim!=null && mod>=aIni && mod<aFim) continue;
+      b="n";
+    } else { b="e50"; if(info.ji!=null && info.jf!=null){ if(mod<info.ji) early++; else late++; } }
+    r[b]++;
+  }
+  const tol = +cfg.tolerancia || 0;
+  if(tol && r.n>0 && (!e.tipo || e.tipo==="auto")){
+    if(early && early<=tol){ r.e50-=early; r.n+=early; }
+    if(late && late<=tol){ r.e50-=late; r.n+=late; }
+  }
+  const T = rateFor(empOf(e));
+  const rate = (e.valorHora ?? T.valorHora) / 60;
+  const p50 = e.extraPct ?? T.extraPct, p100 = e.feriadoPct ?? T.feriadoPct;
+  r.vn = rate*r.n; r.v50 = rate*r.e50*(1+p50/100); r.v100 = rate*r.e100*(1+p100/100);
+  r.total = r.n+r.e50+r.e100;
+  if(e.orcId){ r.orc = true; r.vn = r.v50 = r.v100 = 0; }
+  r.valor = Math.round((r.vn+r.v50+r.v100)*100)/100;
+  return r;
+}
+function rateFor(emp){
+  const t = (state.cfg.taxas||{})[emp] || {}, num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
+  return {valorHora:num0(t.valorHora, +state.cfg.valorHora), extraPct:num0(t.extraPct, +state.cfg.extraPct), feriadoPct:num0(t.feriadoPct, +state.cfg.feriadoPct)};
+}
+let mmCache = {ref:null, map:null};
+function monthMinutes(){
+  if(mmCache.ref===state.ap) return mmCache.map;
+  const m = {}; state.ap.forEach(e=>{ const k=(e.profissional||"")+"|"+ym(e.data); m[k]=(m[k]||0)+calc(e).total; });
+  mmCache = {ref:state.ap, map:m}; return m;
+}
+const temCustos = () => Object.values(state.cfg.custos||{}).some(c=>+c.valor>0);
+const HORAS_MES = 220;
+function custoHora(nome){ const c = (state.cfg.custos||{})[nome]; if(!c || !(+c.valor>0)) return 0; return c.tipo==="mes" ? +c.valor/HORAS_MES : +c.valor; }
+function custo(e){
+  const v = custoHora(e.profissional); if(!v) return 0;
+  const k = calc(e);
+  return v/60*(k.n + k.e50*(1+state.cfg.extraPct/100) + k.e100*(1+state.cfg.feriadoPct/100));
+}
+const custoSum = list => Math.round(list.reduce((s,e)=>s+custo(e),0)*100)/100;
+function sumCalc(list){ const t={n:0,e50:0,e100:0,total:0,valor:0,vn:0,v50:0,v100:0}; list.forEach(e=>{const c=calc(e); for(const k in t) t[k]+=c[k];}); t.valor=Math.round(t.valor*100)/100; return t; }
+function overlaps(list){
+  const bad = new Set();
+  const iv = list.map(e=>{const s=hm(e.inicio); let f=hm(e.fim); if(f<=s) f+=1440; const o=(parseYmd(e.data)-parseYmd("2000-01-01"))/864e5*1440; return {id:e.id,p:e.profissional||"",s:o+s,f:o+f};}).sort((a,b)=>a.s-b.s);
+  for(let i=1;i<iv.length;i++) for(let j=0;j<i;j++) if(iv[i].p===iv[j].p && iv[i].s < iv[j].f){ bad.add(iv[i].id); bad.add(iv[j].id); }
+  return bad;
+}
+
+/* ---------- orçamento ---------- */
+function orcTotals(o){ const sub=(o.itens||[]).reduce((s,i)=>s+numIn(i.qtd)*numIn(i.valor),0); const desc=sub*numIn(o.descontoPct)/100; return {sub,desc,total:Math.round((sub-desc)*100)/100}; }
+const orcRecebido = id => state.rec.filter(r=>r.origem==="orc"&&r.orcId===id).reduce((s,r)=>s+numIn(r.valor),0);
+const orcAberto = o => ["aprovado","concluido"].includes(o.status);
+function orcValidade(o){ if(!o.data) return null; return ymd(addDays(parseYmd(o.data), +o.validadeDias||0)); }
+
+/* ---------- dados (Supabase) ---------- */
+const COLS = ["apontamentos","orcamentos","recebimentos","fechamentos"];
+const KEY = {apontamentos:"ap",orcamentos:"orc",recebimentos:"rec",fechamentos:"fech"};
+const state = {
+  ready:false, cfg:clone(DEFAULT_CFG), ap:[], orc:[], rec:[], fech:[], perfis:[], worker:false, me:"", pub:null, hmode:"dia", osQ:"",
+  view:"painel", month:ym(today()), orcFilter:"todos", orcDraft:null, auth:"entrar",
+  rep:{modo:"dia", dia:today(), de:ym(today())+"-01", ate:today(), valores:true, f:{prof:"__all",unid:"__all",emp:"__all"}, by:"", vazios:true, fmt:"dec"},
+  hf:{f:{prof:"__all",unid:"__all",emp:"__all"}, by:""}, pby:"prof"
+};
+const sb = window.supabase.createClient(window.GAAP_CONFIG.supabaseUrl, window.GAAP_CONFIG.supabaseKey, {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:true}});
+let session = null, perfil = null;
+const MSG_DB = {SEM_PERMISSAO:"Seu acesso ainda não foi liberado para lançar OS. Fale com o responsável.", NAO_E_SEU:"Esse lançamento não é seu.", DATA_INVALIDA:"Data inválida."};
+function dbErr(error){
+  const m = String(error?.message||"");
+  if(m.startsWith("PERIODO_FECHADO:")) return {code:"db", message:`Esse período já foi fechado (${m.split(":")[1]}). Fale com o responsável.`};
+  if(MSG_DB[m]) return {code:"db", message:MSG_DB[m]};
+  if(error?.code==="42501" || /row-level security/i.test(m)) return {code:"invalid_argument", message:""};
+  return {code:"unavailable", message:""};
+}
+async function fetchAll(table){
+  const out = []; const step = 1000;
+  for(let from=0; ; from+=step){
+    const {data, error} = await sb.from(table).select("id,data").order("id").range(from, from+step-1);
+    if(error) throw error; out.push(...data); if(data.length < step) break;
+  }
+  return out;
+}
+const setList = (k, list) => { state[k] = list; if(k==="ap") mmCache.ref = null; };
+function upsertLocal(k, row){ setList(k, [...state[k].filter(x=>x.id!==row.id), row]); }
+async function save(col, obj){
+  const id = obj.id || uid(); const data = clone(obj);
+  delete data.id; delete data._col; data.atualizadoEm = new Date().toISOString();
+  if(state.worker){
+    const {data:newId, error} = await sb.rpc("func_salvar_os", {p_id:id, p_data:data});
+    if(error) throw dbErr(error);
+    const row = {...data, id:newId||id, profissional:state.me, lancadoPor:"funcionario"}; delete row.valorHora; delete row.extraPct; delete row.feriadoPct;
+    upsertLocal("ap", row); scheduleRender(); return row.id;
+  }
+  const {error} = await sb.from(col).upsert({id, data});
+  if(error) throw dbErr(error);
+  upsertLocal(KEY[col], {id, ...data}); scheduleRender();
+  return id;
+}
+async function removeDoc(col, id){
+  if(state.worker){ const {error} = await sb.rpc("func_excluir_os", {p_id:id}); if(error) throw dbErr(error); }
+  else { const {error} = await sb.from(col).delete().eq("id", id); if(error) throw dbErr(error); }
+  setList(KEY[col], state[KEY[col]].filter(x=>x.id!==id)); scheduleRender();
+}
+const removeAp = e => removeDoc("apontamentos", e.id);
+async function saveCfg(cfg){
+  holCache = {};
+  const {error} = await sb.from("config").upsert({id:"main", data:cfg});
+  if(error) throw dbErr(error);
+}
+async function loadOwner(){
+  const [cfg, perfis, ...rows] = await Promise.all([sb.from("config").select("data").eq("id","main").maybeSingle(), sb.from("perfis").select("*").order("criado_em"), ...COLS.map(fetchAll)]);
+  if(cfg.error) throw cfg.error;
+  state.cfg = deepMerge(DEFAULT_CFG, cfg.data?.data || null); holCache = {};
+  state.perfis = perfis.data || [];
+  COLS.forEach((c,i)=>{ let list = rows[i].map(r=>({id:r.id, ...r.data})); if(c==="apontamentos") list = list.filter(e=>!e.excluido); setList(KEY[c], list); });
+}
+async function loadWorker(){
+  const [pc, os] = await Promise.all([sb.rpc("pub_config"), sb.rpc("minhas_os")]);
+  if(pc.error) throw pc.error; if(os.error) throw os.error;
+  state.pub = pc.data || {}; state.cfg = deepMerge(DEFAULT_CFG, state.pub.cfg || {}); holCache = {};
+  setList("ap", (os.data||[]).map(r=>({id:r.id, ...r.data})));
+}
+async function carregar(){
+  if(!session || !perfil) return;
+  if(perfil.papel==="funcionario") await loadWorker(); else if(perfil.papel==="dono") await loadOwner();
+}
+async function boot(){
+  state.ready = false; render();
+  try{
+    const {data, error} = await sb.from("perfis").select("*").eq("user_id", session.user.id).maybeSingle();
+    if(error) throw error;
+    perfil = data;
+    state.worker = perfil?.papel==="funcionario"; state.me = state.worker ? (perfil.nome||"") : "";
+    if(state.worker) state.view = "worker"; else if(state.view==="worker") state.view = "painel";
+    await carregar();
+  }catch(err){ toast("Não consegui carregar os dados. Verifique a conexão e recarregue a página."); }
+  state.ready = true; render();
+}
+async function initStore(){
+  const {data} = await sb.auth.getSession(); session = data.session;
+  sb.auth.onAuthStateChange((ev, s)=>{
+    const tinha = !!session; session = s;
+    if(ev==="PASSWORD_RECOVERY"){ state.auth = "nova-senha"; state.ready = true; render(); return; }
+    if(ev==="SIGNED_OUT"){ perfil = null; Object.assign(state, {worker:false, me:"", ap:[], orc:[], rec:[], fech:[], perfis:[], pub:null, view:"painel", auth:"entrar"}); render(); return; }
+    if(ev==="SIGNED_IN" && !tinha) boot();
+  });
+  if(!session){ state.ready = true; render(); return; }
+  await boot();
+}
+/* atualiza sozinho: ao voltar para a aba e a cada 2 minutos */
+let recarregando = false;
+async function atualizar(){
+  if(recarregando || !session || !perfil || !state.ready || !$("#modal").hidden || ["orcEdit","ajustes"].includes(state.view)) return;
+  recarregando = true; try{ await carregar(); scheduleRender(); }catch(e){} finally{ recarregando = false; }
+}
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) atualizar(); });
+setInterval(atualizar, 120000);
+/* fotos no Storage privado: o id é o caminho do arquivo */
+const assets = {
+  async upload(blob, {type}){
+    const path = `${session.user.id}/${uid()}.${type==="image/png"?"png":type==="image/webp"?"webp":type==="image/gif"?"gif":"jpg"}`;
+    const {error} = await sb.storage.from("fotos").upload(path, blob, {contentType:type, upsert:false});
+    if(error) throw {code:/size/i.test(error.message)?"too_large":/mime|type/i.test(error.message)?"unsupported_type":"upstream_error", message:error.message};
+    await assinarFotos([path]);
+    return {id:path, url:assetUrls[path]};
+  },
+  async delete(id){ await sb.storage.from("fotos").remove([id]); return {deleted:true}; }
+};
+async function assinarFotos(ids){
+  const falta = [...new Set(ids)].filter(id=>id && !assetUrls[id]); if(!falta.length) return;
+  const {data} = await sb.storage.from("fotos").createSignedUrls(falta, 60*60*6);
+  (data||[]).forEach(d=>{ if(d.signedUrl) assetUrls[d.path] = d.signedUrl; });
+}
+let fotoT = 0;
+new MutationObserver(()=>{ clearTimeout(fotoT); fotoT = setTimeout(async ()=>{
+  const imgs = [...document.querySelectorAll("img[data-fid]")].filter(i=>!i.dataset.ok);
+  if(!imgs.length) return;
+  await assinarFotos(imgs.map(i=>i.dataset.fid));
+  imgs.forEach(i=>{ const u = assetUrls[i.dataset.fid]; if(u){ i.src = u; i.dataset.ok = "1"; } });
+}, 60); }).observe(document.body, {childList:true, subtree:true});
+let rq = 0;
+function scheduleRender(){ cancelAnimationFrame(rq); rq = requestAnimationFrame(()=>{ if(!state.ready) return; if(["orcEdit","ajustes"].includes(state.view) && state.rendered===state.view) return; if(state.rendered==="login" && $("#loginForm")) return; render(); }); }
+/* ---------- toast & modal ---------- */
+let tt;
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.hidden=false; clearTimeout(tt); tt=setTimeout(()=>t.hidden=true, 3200); }
+function openModal(html, cls){ const m=$("#modal"); m.innerHTML=`<div class="sheet ${cls||""}" role="dialog" aria-modal="true">${html}</div>`; m.hidden=false; const f=m.querySelector("input,select,textarea"); if(f && window.innerWidth>700) f.focus(); }
+function closeModal(){ const m=$("#modal"); m.hidden=true; m.innerHTML=""; }
+$("#modal").addEventListener("click", e=>{ if(e.target.id==="modal") closeModal(); });
+document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("#modal").hidden) closeModal(); });
+
+/* ---------- nav ---------- */
+const ICONS = {
+  painel:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/></svg>',
+  horas:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  relatorios:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>',
+  orcamentos:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h10"/><rect x="2" y="3" width="20" height="18" rx="2"/></svg>',
+  financeiro:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 6.5c-1-1.5-3-2-5-2-2.5 0-4.5 1.2-4.5 3.3 0 4.7 9.5 2.4 9.5 7.2 0 2.2-2.2 3.5-5 3.5-2.2 0-4.3-.8-5.3-2.5"/></svg>'
+};
+const NAV = [["painel","Painel"],["horas","Horas"],["relatorios","Relatórios"],["orcamentos","Orçamentos"],["financeiro","Financeiro"]];
+function renderNav(){
+  if(state.worker){ $("#tabbar").hidden = true; $("#railnav").innerHTML = ""; const g=document.querySelector('.topbar [data-view="ajustes"]'); if(g) g.hidden = true; return; }
+  const cur = state.view==="orcEdit" ? "orcamentos" : state.view;
+  const html = NAV.map(([k,l])=>`<button class="navbtn" data-act="nav" data-view="${k}" ${cur===k?'aria-current="page"':""}>${ICONS[k]}<span>${l}</span></button>`).join("");
+  $("#tabbar").innerHTML = html; $("#railnav").innerHTML = html;
+}
+
+/* ---------- render ---------- */
+function render(){
+  renderNav();
+  const v = $("#view");
+  if(!state.ready){ v.innerHTML = `<div class="loading">Carregando seus dados…</div>`; return; }
+  if(!sessOk()){ document.body.classList.add("locked"); v.innerHTML = vLogin(); state.rendered = "login"; const f = $("#lg-email") || $("#lg-senha"); if(f && window.innerWidth>700) f.focus(); return; }
+  document.body.classList.remove("locked");
+  const fn = state.worker ? vWorker : ({painel:vPainel, horas:vHoras, relatorios:vRelatorios, orcamentos:vOrcamentos, orcEdit:vOrcEdit, financeiro:vFinanceiro, ajustes:vAjustes}[state.view] || vPainel);
+  v.innerHTML = fn();
+  state.rendered = state.view;
+  if(state.view==="painel") drawChart();
+  if(state.view==="relatorios") renderReport();
+}
+function exampleBanner(){
+  if(state.worker) return "";
+  const pend = state.perfis.filter(p=>p.papel==="pendente").length;
+  const aviso = pend ? `<div class="banner"><span>${pend} pessoa${pend>1?"s":""} criou conta e está aguardando você liberar o acesso.</span><button class="btn sm" data-act="irAcessos">Ver acessos</button></div>` : "";
+  const n = state.ap.filter(x=>x.exemplo).length + state.orc.filter(x=>x.exemplo).length + state.rec.filter(x=>x.exemplo).length;
+  if(!n) return aviso;
+  return aviso + `<div class="banner"><span>Estes são dados de exemplo para você ver o sistema funcionando (${n} registros marcados como exemplo).</span><button class="btn sm" data-act="clearExamples">Apagar exemplos</button></div>`;
+}
+function monthNav(){ return `<div class="monthnav"><button data-act="month" data-d="-1" aria-label="Mês anterior">‹</button><span>${ymLabel(state.month)}</span><button data-act="month" data-d="1" aria-label="Próximo mês">›</button></div>`; }
+function bucketChips(c){
+  const out=[]; if(c.n) out.push(`<span class="pill"><i class="dot d-n"></i>${fh(c.n)} normal</span>`);
+  if(c.e50) out.push(`<span class="pill"><i class="dot d-50"></i>${fh(c.e50)} extra ${state.cfg.extraPct}%</span>`);
+  if(c.e100) out.push(`<span class="pill"><i class="dot d-100"></i>${fh(c.e100)} extra ${state.cfg.feriadoPct}%</span>`);
+  return out.join("");
+}
+/* ---------- fechamentos, fotos e orçamentos ligados ---------- */
+const money = v => state.worker ? "" : brl(v);
+function fechList(){ return state.worker ? (state.pub?.fechados||[]) : state.fech; }
+function lockOf(data, emp){ return fechList().find(f=>data>=f.de && data<=f.ate && (!f.empresa || f.empresa===emp)); }
+const lockedE = e => lockOf(e.data, empOf(e));
+const lockMsg = f => state.worker ? `Esse período já foi fechado (${f.numero||""}). Fale com o responsável para alterar.` : `Período fechado (${f.numero||""}). Para alterar, reabra o fechamento no Financeiro.`;
+function orcOpts(){ return state.worker ? (state.pub?.orcs||[]) : state.orc.filter(orcAberto).map(o=>({id:o.id, numero:o.numero||"", titulo:o.titulo||"", cliente:o.cliente?.nome||""})); }
+function orcNum(id){ const o = orcOpts().find(x=>x.id===id) || state.orc.find(x=>x.id===id); return o ? (o.numero||"") : ""; }
+function orcSelect(id, cur){
+  const os = orcOpts(); if(!os.length && !cur) return "";
+  return `<label class="field"><span>Serviço de orçamento (empreitada)</span><select id="${id}"><option value="">Não, horas do contrato</option>${os.map(o=>`<option value="${esc(o.id)}" ${o.id===cur?"selected":""}>${esc(o.numero)} · ${esc(o.cliente)} · ${esc(o.titulo)}</option>`).join("")}</select></label>`;
+}
+const assetUrls = {};
+const PIX = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
+const blobSrc = id => assetUrls[id] || PIX;
+async function compressImage(file){
+  try{
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url; });
+    const k = Math.min(1, 1600/Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas"); c.width = Math.round(img.naturalWidth*k); c.height = Math.round(img.naturalHeight*k);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+    const b = await new Promise(res=>c.toBlob(res, "image/jpeg", 0.8));
+    return b || file;
+  }catch(e){ return file; }
+}
+function photoErr(err){ const c = err && err.code; return c==="quota_or_state" ? "Espaço para fotos esgotado. Apague fotos antigas." : c==="too_large" ? "Foto muito grande." : c==="unsupported_type" ? "Formato de imagem não aceito. Use JPG ou PNG." : c==="rate_limited" ? "Muitas fotos de uma vez. Espere um pouco e tente de novo." : "Não consegui enviar a foto. Verifique a conexão."; }
+async function uploadPhotos(files){
+  if(!assets){ toast("Fotos indisponíveis nesta visualização."); return []; }
+  const ids = [], ok = ["image/jpeg","image/png","image/webp","image/gif"];
+  for(const f of files){
+    try{ toast(`Enviando foto ${ids.length+1} de ${files.length}…`); const b = await compressImage(f); const r = await assets.upload(b, {type: ok.includes(b.type) ? b.type : "image/jpeg"}); assetUrls[r.id] = r.url; ids.push(r.id); }
+    catch(err){ toast(photoErr(err)); break; }
+  }
+  if(ids.length) toast(`${ids.length} foto${ids.length>1?"s":""} adicionada${ids.length>1?"s":""}`);
+  return ids;
+}
+function deleteAssetIfUnused(id, except=[]){ if(!assets || !id) return; if(state.ap.some(e=>!except.includes(e.id) && (e.fotos||[]).includes(id))) return; assets.delete(id).catch(()=>{}); }
+function thumbs(ids, removable){ return (ids||[]).map(id=>`<span class="thumb"><img src="${esc(blobSrc(id))}" data-fid="${esc(id)}" alt="Foto do serviço" data-act="fotoVer" data-id="${esc(id)}" loading="lazy">${removable?`<button type="button" class="thumbx" data-act="fotoDel" data-id="${esc(id)}" aria-label="Remover foto">✕</button>`:""}</span>`).join(""); }
+document.addEventListener("change", async e=>{
+  const t = e.target;
+  if(t.id==="f-foto" && t.files.length){ const ids = await uploadPhotos([...t.files]); state.apFotos = [...(state.apFotos||[]), ...ids]; const box=$("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); t.value=""; }
+  if(t.dataset && t.dataset.fotoRow!=null && t.files.length){ const i=+t.dataset.fotoRow, r=state.day.rows[i]; const ids = await uploadPhotos([...t.files]); r.fotos = [...(r.fotos||[]), ...ids]; const lb=document.querySelector(`label[for="d-foto-${i}"]`); if(lb) lb.textContent = `Fotos (${r.fotos.length})`; t.value=""; }
+});
+function apItem(e, showDate, bad){
+  const c = calc(e), lk = lockedE(e), nf = (e.fotos||[]).length;
+  return `<button class="item" data-act="editAp" data-id="${e.id}">
+    <span class="t">${showDate?`${fdate(e.data).slice(0,5)}<br>`:""}${esc(e.inicio)}–${esc(e.fim)}</span>
+    <span class="main"><b>${e.os?`OS ${esc(e.os)}`:"Sem nº de OS"}${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.exemplo?' <span class="pill">Exemplo</span>':""}</b>
+      <span class="sub">${esc(e.descricao||"")}</span>
+      <span class="sub" style="display:block">${[empOf(e), e.cliente].filter(Boolean).map(esc).join(" · ")}</span>
+      ${e.profissional && !state.worker?`<span class="sub" style="display:block"><b style="display:inline;font-weight:600;color:var(--fg)">${esc(e.profissional)}</b></span>`:""}
+      <span class="chips">${bucketChips(c)}${e.orcId?`<span class="pill info">Orçamento ${esc(orcNum(e.orcId))}</span>`:""}${nf?`<span class="pill">${nf} foto${nf>1?"s":""}</span>`:""}${lk?`<span class="pill">Fechado ${esc(lk.numero||"")}</span>`:""}${e.lancadoPor==="funcionario"&&!state.worker?'<span class="pill">Lançado pelo funcionário</span>':""}${bad&&bad.has(e.id)?'<span class="pill bad">Horário sobreposto</span>':""}</span></span>
+    <span class="val">${fh(c.total)}<br><span class="muted">${state.worker ? "" : c.orc ? "orçamento" : brl(c.valor)}</span></span></button>`;
+}
+
+/* ---------- dimensões: funcionário, unidade, empresa ---------- */
+const ALL = "__all";
+const empOf = e => e.empresa || state.cfg.contratante || "";
+function empresasCfg(){ const l = lines(state.cfg.empresas); if(state.cfg.contratante && !l.includes(state.cfg.contratante)) l.unshift(state.cfg.contratante); return l; }
+const DIMS = {
+  prof:{label:"Funcionário", plural:"Funcionários", none:"(sem funcionário)", get:e=>e.profissional||"", cfg:()=>profs()},
+  unid:{label:"Unidade", plural:"Unidades", none:"(sem unidade)", get:e=>e.cliente||"", cfg:()=>lines(state.cfg.unidades)},
+  emp:{label:"Empresa", plural:"Empresas", none:"(sem empresa)", get:e=>empOf(e), cfg:()=>empresasCfg()}
+};
+function dimVals(k, list){ return [...new Set([...DIMS[k].cfg(), ...(list||state.ap).map(DIMS[k].get).filter(Boolean)])]; }
+function applyF(list, f){ return list.filter(e=>Object.keys(DIMS).every(k=>!f || !f[k] || f[k]===ALL || DIMS[k].get(e)===f[k])); }
+function groupBy(list, k){
+  if(!k) return [{key:null, label:"", rows:list}];
+  const m = new Map(); list.forEach(e=>{ const v = DIMS[k].get(e); if(!m.has(v)) m.set(v, []); m.get(v).push(e); });
+  return [...m.entries()].sort((a,b)=>(a[0]||"~").localeCompare(b[0]||"~", "pt-BR")).map(([key,rows])=>({key, label:key||DIMS[k].none, rows}));
+}
+function filterBar(prefix, f, by){
+  const sel = (id, label, cur, opts) => `<label class="field"><span>${label}</span><select id="${id}">${opts.map(([v,l])=>`<option value="${esc(v)}" ${cur===v?"selected":""}>${esc(l)}</option>`).join("")}</select></label>`;
+  const parts = Object.entries(DIMS).map(([k,d])=>{ const vals = dimVals(k); return vals.length ? sel(`${prefix}-f-${k}`, d.label, f[k], [[ALL, k==="prof"?"Todos":"Todas"], ...vals.map(v=>[v,v])]) : ""; }).join("");
+  return parts + sel(`${prefix}-by`, "Separar por", by, [["","Não separar"],["prof","Funcionário"],["unid","Unidade"],["emp","Empresa"]]);
+}
+function dimTable(list, k, opt={}){
+  const groups = groupBy(list, k);
+  if(!list.length || (groups.length<2 && !groups[0].key)) return "";
+  const t = sumCalc(list), lu = opt.lucro && temCustos();
+  const pc = (v,c) => v>0 ? Math.round(100*(v-c)/v)+"%" : "-";
+  const cells = (rows, c) => { const cu = lu ? custoSum(rows.filter(e=>!e.orcId)) : 0; return `<td class="r mono">${rows.length}</td><td class="r mono">${fdec(c.total)}</td><td class="r mono">${fdec(c.e50)}</td><td class="r mono">${fdec(c.e100)}</td><td class="r mono">${brl(c.valor)}</td>${lu?`<td class="r mono">${brl(cu)}</td><td class="r mono"><b>${brl(c.valor-cu)}</b></td><td class="r mono">${pc(c.valor,cu)}</td>`:""}`; };
+  return `<div class="tablewrap"><table><thead><tr><th>${DIMS[k].label}</th><th class="r">OS</th><th class="r">Horas</th><th class="r">Extra ${state.cfg.extraPct}%</th><th class="r">Extra ${state.cfg.feriadoPct}%</th><th class="r">Faturado</th>${lu?'<th class="r">Custo equipe</th><th class="r">Lucro</th><th class="r">Margem</th>':""}</tr></thead>
+  <tbody>${groups.map(g=>`<tr><td>${esc(g.label)}</td>${cells(g.rows, sumCalc(g.rows))}</tr>`).join("")}</tbody>
+  ${groups.length>1?`<tfoot><tr><td>Total</td>${cells(list, t)}</tr></tfoot>`:""}</table></div>`;
+}
+document.addEventListener("change", e=>{
+  const m = e.target.id.match(/^(h|rep)-(?:f-(prof|unid|emp)|(by))$/); if(!m) return;
+  const tgt = m[1]==="h" ? state.hf : state.rep;
+  if(m[2]) tgt.f[m[2]] = e.target.value; else tgt.by = e.target.value;
+  if(m[1]==="h") render(); else renderReport();
+});
+/* ---------- LOGIN ---------- */
+const sessOk = () => !!session && !!perfil && ["dono","funcionario"].includes(perfil.papel);
+const AUTH_ERR = {"Invalid login credentials":"E-mail ou senha incorretos.", "Email not confirmed":"Confirme seu e-mail antes de entrar. Procure a mensagem na sua caixa de entrada (e no spam).", "User already registered":"Esse e-mail já tem conta. Use “Entrar”.", "Password should be at least 6 characters.":"A senha precisa ter pelo menos 6 caracteres."};
+const authMsg = e => AUTH_ERR[e?.message] || (/rate limit/i.test(e?.message||"") ? "Muitas tentativas. Aguarde alguns minutos." : e?.message ? `Não foi possível: ${e.message}` : "Não foi possível. Verifique a conexão.");
+function vLogin(){
+  const marca = `<div class="lg-brand"><img src="${LOGO}" alt="Logo GAAP Engenharia"><div><b>GAAP ENGENHARIA</b><span>Ordens de serviço, horas e orçamentos</span></div></div>`;
+  const card = body => `<div class="lg-wrap"><div class="lg-card">${marca}${body}<p class="lg-err" id="lg-err" role="alert"></p></div></div>`;
+  if(session && perfil && !sessOk()){
+    return card(perfil.papel==="bloqueado"
+      ? `<h1>Acesso bloqueado</h1><p class="muted">Seu acesso foi bloqueado pelo responsável.</p><button class="btn" data-act="sair">Sair</button>`
+      : `<h1>Aguardando liberação</h1><p class="muted">Sua conta (${esc(perfil.email)}) foi criada. Agora o responsável precisa liberar o seu acesso e escolher o seu nome na equipe. Depois disso, toque em “Verificar de novo”.</p><div class="row"><button class="btn primary" data-act="reverificar">Verificar de novo</button><button class="btn" data-act="sair">Sair</button></div>`);
+  }
+  if(session && !perfil) return card(`<h1>Não consegui abrir sua conta</h1><p class="muted">Verifique a conexão e tente de novo.</p><div class="row"><button class="btn primary" data-act="reverificar">Tentar de novo</button><button class="btn" data-act="sair">Sair</button></div>`);
+  const m = state.auth;
+  const campo = (id, label, type, extra="") => `<label class="field"><span>${label}</span><input id="${id}" type="${type}" ${extra} required></label>`;
+  if(m==="criar") return card(`<h1>Criar conta</h1><p class="muted">Depois de criar, confirme pelo link que chega no seu e-mail.</p>
+    <form id="loginForm" class="form" data-modo="criar">${campo("lg-email","E-mail","email",'autocomplete="email" inputmode="email"')}${campo("lg-senha","Senha (mínimo 6 caracteres)","password",'autocomplete="new-password" minlength="6"')}
+    <button class="btn primary lg-go" type="submit">Criar conta</button></form><button class="btn lg-link" data-act="authModo" data-m="entrar">Já tenho conta</button>`);
+  if(m==="recuperar") return card(`<h1>Esqueci a senha</h1><p class="muted">Informe seu e-mail e enviaremos um link para criar uma senha nova.</p>
+    <form id="loginForm" class="form" data-modo="recuperar">${campo("lg-email","E-mail","email",'autocomplete="email" inputmode="email"')}<button class="btn primary lg-go" type="submit">Enviar link</button></form>
+    <button class="btn lg-link" data-act="authModo" data-m="entrar">Voltar</button>`);
+  if(m==="nova-senha") return card(`<h1>Nova senha</h1><form id="loginForm" class="form" data-modo="nova-senha">${campo("lg-senha","Nova senha (mínimo 6 caracteres)","password",'autocomplete="new-password" minlength="6"')}<button class="btn primary lg-go" type="submit">Salvar senha</button></form>`);
+  if(m==="enviado") return card(`<h1>Confira seu e-mail</h1><p class="muted">${esc(state.authInfo||"")}</p><button class="btn primary lg-go" data-act="authModo" data-m="entrar">Ir para o login</button>`);
+  return card(`<h1>Entrar</h1>
+    <form id="loginForm" class="form" data-modo="entrar">${campo("lg-email","E-mail","email",'autocomplete="email" inputmode="email"')}${campo("lg-senha","Senha","password",'autocomplete="current-password"')}
+    <button class="btn primary lg-go" type="submit">Entrar</button></form>
+    <div class="row" style="justify-content:space-between"><button class="btn lg-link" data-act="authModo" data-m="criar">Criar conta</button><button class="btn lg-link" data-act="authModo" data-m="recuperar">Esqueci a senha</button></div>`);
+}
+async function submitLogin(form){
+  const modo = form.dataset.modo, err = $("#lg-err"), btn = form.querySelector('[type="submit"]');
+  const email = ($("#lg-email")?.value||"").trim().toLowerCase(), senha = $("#lg-senha")?.value || "";
+  btn.disabled = true; err.textContent = "";
+  try{
+    if(modo==="entrar"){ const {error} = await sb.auth.signInWithPassword({email, password:senha}); if(error) throw error; }
+    else if(modo==="criar"){ const {data, error} = await sb.auth.signUp({email, password:senha, options:{emailRedirectTo: location.origin}}); if(error) throw error;
+      if(!data.session){ state.auth = "enviado"; state.authInfo = `Enviamos um link de confirmação para ${email}. Abra o e-mail, toque no link e depois entre com seu e-mail e senha.`; render(); } }
+    else if(modo==="recuperar"){ const {error} = await sb.auth.resetPasswordForEmail(email, {redirectTo: location.origin}); if(error) throw error; state.auth = "enviado"; state.authInfo = `Se existir uma conta com ${email}, enviamos um link para criar uma senha nova.`; render(); }
+    else if(modo==="nova-senha"){ const {error} = await sb.auth.updateUser({password:senha}); if(error) throw error; state.auth = "entrar"; toast("Senha alterada."); if(session) await boot(); else render(); }
+  }catch(e){ err.textContent = authMsg(e); btn.disabled = false; }
+}
+/* ---------- FUNCIONÁRIO ---------- */
+function vWorker(){
+  const me = state.me, ps = profs();
+  if(!state.pub || !state.pub.cfg) return `<div class="pagehead"><div><span class="eyebrow">Acesso do funcionário</span><h1>Aguardando liberação</h1><p class="muted">O responsável ainda precisa compartilhar este sistema com você como <b>Editor</b>. Depois disso, recarregue a página.</p></div></div>`;
+  const mine = state.ap.filter(e=>e.profissional===me), list = mine.filter(e=>ym(e.data)===state.month).sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio));
+  const c = sumCalc(list), byDay = {}; list.forEach(e=>(byDay[e.data] ||= []).push(e));
+  return `<div class="pagehead"><div><span class="eyebrow">Olá, ${esc(me)}</span><h1>Minhas OS</h1><p class="muted">Lance cada OS com o horário de início e de término.</p></div>
+    <div class="row">${monthNav()}<button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
+  <div class="summary"><span><b>${list.length}</b> OS</span><span><i class="dot d-n"></i>Normal <b>${fdec(c.n)} h</b></span><span><i class="dot d-50"></i>Extra ${state.cfg.extraPct}% <b>${fdec(c.e50)} h</b></span><span><i class="dot d-100"></i>Extra ${state.cfg.feriadoPct}% <b>${fdec(c.e100)} h</b></span><span>Total <b>${fdec(c.total)} h</b></span></div>
+  ${list.length ? `<div class="list">${Object.keys(byDay).sort().reverse().map(d=>`<div class="dayhead"><span>${WD[parseYmd(d).getDay()]}, ${fdate(d)}</span><span class="mono">${fdec(sumCalc(byDay[d]).total)} h</span></div>${byDay[d].sort((a,b)=>a.inicio.localeCompare(b.inicio)).map(e=>apItem(e,false,overlaps(byDay[d]))).join("")}`).join("")}</div>`
+    : `<div class="empty"><b>Nenhuma OS em ${ymLabel(state.month)}</b>Toque em “Lançar OS do dia” para registrar suas ordens de serviço.</div>`}
+  <p class="muted" style="margin-top:16px">Você está lançando como <b>${esc(me)}</b>. <button class="btn sm" data-act="sair">Sair</button></p>`;
+}
+/* ---------- PAINEL ---------- */
+function totalsReceber(){
+  const prod = sumCalc(state.ap).valor;
+  const recH = state.rec.filter(r=>r.origem==="horas" || r.origem==="fech").reduce((s,r)=>s+numIn(r.valor),0);
+  const orcs = state.orc.filter(orcAberto);
+  const orcTot = orcs.reduce((s,o)=>s+orcTotals(o).total,0);
+  const recO = orcs.reduce((s,o)=>s+orcRecebido(o.id),0);
+  return {horas:Math.max(0,prod-recH), orc:Math.max(0,orcTot-recO), prod, recH, orcTot, recO};
+}
+function vPainel(){
+  const t = totalsReceber();
+  const mAp = state.ap.filter(e=>ym(e.data)===state.month);
+  const mc = sumCalc(mAp);
+  const tdAp = state.ap.filter(e=>e.data===today()); const tc = sumCalc(tdAp);
+  const abertos = state.orc.filter(o=>o.status==="enviado");
+  const abertosV = abertos.reduce((s,o)=>s+orcTotals(o).total,0);
+  const decididos = state.orc.filter(o=>["aprovado","concluido","recusado"].includes(o.status));
+  const taxa = decididos.length ? Math.round(100*decididos.filter(o=>o.status!=="recusado").length/decididos.length) : null;
+  const recent = [...state.ap].sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio)).slice(0,5);
+  const gear = `<svg class="gear" viewBox="0 0 100 100" fill="#fff"><path d="M43 2h14l2 12 8 3 10-7 10 10-7 10 3 8 12 2v14l-12 2-3 8 7 10-10 10-10-7-8 3-2 12H43l-2-12-8-3-10 7-10-10 7-10-3-8-12-2V43l12-2 3-8-7-10 10-10 10 7 8-3zM50 32a18 18 0 1 0 0 36 18 18 0 1 0 0-36z"/></svg>`;
+  return `${exampleBanner()}
+  <div class="pagehead"><div><span class="eyebrow">${WD[new Date().getDay()]}, ${fdate(today())}</span><h1>Painel</h1></div>${monthNav()}</div>
+  <section class="hero">${gear}
+    <div><div class="eyebrow">Total a receber</div><div class="big">${brl(t.horas+t.orc)}</div></div>
+    <div class="split"><span>Horas trabalhadas <b>${brl(t.horas)}</b></span><span>Orçamentos aprovados <b>${brl(t.orc)}</b></span></div>
+  </section>
+  <div class="kpis">
+    <div class="kpi"><span class="eyebrow">Hoje</span><span class="v">${fh(tc.total)}</span><span class="s">${tdAp.length} OS · ${brl(tc.valor)}</span></div>
+    <div class="kpi"><span class="eyebrow">Em ${MESES[+state.month.slice(5)-1]}</span><span class="v">${fh(mc.total)}</span><span class="s">${brl(mc.valor)} em ${new Set(mAp.map(e=>e.data)).size} dias</span></div>
+    ${(()=>{ const ct = mAp.filter(e=>!e.orcId), fat = sumCalc(ct).valor, cu = custoSum(ct);
+      return temCustos() ? `<div class="kpi"><span class="eyebrow">Lucro em ${MESES[+state.month.slice(5)-1]}</span><span class="v" style="color:${fat-cu>=0?"var(--good)":"var(--bad)"}">${brl(fat-cu)}</span><span class="s">${brl(fat)} faturado − ${brl(cu)} de equipe${fat>0?` · margem ${Math.round(100*(fat-cu)/fat)}%`:""}</span></div>`
+        : `<div class="kpi"><span class="eyebrow">Lucro do mês</span><span class="v">—</span><span class="s">Informe o custo de cada funcionário em <button class="btn sm" data-act="nav" data-view="ajustes" style="padding:1px 6px">Ajustes</button></span></div>`; })()}
+    <div class="kpi"><span class="eyebrow">Orçamentos enviados</span><span class="v">${abertos.length}</span><span class="s">${brl(abertosV)} aguardando${taxa!=null?` · ${taxa}% aprovados`:""}</span></div>
+  </div>
+  <section class="section"><header><h2>Valor por dia em ${ymLabel(state.month)}</h2>
+    <div class="legend"><span><i class="dot d-n"></i>Normal</span><span><i class="dot d-50"></i>Extra ${state.cfg.extraPct}%</span><span><i class="dot d-100"></i>Domingo/feriado ${state.cfg.feriadoPct}%</span></div></header>
+    <div class="panel"><div class="chartwrap" id="chart"></div></div></section>
+  ${painelDims(mAp)}
+  <div class="two">
+    <section class="section"><header><h2>Últimos apontamentos</h2><button class="btn sm" data-act="nav" data-view="horas">Ver todos</button></header>
+      ${recent.length?`<div class="list">${recent.map(e=>apItem(e,true)).join("")}</div>`:`<div class="empty"><b>Nenhuma OS apontada ainda</b>Toque em <b style="display:inline">Apontar</b> no topo para registrar a primeira ordem de serviço do dia.</div>`}</section>
+    <section class="section"><header><h2>Orçamentos aguardando resposta</h2><button class="btn sm" data-act="newOrc">Novo orçamento</button></header>
+      ${abertos.length?`<div class="list">${abertos.map(orcCard).join("")}</div>`:`<div class="empty"><b>Nada aguardando resposta</b>Orçamentos com status “Enviado” aparecem aqui.</div>`}</section>
+  </div>`;
+}
+function painelDims(list){
+  const avail = Object.keys(DIMS).filter(k=>new Set(list.map(DIMS[k].get).filter(Boolean)).size>0);
+  if(!avail.length) return "";
+  const k = avail.includes(state.pby) ? state.pby : avail[0];
+  return `<section class="section"><header><h2>Horas de ${ymLabel(state.month)} por ${DIMS[k].label.toLowerCase()}</h2>
+    <div class="filters" style="margin:0">${avail.map(x=>`<button class="chipbtn" data-act="pby" data-k="${x}" aria-pressed="${x===k}">${DIMS[x].label}</button>`).join("")}</div></header>
+    ${dimTable(list, k, {lucro:true}) || `<div class="empty">Tudo em ${esc(DIMS[k].get(list[0])||DIMS[k].none)}.</div>`}</section>`;
+}
+function drawChart(){
+  const box = $("#chart"); if(!box) return;
+  const [y,m] = state.month.split("-").map(Number);
+  const nd = new Date(y,m,0).getDate();
+  const days = Array.from({length:nd},(_,i)=>{ const ds=`${state.month}-${pad(i+1)}`; const list=state.ap.filter(e=>e.data===ds); const c=sumCalc(list); return {ds, c, n:list.length, special: new Date(y,m-1,i+1).getDay()===0 || !!holidayName(ds)}; });
+  const W = Math.max(300, box.clientWidth), H = 230, ml = 58, mr = 6, mt = 10, mb = 24;
+  const pw = W-ml-mr, ph = H-mt-mb;
+  const max = Math.max(...days.map(d=>d.c.vn+d.c.v50+d.c.v100), 0);
+  const step = niceStep(max/4 || 100); const top = Math.max(step, Math.ceil(max/step)*step);
+  const yv = v => mt + ph - v/top*ph;
+  const band = pw/nd, bw = Math.max(3, Math.min(22, band*0.64));
+  let s = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Valor por dia">`;
+  days.forEach((d,i)=>{ if(d.special) s += `<rect x="${ml+i*band}" y="${mt}" width="${band}" height="${ph}" style="fill:var(--surface-2)"/>`; });
+  for(let v=0; v<=top+1e-6; v+=step){ const yy=yv(v); s += `<line x1="${ml}" x2="${W-mr}" y1="${yy}" y2="${yy}" style="stroke:var(--line)" stroke-width="1" ${v?'stroke-dasharray="2 3"':""}/><text x="${ml-6}" y="${yy+3.5}" text-anchor="end">${v>=1000?(v/1000).toLocaleString("pt-BR")+" mil":v}</text>`; }
+  const labs = new Set([1,5,10,15,20,25,nd]);
+  days.forEach((d,i)=>{
+    const x = ml+i*band+(band-bw)/2;
+    if(labs.has(i+1)) s += `<text x="${ml+i*band+band/2}" y="${H-7}" text-anchor="middle">${i+1}</text>`;
+    const segs = [["var(--s-n)",d.c.vn],["var(--s-50)",d.c.v50],["var(--s-100)",d.c.v100]].filter(z=>z[1]>0);
+    let base = 0;
+    segs.forEach((z,k)=>{
+      const y0 = yv(base), y1 = yv(base+z[1]); const gap = k>0 ? 2 : 0; const h = Math.max(1, y0-y1-gap);
+      const yt = y0-gap-h;
+      if(k===segs.length-1){ const r=Math.min(4,bw/2,h); s += `<path d="M${x},${yt+h} V${yt+r} Q${x},${yt} ${x+r},${yt} H${x+bw-r} Q${x+bw},${yt} ${x+bw},${yt+r} V${yt+h} Z" style="fill:${z[0]}"/>`; }
+      else s += `<rect x="${x}" y="${yt}" width="${bw}" height="${h}" style="fill:${z[0]}"/>`;
+      base += z[1];
+    });
+    s += `<rect class="hit" data-i="${i}" x="${ml+i*band}" y="${mt}" width="${band}" height="${ph}" fill="transparent" style="cursor:pointer"/>`;
+  });
+  s += `</svg><div class="tip" hidden></div>`;
+  box.innerHTML = s;
+  const tip = box.querySelector(".tip");
+  const show = ev=>{
+    const h = ev.target.closest(".hit"); if(!h){ tip.hidden=true; return; }
+    const d = days[+h.dataset.i]; const hol = holidayName(d.ds);
+    tip.innerHTML = `<div class="h">${WD[parseYmd(d.ds).getDay()]}, ${fdate(d.ds)}</div>${hol?`<div class="muted">${esc(hol)}</div>`:""}
+      <div><span><i class="dot d-n"></i> Normal ${fh(d.c.n)}</span><span class="mono">${brl(d.c.vn)}</span></div>
+      <div><span><i class="dot d-50"></i> Extra ${state.cfg.extraPct}% ${fh(d.c.e50)}</span><span class="mono">${brl(d.c.v50)}</span></div>
+      <div><span><i class="dot d-100"></i> Extra ${state.cfg.feriadoPct}% ${fh(d.c.e100)}</span><span class="mono">${brl(d.c.v100)}</span></div>
+      <div style="border-top:1px solid var(--line);margin-top:4px;padding-top:4px"><b>${d.n} OS · ${fh(d.c.total)}</b><b class="mono">${brl(d.c.valor)}</b></div>`;
+    tip.hidden = false;
+    const r = box.getBoundingClientRect(); let x = ev.clientX - r.left + 12; if(x+190 > r.width) x = ev.clientX - r.left - 200; tip.style.left = Math.max(0,x)+"px"; tip.style.top = "6px";
+  };
+  box.querySelector("svg").addEventListener("pointermove", show);
+  box.querySelector("svg").addEventListener("click", show);
+  box.querySelector("svg").addEventListener("mouseleave", ()=>tip.hidden=true);
+}
+function niceStep(v){ const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v/p; return (n<=1?1:n<=2?2:n<=2.5?2.5:n<=5?5:10)*p; }
+let rz; window.addEventListener("resize", ()=>{ clearTimeout(rz); rz=setTimeout(()=>{ if(state.view==="painel") drawChart(); },150); });
+
+/* ---------- HORAS ---------- */
+function vHoras(){
+  if(state.hmode==="os") return vHorasOS();
+  const H = state.hf, all = state.ap.filter(e=>ym(e.data)===state.month);
+  const list = applyF(all, H.f).sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio));
+  const c = sumCalc(list); const bad = overlaps(list);
+  const dayList = rows => { const byDay = {}; rows.forEach(e=>(byDay[e.data] ||= []).push(e)); return Object.keys(byDay).sort().reverse().map(d=>{ const dc=sumCalc(byDay[d]); const hol=holidayName(d); return `<div class="dayhead"><span>${WD[parseYmd(d).getDay()]}, ${fdate(d)} ${hol?`<span class="pill bad">${esc(hol)}</span>`:""}</span><span class="mono">${fh(dc.total)} · ${brl(dc.valor)}</span></div>${byDay[d].sort((a,b)=>a.inicio.localeCompare(b.inicio)).map(e=>apItem(e,false,bad)).join("")}`; }).join(""); };
+  const groups = groupBy(list, H.by);
+  return `${exampleBanner()}
+  <div class="pagehead"><div><span class="eyebrow">Apontamentos</span><h1>Horas por OS</h1><p class="muted">Cada linha é uma ordem de serviço com início e fim. O sistema separa hora normal e extra pela sua jornada.</p></div>
+    <div class="row">${monthNav()}<button class="btn" data-act="newAp">+ Uma OS</button><button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
+  ${hmodeChips()}
+  <div class="panel filtergrid" style="margin-bottom:12px">${filterBar("h", H.f, H.by)}</div>
+  <div class="summary"><span><b>${list.length}</b> apontamentos</span><span><i class="dot d-n"></i>Normal <b>${fh(c.n)}</b></span><span><i class="dot d-50"></i>Extra ${state.cfg.extraPct}% <b>${fh(c.e50)}</b></span><span><i class="dot d-100"></i>Extra ${state.cfg.feriadoPct}% <b>${fh(c.e100)}</b></span><span>Total <b>${fh(c.total)}</b></span><span>Valor <b>${brl(c.valor)}</b></span></div>
+  ${!list.length ? `<div class="empty"><b>Nenhum apontamento em ${ymLabel(state.month)}${all.length?" com esses filtros":""}</b>Use “Lançar OS do dia” para registrar as OS com o horário de cada uma.</div>`
+   : H.by ? `${dimTable(list, H.by)}${groups.map(g=>{ const gc=sumCalc(g.rows); return `<section class="section"><header><h2>${esc(g.label)}</h2><span class="mono muted">${g.rows.length} OS · ${fdec(gc.total)} h · ${brl(gc.valor)}</span></header><div class="list">${dayList(g.rows)}</div></section>`; }).join("")}`
+   : `<div class="list">${dayList(list)}</div>`}`;
+}
+function hmodeChips(){ return `<div class="filters" role="group" aria-label="Ver por"><button class="chipbtn" data-act="hmode" data-m="dia" aria-pressed="${state.hmode!=="os"}">Por dia</button><button class="chipbtn" data-act="hmode" data-m="os" aria-pressed="${state.hmode==="os"}">Por OS (histórico)</button></div>`; }
+function osGroups(list){
+  const m = new Map();
+  list.forEach(e=>{ const k = e.os || "(sem nº)"; if(!m.has(k)) m.set(k, []); m.get(k).push(e); });
+  return [...m.entries()].map(([os, rows])=>{ rows.sort((a,b)=>(a.data+a.inicio).localeCompare(b.data+b.inicio)); const last = rows[rows.length-1];
+    return {os, rows, desc:last.descricao||"", last:last.data, first:rows[0].data, c:sumCalc(rows), dias:new Set(rows.map(e=>e.data)).size, profs:[...new Set(rows.map(e=>e.profissional).filter(Boolean))], locais:[...new Set(rows.map(e=>[empOf(e),e.cliente].filter(Boolean).join(" · ")).filter(Boolean))], fotos:rows.reduce((s,e)=>s+(e.fotos||[]).length,0), orc:rows.find(e=>e.orcId)?.orcId}; })
+    .sort((a,b)=>b.last.localeCompare(a.last));
+}
+function vHorasOS(){
+  const H = state.hf, q = state.osQ.trim().toLowerCase();
+  const gs = osGroups(applyF(state.ap, H.f)).filter(g=>!q || g.os.toLowerCase().includes(q) || g.desc.toLowerCase().includes(q));
+  return `${exampleBanner()}
+  <div class="pagehead"><div><span class="eyebrow">Apontamentos</span><h1>Histórico por OS</h1><p class="muted">Todas as horas já lançadas em cada ordem de serviço, de todos os dias e funcionários.</p></div>
+    <div class="row"><button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
+  ${hmodeChips()}
+  <div class="panel filtergrid" style="margin-bottom:12px"><label class="field" style="grid-column:1/-1"><span>Buscar OS ou serviço</span><input id="h-os-q" value="${esc(state.osQ)}" placeholder="Ex.: 2165557 ou telhado" inputmode="search"></label>${filterBar("h", H.f, "").replace(/<label class="field"><span>Separar por<\/span>[\s\S]*$/,"")}</div>
+  ${gs.length ? `<div class="tablewrap"><table><thead><tr><th>OS</th><th>Serviço</th><th>Local</th><th class="r">Dias</th><th class="r">Horas</th><th class="r">Extras</th><th class="r">Valor</th><th>Último dia</th></tr></thead>
+  <tbody>${gs.map(g=>`<tr class="click" data-act="osHist" data-os="${esc(g.os)}"><td class="mono"><b>${esc(g.os)}</b></td><td>${esc(g.desc)}${g.orc?` <span class="pill info">Orçamento ${esc(orcNum(g.orc))}</span>`:""}${g.fotos?` <span class="pill">${g.fotos} foto${g.fotos>1?"s":""}</span>`:""}</td><td>${esc(g.locais.join(", "))}</td><td class="r mono">${g.dias}</td><td class="r mono"><b>${fdec(g.c.total)}</b></td><td class="r mono">${fdec(g.c.e50+g.c.e100)}</td><td class="r mono">${g.orc?"orçamento":brl(g.c.valor)}</td><td class="mono">${fdate(g.last)}</td></tr>`).join("")}</tbody></table></div>`
+    : `<div class="empty"><b>Nenhuma OS encontrada</b>Confira a busca ou os filtros.</div>`}`;
+}
+function osHistHtml(os){
+  const g = osGroups(state.ap.filter(e=>(e.os||"(sem nº)")===os))[0]; if(!g) return "";
+  const fotos = g.rows.flatMap(e=>e.fotos||[]);
+  return `<header><h2>OS ${esc(os)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <p style="margin:0 0 10px"><b>${esc(g.desc)}</b><br><span class="muted">${esc(g.locais.join(" / "))}</span></p>
+  <div class="summary"><span><b>${fdec(g.c.total)} h</b> no total</span><span>Normal <b>${fdec(g.c.n)}</b></span><span>Extra <b>${fdec(g.c.e50+g.c.e100)}</b></span><span><b>${g.dias}</b> dia(s)</span><span>De <b>${fdate(g.first)}</b> a <b>${fdate(g.last)}</b></span>${g.orc?`<span>Orçamento <b>${esc(orcNum(g.orc))}</b></span>`:`<span>Valor <b>${brl(g.c.valor)}</b></span>`}</div>
+  ${g.profs.length?`<p class="muted" style="margin:0 0 10px">Funcionários: ${esc(g.profs.join(", "))}</p>`:""}
+  ${fotos.length?`<div class="thumbs" style="margin-bottom:12px">${thumbs(fotos,false)}</div>`:""}
+  <div class="tablewrap"><table><thead><tr><th>Data</th><th>Funcionário</th><th>Início</th><th>Fim</th><th class="r">Horas</th><th class="r">Extra</th></tr></thead>
+  <tbody>${g.rows.map(e=>{ const c=calc(e); return `<tr><td class="mono">${fdate(e.data)}</td><td>${esc(e.profissional||"-")}</td><td class="mono">${esc(e.inicio)}</td><td class="mono">${esc(e.fim)}</td><td class="r mono">${fdec(c.total)}</td><td class="r mono">${c.e50+c.e100?fdec(c.e50+c.e100):""}</td></tr>`; }).join("")}</tbody></table></div>
+  <footer><span></span><button class="btn primary" data-act="osLancar" data-os="${esc(os)}">Lançar mais horas nesta OS</button></footer>`;
+}
+document.addEventListener("input", e=>{ if(e.target.id==="h-os-q"){ state.osQ = e.target.value; const pos = e.target.selectionStart; render(); const i=$("#h-os-q"); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(err){} } } });
+function apForm(e){
+  const isNew = !e.id;
+  const clientes = [...new Set([...lines(state.cfg.unidades), ...state.ap.map(x=>x.cliente).filter(Boolean)])];
+  const ps = profs();
+  let last = []; try{ last = JSON.parse(localStorage.getItem("gaap-last-prof")||"[]"); }catch(err){}
+  state.apFotos = [...(e.fotos||[])];
+  const profField = (!ps.length || state.worker) ? "" : isNew
+    ? `<div class="field"><span>Quem trabalhou (marque todos que estavam na OS)</span><div class="filters" style="margin:0">${ps.map(n=>`<label class="chipcheck"><input type="checkbox" name="f-prof" value="${esc(n)}" ${(e.profissional?e.profissional===n:last.includes(n))?"checked":""}><span>${esc(n)}</span></label>`).join("")}</div></div>`
+    : `<label class="field"><span>Profissional</span><select id="f-prof1"><option value="">(sem profissional)</option>${[...new Set([...ps, e.profissional].filter(Boolean))].map(n=>`<option ${e.profissional===n?"selected":""}>${esc(n)}</option>`).join("")}</select></label>`;
+  return `<header><h2>${isNew?"Novo apontamento":"Editar apontamento"}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <form class="form" id="apForm" data-id="${esc(e.id||"")}">
+    <div class="grid2">
+      <label class="field"><span>Data</span><input type="date" id="f-data" value="${esc(e.data)}" required></label>
+      <label class="field"><span>Nº da ordem de serviço</span><input id="f-os" inputmode="numeric" value="${esc(e.os||"")}" placeholder="Ex.: 48213"></label>
+    </div>
+    ${profField}
+    <label class="field"><span>Serviço executado</span><input id="f-desc" value="${esc(e.descricao||"")}" placeholder="Ex.: Troca de rolamento do elevador de canecas 02"></label>
+    <div class="grid2">
+      <label class="field"><span>Início</span><span class="timepair"><input type="time" id="f-ini" value="${esc(e.inicio||"")}" required><button type="button" class="btn sm" data-act="now" data-t="f-ini">Agora</button></span></label>
+      <label class="field"><span>Término</span><span class="timepair"><input type="time" id="f-fim" value="${esc(e.fim||"")}" required><button type="button" class="btn sm" data-act="now" data-t="f-fim">Agora</button></span></label>
+    </div>
+    <div class="grid2">
+      <label class="field"><span>Empresa</span><input id="f-emp" list="emp-list" value="${esc(e.empresa || lastEmp())}" placeholder="Ex.: Branil"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>
+      <label class="field"><span>Unidade / local</span><input id="f-cli" list="cli-list" value="${esc(e.cliente||"")}" placeholder="Ex.: Uruaçu, Novo Planalto"><datalist id="cli-list">${clientes.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></label>
+    </div>
+    ${orcSelect("f-orc", e.orcId)}
+    <label class="field"><span>Cálculo da hora</span><select id="f-tipo">${Object.entries(TIPOS).map(([k,l])=>`<option value="${k}" ${ (e.tipo||"auto")===k?"selected":""}>${l}</option>`).join("")}</select></label>
+    <label class="check"><input type="checkbox" id="f-emerg" ${e.emergencia?"checked":""}> Chamado de emergência (fora da escala)</label>
+    <label class="field"><span>Observações</span><textarea id="f-obs" rows="2" placeholder="Peças trocadas, pendências, quem solicitou…">${esc(e.obs||"")}</textarea></label>
+    ${assets?`<div class="field"><span>Fotos do serviço</span><div class="thumbs" id="f-thumbs">${thumbs(state.apFotos, true)}</div><div><label class="btn sm" for="f-foto">+ Adicionar fotos</label><input type="file" id="f-foto" accept="image/*" multiple hidden></div></div>`:""}
+    <div id="f-prev" class="preview"></div>
+    <footer>${isNew?"<span></span>":`<button type="button" class="btn danger" data-act="delAp" data-id="${e.id}">Excluir</button>`}
+      <span class="row">${isNew?"":`<button type="button" class="btn" data-act="dupAp">Duplicar</button>`}<button class="btn primary" type="submit">${isNew?"Salvar apontamento":"Salvar alterações"}</button></span></footer>
+  </form>`;
+}
+function readApForm(){
+  const id = $("#apForm").dataset.id;
+  const old = state.ap.find(x=>x.id===id) || {};
+  return {...old, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo:$("#f-tipo").value, emergencia:$("#f-emerg").checked, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])]};
+}
+function lastEmp(){ let v=""; try{ v = localStorage.getItem("gaap-last-emp")||""; }catch(err){} return v || state.cfg.contratante || ""; }
+function selProfs(){ return [...document.querySelectorAll('input[name="f-prof"]:checked')].map(x=>x.value); }
+function updateApPreview(){
+  const p = $("#f-prev"); if(!p) return;
+  const e = readApForm();
+  if(!e.data || !e.inicio || !e.fim){ p.innerHTML = `<span class="muted">Preencha data, início e término para ver as horas.</span>`; return; }
+  const c = calc({...e, valorHora: e.valorHora, extraPct: e.extraPct, feriadoPct: e.feriadoPct});
+  const hol = holidayName(e.data); const wd = parseYmd(e.data).getDay();
+  const sameDay = state.ap.filter(x=>x.data===e.data && x.id!==e.id);
+  const who = $("#f-prof1") ? [e.profissional] : (selProfs().length ? selProfs() : [""]);
+  const ov = who.some(pr=>overlaps([...sameDay.filter(x=>(x.profissional||"")===pr), {...e, profissional:pr, id:"__new"}]).has("__new"));
+  p.innerHTML = `${hm(e.fim)<=hm(e.inicio)?`<div class="muted">Término no dia seguinte (virada de meia-noite).</div>`:""}
+    ${wd===0||hol?`<div class="muted">${hol?esc(hol):"Domingo"}: horas contam como extra ${state.cfg.feriadoPct}%.</div>`:""}
+    ${c.n?`<div class="line"><span><i class="dot d-n"></i> Normal ${fh(c.n)}</span><span class="mono">${money(c.vn)}</span></div>`:""}
+    ${c.e50?`<div class="line"><span><i class="dot d-50"></i> Extra ${state.cfg.extraPct}% ${fh(c.e50)}</span><span class="mono">${money(c.v50)}</span></div>`:""}
+    ${c.e100?`<div class="line"><span><i class="dot d-100"></i> Extra ${state.cfg.feriadoPct}% ${fh(c.e100)}</span><span class="mono">${money(c.v100)}</span></div>`:""}
+    <div class="line tot"><span>Total ${fh(c.total)}</span><span class="mono">${c.orc && !state.worker ? "serviço de orçamento" : money(c.valor)}</span></div>
+    ${lockOf(e.data, empOf(e))?`<div class="warnbox">${esc(lockMsg(lockOf(e.data, empOf(e))))}</div>`:""}
+    ${ov?`<div class="warnbox">Esse horário se sobrepõe a outro apontamento do mesmo profissional nesse dia.</div>`:""}`;
+}
+/* ---------- LANÇAR OS DO DIA ---------- */
+const blankRow = () => ({os:"", desc:"", ini:"", fim:"", cli:"", emerg:false});
+function nextStart(fim){ const a = state.cfg.almoco; return (a.ini && a.fim && fim===a.ini) ? a.fim : fim; }
+function dayPresets(ds){
+  const cfg = state.cfg, j = cfg.jornada[parseYmd(ds).getDay()] || {}, a = cfg.almoco;
+  if(!j.ini || !j.fim) return [];
+  if(a.ini && a.fim && hm(a.ini)>hm(j.ini) && hm(a.fim)<hm(j.fim)) return [["Manhã", j.ini, a.ini], ["Tarde", a.fim, j.fim]];
+  return [["Jornada", j.ini, j.fim]];
+}
+function dayOpen(ds, opt={}){
+  ds = ds || today();
+  let last = []; try{ last = JSON.parse(localStorage.getItem("gaap-last-prof")||"[]"); }catch(err){}
+  const ps = profs();
+  state.day = {data:ds, profs: state.worker ? [state.me] : last.filter(n=>ps.includes(n)), unid:opt.unid||"", emp:opt.emp||lastEmp(), orcId:opt.orcId||"", rows:[]};
+  const ex = dayExisting(), pre = dayPresets(ds);
+  const r = {...blankRow(), ...(opt.row||{})}; r.ini = ex.length ? ex[ex.length-1].fim : (pre[0]?.[1] || "07:00");
+  state.day.rows.push(r);
+  openModal(dayForm(), "wide");
+  renderDayRows(); updateDay();
+}
+function dayExisting(){
+  const d = state.day, ps = profs();
+  return state.ap.filter(e=>e.data===d.data && (!ps.length || !d.profs.length || d.profs.includes(e.profissional))).sort((a,b)=>a.inicio.localeCompare(b.inicio));
+}
+function dayForm(){
+  const d = state.day, ps = profs();
+  const unids = repUnids();
+  const used = {}; [...state.ap].sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio)).forEach(e=>{ if(e.os && !used[e.os]) used[e.os] = e.descricao||""; });
+  const pre = dayPresets(d.data)[0] || ["", "07:00", "11:00"];
+  return `<header><h2>Lançar OS do dia</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <form class="form" id="dayForm">
+    <div class="grid3">
+      <label class="field"><span>Data</span><input type="date" id="d-data" value="${esc(d.data)}" required></label>
+      <label class="field"><span>Empresa</span><input id="d-emp" list="emp-list" value="${esc(d.emp)}" placeholder="Ex.: Branil"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>
+      <label class="field"><span>Unidade (vale para todas as linhas)</span><input id="d-unid" list="d-unid-list" value="${esc(d.unid)}" placeholder="Ex.: Uruaçu"><datalist id="d-unid-list">${unids.map(u=>`<option value="${esc(u)}">`).join("")}</datalist></label>
+    </div>
+    ${orcSelect("d-orc", d.orcId)}
+    ${state.worker?`<p class="muted" style="margin:0">Lançando como <b>${esc(state.me)}</b>.</p>`:""}
+    ${ps.length && !state.worker?`<div class="field"><span>Quem trabalhou (as OS são lançadas para cada um marcado)</span><div class="filters" style="margin:0">${ps.map(n=>`<label class="chipcheck"><input type="checkbox" name="d-prof" value="${esc(n)}" ${d.profs.includes(n)?"checked":""}><span>${esc(n)}</span></label>`).join("")}</div></div>`:""}
+    <div id="d-exist"></div>
+    <div id="d-rows" class="items"></div>
+    <div class="row"><button type="button" class="btn primary" data-act="dayAdd">+ Adicionar outra OS</button><span class="muted" style="font-size:.85rem">A próxima OS começa no horário em que a anterior terminou.</span></div>
+    <details class="splitwrap"><summary>Dividir um período igualmente entre várias OS (opcional)</summary>
+    <div class="splitbox">
+      <div class="field" style="grid-column:1/-1"><div class="row" id="d-presets"></div></div>
+      <label class="field"><span>De</span><input type="time" id="d-sp-ini" value="${esc(pre[1])}"></label>
+      <label class="field"><span>Até</span><input type="time" id="d-sp-fim" value="${esc(pre[2])}"></label>
+      <label class="field"><span>Nº de OS</span><input type="number" id="d-sp-n" min="1" max="12" value="4"></label>
+      <button type="button" class="btn" data-act="daySplit" style="align-self:end">Criar linhas</button>
+    </div></details>
+    <datalist id="os-list">${Object.entries(used).slice(0,80).map(([o,ds])=>`<option value="${esc(o)}">${esc(ds)}</option>`).join("")}</datalist>
+    <div id="d-tot" class="preview"></div>
+    <footer><button type="button" class="btn" data-act="closeModal">Cancelar</button><button class="btn primary" type="submit" id="d-save">Salvar</button></footer>
+  </form>`;
+}
+function renderDayRows(){
+  const box = $("#d-rows"); if(!box) return;
+  const d = state.day;
+  box.innerHTML = d.rows.map((r,i)=>`<div class="dayrow" data-r="${i}">
+    <span class="num">${i+1}</span>
+    <label class="field f-os"><span>Nº da OS</span><input data-f="os" list="os-list" inputmode="numeric" value="${esc(r.os)}" placeholder="Ex.: 2165557"></label>
+    <label class="field f-ini"><span>Início</span><input type="time" data-f="ini" value="${esc(r.ini)}"></label>
+    <label class="field f-fim"><span>Término</span><input type="time" data-f="fim" value="${esc(r.fim)}"></label>
+    <button type="button" class="iconbtn" data-act="dayDel" data-r="${i}" aria-label="Remover linha ${i+1}" style="align-self:end">✕</button>
+    <label class="field f-desc"><span>Serviço executado</span><input data-f="desc" value="${esc(r.desc)}" placeholder="Descrição da OS"></label>
+    <label class="field f-cli"><span>Unidade</span><input data-f="cli" list="d-unid-list" value="${esc(r.cli)}" placeholder="${esc(d.unid||"Igual à de cima")}"></label>
+    <label class="check emerg"><input type="checkbox" data-f="emerg" ${r.emerg?"checked":""}> Emergência</label>
+    ${assets?`<span class="fotos"><label class="btn sm" for="d-foto-${i}">Fotos${(r.fotos||[]).length?` (${r.fotos.length})`:""}</label><input type="file" id="d-foto-${i}" data-foto-row="${i}" accept="image/*" multiple hidden></span>`:""}
+    <div class="info" id="d-info-${i}"></div>
+  </div>`).join("");
+}
+function dayEntries(){
+  const d = state.day, ps = profs();
+  const who = ps.length ? d.profs : [""];
+  const rows = d.rows.map((r,i)=>({...r,i})).filter(r=>r.os||r.desc||r.fim);
+  return {who, rows};
+}
+function updateDay(){
+  const d = state.day; if(!d || !$("#dayForm")) return;
+  const pre = dayPresets(d.data);
+  $("#d-presets").innerHTML = pre.map(([n,a,b])=>`<button type="button" class="chipbtn" data-act="dayPreset" data-a="${a}" data-b="${b}">${n} ${a}–${b}</button>`).join("") || `<span class="muted">Dia sem jornada normal: tudo conta como extra.</span>`;
+  const ex = dayExisting();
+  $("#d-exist").innerHTML = ex.length ? `<div class="warnbox">Já lançado neste dia${d.profs.length?" para "+esc(d.profs.join(" e ")):""}: ${ex.map(e=>`OS ${esc(e.os||"s/n")} ${esc(e.inicio)}–${esc(e.fim)}`).join(" · ")}</div>` : "";
+  const {who, rows} = dayEntries();
+  const tot = {n:0,e50:0,e100:0,total:0,valor:0};
+  d.rows.forEach((r,i)=>{
+    const el = $("#d-info-"+i); if(!el) return;
+    if(!r.ini || !r.fim){ el.innerHTML = r.os||r.desc ? `<span class="pill warn">Falta ${!r.ini?"início":"fim"}</span>` : ""; return; }
+    const c = calc({data:d.data, inicio:r.ini, fim:r.fim});
+    ["n","e50","e100","total","valor"].forEach(k=>tot[k]+=c[k]);
+    const others = [...ex, ...d.rows.filter((x,k)=>k!==i && x.ini && x.fim).map((x,k)=>({id:"r"+k, data:d.data, inicio:x.ini, fim:x.fim}))];
+    const ov = overlaps([...others.map(o=>({...o, profissional:""})), {id:"__me", data:d.data, inicio:r.ini, fim:r.fim, profissional:""}]).has("__me");
+    const hist = r.os ? state.ap.filter(x=>x.os===r.os.trim()) : [];
+    const lk = lockOf(d.data, d.emp || state.cfg.contratante || "");
+    el.innerHTML = `<b class="mono">${fdec(c.total)} h</b>${bucketChips(c)}${ov?'<span class="pill bad">Horário sobreposto</span>':""}${lk?`<span class="pill bad">Período fechado</span>`:""}${hist.length?`<span class="muted">OS já tem ${fdec(sumCalc(hist).total)} h em ${new Set(hist.map(x=>x.data)).size} dia(s)</span>`:""}`;
+  });
+  const nWho = Math.max(1, who.length);
+  $("#d-tot").innerHTML = rows.length ? `<div class="line"><span>${rows.length} OS no dia${who.length>1?` · por profissional`:""}</span><span class="mono">${fdec(tot.total)} h</span></div>
+    <div class="line"><span class="muted">Normal ${fdec(tot.n)} h · Extra ${state.cfg.extraPct}% ${fdec(tot.e50)} h${tot.e100?` · Extra ${state.cfg.feriadoPct}% ${fdec(tot.e100)} h`:""}</span><span class="mono">${d.orcId||state.worker ? "" : brl(tot.valor)}</span></div>
+    ${who.length>1 && !d.orcId?`<div class="line tot"><span>${who.length} profissionais</span><span class="mono">${brl(tot.valor*nWho)}</span></div>`:""}
+    ${d.orcId?`<div class="muted">Serviço de orçamento: as horas contam para acompanhar a obra, não para cobrança por hora.</div>`:""}` : `<span class="muted">Para cada OS, informe o número, o horário de início e o de término.</span>`;
+  const n = rows.length * nWho;
+  $("#d-save").textContent = n ? `Salvar ${n} apontamento${n>1?"s":""}` : "Salvar";
+}
+document.addEventListener("input", e=>{
+  if(!e.target.closest("#dayForm")) return;
+  const t = e.target, d = state.day;
+  if(t.dataset.f){ const i = +t.closest(".dayrow").dataset.r; d.rows[i][t.dataset.f] = t.type==="checkbox" ? t.checked : t.value; }
+  if(t.id==="d-unid") d.unid = t.value;
+  if(t.id==="d-emp") d.emp = t.value;
+  if(t.id==="d-orc"){ d.orcId = t.value; const o = orcOpts().find(x=>x.id===d.orcId); if(o && o.cliente){ d.emp = o.cliente; const ie=$("#d-emp"); if(ie) ie.value = o.cliente; } }
+  if(t.id==="d-data" && t.value) d.data = t.value;
+  if(t.name==="d-prof") d.profs = [...document.querySelectorAll('input[name="d-prof"]:checked')].map(x=>x.value);
+  updateDay();
+});
+document.addEventListener("change", e=>{
+  if(!e.target.closest("#dayForm")) return;
+  const t = e.target, d = state.day;
+  if(t.id==="d-unid"){ document.querySelectorAll('#d-rows [data-f="cli"]').forEach(x=>x.placeholder = d.unid || "Igual à de cima"); }
+  if(!t.dataset.f) return;
+  const i = +t.closest(".dayrow").dataset.r, r = d.rows[i];
+  if(t.dataset.f==="os" && r.os){
+    const prev = [...state.ap].filter(x=>x.os===r.os).sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio))[0]
+      || d.rows.find((x,k)=>k!==i && x.os===r.os && (x.desc||x.cli));
+    if(prev){ const row = t.closest(".dayrow");
+      if(!r.desc){ r.desc = prev.descricao ?? prev.desc ?? ""; row.querySelector('[data-f="desc"]').value = r.desc; }
+      const pc = prev.cliente ?? prev.cli ?? ""; if(!r.cli && pc && pc!==d.unid){ r.cli = pc; row.querySelector('[data-f="cli"]').value = r.cli; } }
+  }
+  if(t.dataset.f==="fim" && r.fim && d.rows[i+1] && !d.rows[i+1].ini){ d.rows[i+1].ini = nextStart(r.fim); const nx = document.querySelector(`.dayrow[data-r="${i+1}"] [data-f="ini"]`); if(nx) nx.value = d.rows[i+1].ini; }
+  updateDay();
+});
+async function submitDay(){
+  const d = state.day, {who, rows} = dayEntries();
+  if(!d.data){ toast("Informe a data."); return; }
+  if(profs().length && !d.profs.length && !state.worker){ toast("Marque quem trabalhou."); return; }
+  const lk = lockOf(d.data, d.emp || state.cfg.contratante || ""); if(lk){ toast(lockMsg(lk)); return; }
+  if(!rows.length){ toast("Preencha pelo menos uma OS."); return; }
+  const bad = rows.find(r=>!r.ini || !r.fim || r.ini===r.fim);
+  if(bad){ toast(`Linha ${bad.i+1}: confira início e fim.`); return; }
+  const btn = $("#d-save"); btn.disabled = true;
+  const base = {...(state.worker ? {} : rateFor(d.emp || state.cfg.contratante || "")), tipo:"auto", obs:"", ...(d.orcId?{orcId:d.orcId}:{})};
+  const col = "apontamentos", quem = state.worker ? [state.me] : who;
+  let n = 0;
+  try{
+    for(const r of rows) for(const pr of quem){
+      await save(col, {...base, data:d.data, os:r.os.trim(), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], criadoEm:new Date().toISOString()});
+      n++;
+    }
+    try{ if(d.profs.length) localStorage.setItem("gaap-last-prof", JSON.stringify(d.profs)); if(d.emp) localStorage.setItem("gaap-last-emp", d.emp); }catch(err){}
+    closeModal(); state.month = ym(d.data); render(); toast(`${n} apontamento${n>1?"s":""} salvo${n>1?"s":""}`);
+  }catch(err){ btn.disabled = false; toast(n ? `${n} salvos, mas parei por um erro. ${writeErr(err)}` : writeErr(err)); }
+}
+document.addEventListener("input", e=>{ if(e.target.closest("#apForm")) updateApPreview(); });
+document.addEventListener("change", e=>{ if(e.target.closest("#apForm")) updateApPreview(); });
+document.addEventListener("submit", async e=>{
+  if(e.target.id==="apForm"){
+    e.preventDefault();
+    const d = readApForm();
+    if(!d.data || !d.inicio || !d.fim){ toast("Preencha data, início e término."); return; }
+    if(d.inicio===d.fim){ toast("Início e término iguais. Confira os horários."); return; }
+    const multi = (!$("#f-prof1") && !state.worker) ? selProfs() : [];
+    if(!d.id && profs().length && !multi.length && !state.worker){ toast("Marque quem trabalhou nessa OS."); return; }
+    const lk = lockOf(d.data, empOf(d)); if(lk){ toast(lockMsg(lk)); return; }
+    const prev = d.id ? state.ap.find(x=>x.id===d.id) : null;
+    if(!d.id){ d.criadoEm = new Date().toISOString(); delete d.exemplo; }
+    if(state.worker){ delete d.valorHora; delete d.extraPct; delete d.feriadoPct; }
+    else if(!prev || (prev.empresa||"")!==(d.empresa||"")){ Object.assign(d, rateFor(empOf(d))); }
+    const col = "apontamentos";
+    const btn = e.target.querySelector('[type="submit"]'); if(btn) btn.disabled = true;
+    try{
+      if(!d.id && multi.length){ for(const pr of multi) await save(col, {...d, profissional:pr}); try{ localStorage.setItem("gaap-last-prof", JSON.stringify(multi)); }catch(err){} }
+      else await save(col, d);
+      (prev?.fotos||[]).filter(id=>!(d.fotos||[]).includes(id)).forEach(id=>deleteAssetIfUnused(id, [d.id]));
+      closeModal(); toast(d.id ? "Apontamento atualizado" : multi.length>1 ? `${multi.length} apontamentos salvos (um por profissional)` : "Apontamento salvo"); state.month = ym(d.data); render();
+    }
+    catch(err){ if(btn) btn.disabled = false; toast(writeErr(err)); }
+  }
+  if(e.target.id==="recForm"){ e.preventDefault(); submitRec(); }
+  if(e.target.id==="dayForm"){ e.preventDefault(); submitDay(); }
+  if(e.target.id==="fechForm"){ e.preventDefault(); submitFech(); }
+  if(e.target.id==="loginForm"){ e.preventDefault(); submitLogin(e.target); }
+  if(e.target.id==="cfgForm"){ e.preventDefault(); submitCfg(); }
+});
+function writeErr(err){ if(err && err.code==="db" && err.message) return err.message; if(err && err.code==="quota_exceeded") return "Limite de armazenamento atingido. Apague registros antigos ou exporte um backup."; if(err && err.code==="invalid_argument") return "Você não tem permissão para salvar aqui."; return "Não consegui salvar. Verifique a conexão e tente de novo."; }
+
+/* ---------- RELATÓRIOS ---------- */
+const WDL = ["Domingo","Segunda-feira","Terça-feira","Quarta-feira","Quinta-feira","Sexta-feira","Sábado"];
+const wdl = ds => WDL[parseYmd(ds).getDay()].toLowerCase();
+function repNames(){ return dimVals("prof"); }
+function repUnids(){ return dimVals("unid"); }
+function vRelatorios(){
+  const r = state.rep;
+  const sel = (id, label, cur, opts) => `<label class="field"><span>${label}</span><select id="${id}">${opts.map(([v,l])=>`<option value="${esc(v)}" ${cur===v?"selected":""}>${esc(l)}</option>`).join("")}</select></label>`;
+  return `<div class="pagehead"><div><span class="eyebrow">Relatórios</span><h1>Controle de ordens</h1><p class="muted">OS de cada dia com horário, horas em decimal, extras 50% e 100% e total no final. Filtre ou separe por funcionário, unidade ou empresa.</p></div></div>
+  <div class="panel form">
+    <div class="filters" role="group" aria-label="Tipo de relatório">
+      <button class="chipbtn" data-act="repModo" data-m="dia" aria-pressed="${r.modo==="dia"}">Diário</button>
+      <button class="chipbtn" data-act="repModo" data-m="periodo" aria-pressed="${r.modo==="periodo"}">Período / fechamento</button>
+    </div>
+    <div class="grid3">
+      ${r.modo==="dia" ? `<label class="field"><span>Dia</span><input type="date" id="rep-dia" value="${r.dia}"></label>`
+      : `<label class="field"><span>De</span><input type="date" id="rep-de" value="${r.de}"></label><label class="field"><span>Até</span><input type="date" id="rep-ate" value="${r.ate}"></label>
+         <div class="field"><span>Atalhos</span><div class="row"><button class="btn sm" data-act="repPreset" data-p="mes">Este mês</button><button class="btn sm" data-act="repPreset" data-p="ant">Mês passado</button></div></div>`}
+    </div>
+    <div class="filtergrid">${filterBar("rep", r.f, r.by)}</div>
+    <div class="row" style="gap:6px 18px">
+      ${sel("rep-fmt","Horas em",r.fmt,[["dec","Decimal (4,50)"],["hm","Horas e minutos (4h30)"]])}
+      <label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" id="rep-val" ${r.valores?"checked":""}> Mostrar valores em R$</label>
+      ${r.modo==="periodo"?`<label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" id="rep-vaz" ${r.vazios?"checked":""}> Listar dias sem OS</label>`:""}
+      <label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" id="rep-fotos" ${r.fotos?"checked":""}> Incluir fotos no PDF</label>
+    </div>
+    <div class="row">
+      <button class="btn primary" data-act="repPdf">Baixar PDF</button>
+      <button class="btn" data-act="repXlsx">Baixar Excel</button>
+      <button class="btn" data-act="repCopy">Copiar texto (WhatsApp)</button>
+      ${r.modo==="periodo"?`<button class="btn" data-act="fechAbrir">Fechar período…</button>`:""}
+    </div>
+  </div>
+  <div id="repOut"></div>`;
+}
+function repRange(){ const r=state.rep; return r.modo==="dia" ? [r.dia, r.dia] : [r.de, r.ate]; }
+function repRows(){
+  const [de, ate] = repRange();
+  return applyF(state.ap.filter(e=>e.data>=de && e.data<=ate), state.rep.f)
+    .sort((a,b)=>(a.data+a.inicio+(a.profissional||"")).localeCompare(b.data+b.inicio+(b.profissional||"")));
+}
+function repGroups(){ return groupBy(repRows(), state.rep.by); }
+function repDays(rows){
+  const [de, ate] = repRange(), by = {};
+  rows.forEach(e=>(by[e.data] ||= []).push(e));
+  let dates = Object.keys(by).sort();
+  if(state.rep.modo==="periodo" && state.rep.vazios && de && ate && de<=ate){
+    dates = []; for(let d=parseYmd(de), n=0; ymd(d)<=ate && n<400; d=addDays(d,1), n++) dates.push(ymd(d));
+  }
+  return dates.map(d=>({data:d, rows:by[d]||[]}));
+}
+function repTitle(){ const r=state.rep; return r.modo==="dia" ? `${WD[parseYmd(r.dia).getDay()]}, ${fdate(r.dia)}` : `${fdate(r.de)} a ${fdate(r.ate)}`; }
+const oneOf = (rows, k) => { const s = new Set(rows.map(DIMS[k].get)); return s.size===1 ? [...s][0] : ""; };
+function repHeading(rows){
+  const r = state.rep, emp = oneOf(rows,"emp");
+  const sub = (r.by==="prof" || r.f.prof!==ALL) ? oneOf(rows,"prof") : (r.by==="unid" || r.f.unid!==ALL) ? oneOf(rows,"unid") : "";
+  return `Controle de Ordens${emp?" "+emp:""}${sub?" - "+sub.toUpperCase():""}`;
+}
+const repH = m => state.rep.fmt==="hm" ? fh(m) : fdec(m);
+const repX = m => m ? repH(m) : "";
+function repCols(rows){
+  const many = k => new Set(rows.map(DIMS[k].get)).size>1;
+  return {prof: many("prof"), unid: rows.some(e=>e.cliente) && !(oneOf(rows,"unid") && (state.rep.by==="unid"||state.rep.f.unid!==ALL)), emp: many("emp"), val: state.rep.valores};
+}
+function repSummary(t){
+  const cfg = state.cfg;
+  return [
+    ["Horas normais", t.n, t.vn],
+    [`Horas extras ${cfg.extraPct}%`, t.e50, t.v50],
+    [`Horas extras ${cfg.feriadoPct}% (domingo e feriado)`, t.e100, t.v100],
+    ["Total de horas extras", t.e50+t.e100, t.v50+t.v100],
+    ["Total geral de horas", t.total, t.valor]
+  ];
+}
+function repHead(C){ const cfg=state.cfg; return ["ORDEM","DIA","DATA","INÍCIO","FIM","DESCRIÇÃO","HORAS",`${cfg.extraPct}%`,`${cfg.feriadoPct}%`,...(C.val?["VALOR"]:[]),...(C.unid?["UNIDADE"]:[]),...(C.emp?["EMPRESA"]:[]),...(C.prof?["FUNCIONÁRIO"]:[])]; }
+function repExtra(e, C){ return [...(C.unid?[e.cliente||""]:[]), ...(C.emp?[empOf(e)]:[]), ...(C.prof?[e.profissional||""]:[])]; }
+function groupHtml(rows){
+  const days = repDays(rows), cfg = state.cfg, t = sumCalc(rows), C = repCols(rows), nDias = days.filter(d=>d.rows.length).length;
+  const head = repHead(C), ncols = head.length, nExtra = ncols - 9 - (C.val?1:0);
+  const body = days.map(d=>{
+    const hol = holidayName(d.data), sun = parseYmd(d.data).getDay()===0;
+    const dayCells = k => `<td rowspan="${k}" style="white-space:nowrap">${wdl(d.data)}${hol?`<br><span class="pill bad">${esc(hol)}</span>`:""}</td><td rowspan="${k}" class="mono">${fdate(d.data)}</td>`;
+    if(!d.rows.length) return `<tr style="${sun||hol?"background:var(--surface-2)":""}"><td></td>${dayCells(1)}<td colspan="${ncols-3}"></td></tr>`;
+    return d.rows.map((e,i)=>{ const c=calc(e); return `<tr><td class="mono">${esc(e.os||"-")}</td>${i===0?dayCells(d.rows.length):""}<td class="mono">${esc(e.inicio)}</td><td class="mono">${esc(e.fim)}</td><td>${esc(e.descricao||"")}${e.emergencia?' <span class="pill warn">Emergência</span>':""}</td><td class="r mono"><b>${repH(c.total)}</b></td><td class="r mono">${repX(c.e50)}</td><td class="r mono">${repX(c.e100)}</td>${C.val?`<td class="r mono">${brl(c.valor)}</td>`:""}${repExtra(e,C).map(x=>`<td>${esc(x)}</td>`).join("")}</tr>`; }).join("");
+  }).join("");
+  return `<section class="section"><header><h2>${esc(repHeading(rows))}</h2><span class="muted">${repTitle()} · ${nDias} ${nDias>1?"dias":"dia"} · ${rows.length} OS</span></header>
+  <div class="tablewrap"><table><thead><tr>${head.map((h,i)=>`<th${i>=6&&i<9+(C.val?1:0)?' class="r"':""}>${h}</th>`).join("")}</tr></thead>
+  <tbody>${body}</tbody>
+  <tfoot><tr style="background:var(--warn-bg)"><td colspan="6">TOTAL</td><td class="r mono">${repH(t.total)}</td><td class="r mono">${repH(t.e50)}</td><td class="r mono">${repH(t.e100)}</td>${C.val?`<td class="r mono">${brl(t.valor)}</td>`:""}${"<td></td>".repeat(nExtra)}</tr></tfoot></table></div>
+  <div class="tablewrap" style="max-width:600px"><table><tbody>${repSummary(t).map((r,i)=>`<tr ${i>=3?'style="font-weight:700"':""}><td>${r[0]}</td><td class="r mono">${fdec(r[1])} h</td><td class="r mono muted">${fh(r[1])}</td>${C.val?`<td class="r mono">${brl(r[2])}</td>`:""}</tr>`).join("")}</tbody></table></div></section>`;
+}
+function renderReport(){
+  const out = $("#repOut"); if(!out) return;
+  const rows = repRows();
+  if(!rows.length){ out.innerHTML = `<div class="empty" style="margin-top:20px"><b>Nenhum apontamento em ${repTitle()}</b>Escolha outras datas ou filtros, ou registre as OS em Horas.</div>`; return; }
+  const groups = repGroups(), by = state.rep.by;
+  out.innerHTML = (groups.length>1 ? `<section class="section"><header><h2>Resumo por ${DIMS[by].label.toLowerCase()}</h2><span class="muted">${repTitle()}</span></header>${dimTable(rows, by)}</section>` : "")
+    + groups.map(g=>groupHtml(g.rows)).join("");
+}
+document.addEventListener("change", e=>{
+  const id = e.target.id; const r = state.rep;
+  const map = {"rep-dia":"dia","rep-de":"de","rep-ate":"ate","rep-fmt":"fmt"};
+  if(map[id]){ r[map[id]] = e.target.value || (id==="rep-dia"?today():r[map[id]]); renderReport(); }
+  if(id==="rep-val"){ r.valores = e.target.checked; renderReport(); }
+  if(id==="rep-vaz"){ r.vazios = e.target.checked; renderReport(); }
+  if(id==="rep-fotos"){ r.fotos = e.target.checked; }
+});
+function repText(){
+  const v = state.rep.valores, groups = repGroups(), all = repRows();
+  const L = [`*${state.cfg.empresa.nome}*`, repTitle()];
+  groups.forEach(g=>{
+    const rows = g.rows, C = repCols(rows), t = sumCalc(rows);
+    L.push("", `*${repHeading(rows).toUpperCase()}*`);
+    repDays(rows).filter(d=>d.rows.length).forEach(d=>{
+      const hol = holidayName(d.data);
+      L.push("", `*${WDL[parseYmd(d.data).getDay()]}, ${fdate(d.data)}${hol?` - Feriado: ${hol}`:""}*`);
+      d.rows.forEach(e=>{ const c=calc(e); const x = [c.e50?`${repH(c.e50)} a ${state.cfg.extraPct}%`:"", c.e100?`${repH(c.e100)} a ${state.cfg.feriadoPct}%`:""].filter(Boolean).join(", ");
+        L.push(`• OS ${e.os||"s/n"} | ${e.inicio} às ${e.fim} | ${repH(c.total)} h${x?` (extra: ${x})`:""}${e.emergencia?" | emergência":""}${repExtra(e,C).filter(Boolean).map(z=>" | "+z).join("")}${e.descricao?"\n   "+e.descricao:""}`); });
+    });
+    L.push("", "*RESUMO DE HORAS*");
+    repSummary(t).forEach(r=>L.push(`${r[0]}: ${repH(r[1])} h${v?` - ${brl(r[2])}`:""}`));
+  });
+  if(groups.length>1){
+    L.push("", `*TOTAL POR ${DIMS[state.rep.by].label.toUpperCase()}*`);
+    groups.forEach(g=>{ const t=sumCalc(g.rows); L.push(`${g.label}: ${repH(t.total)} h (extra ${repH(t.e50+t.e100)} h)${v?` - ${brl(t.valor)}`:""}`); });
+    const t = sumCalc(all); L.push(`Total geral: ${repH(t.total)} h${v?` - ${brl(t.valor)}`:""}`);
+  }
+  return L.join("\n");
+}
+async function copyText(txt){
+  try{ await navigator.clipboard.writeText(txt); toast("Texto copiado. Cole no WhatsApp ou e-mail."); }
+  catch(e){ openModal(`<header><h2>Copie o texto</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header><textarea class="copybox field" readonly id="copybox">${esc(txt)}</textarea><p class="muted">Selecione tudo e copie.</p>`); const b=$("#copybox"); b.focus(); b.select(); }
+}
+async function offerFile(filename, data){
+  const tipo = /\.csv$/.test(filename) ? "text/csv;charset=utf-8" : /\.json$/.test(filename) ? "application/json" : /\.pdf$/.test(filename) ? "application/pdf" : "application/octet-stream";
+  const blob = data instanceof Blob ? data : new Blob([data], {type:tipo});
+  const url = URL.createObjectURL(blob), a = document.createElement("a");
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 10000); toast("Arquivo baixado.");
+}
+const slug = s => String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^\w]+/g,"-").replace(/^-|-$/g,"").toLowerCase();
+function repFileTag(){
+  if(state.rep.fechNum) return `fechamento-${state.rep.fechNum}-${state.rep.f.emp!==ALL?slug(state.rep.f.emp)+"-":""}${state.rep.de}_a_${state.rep.ate}`;
+  const r = state.rep, f = Object.keys(DIMS).filter(k=>r.f[k]!==ALL).map(k=>slug(r.f[k]));
+  return [...f, r.by?`por-${slug(DIMS[r.by].label)}`:"", r.modo==="dia"?r.dia:`${r.de}_a_${r.ate}`].filter(Boolean).join("-");
+}
+function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement("script"); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
+function xlsxSheet(X, rows){
+  const days = repDays(rows), cfg = state.cfg, C = repCols(rows), t = sumCalc(rows);
+  const head = repHead(C), nc = head.length, H = m => Math.round(m/60*10000)/10000;
+  const aoa = [[repHeading(rows)], [`${cfg.empresa.nome} - CNPJ ${cfg.empresa.cnpj} - Período: ${repTitle()}`], head];
+  const merges = [{s:{r:0,c:0},e:{r:0,c:nc-1}}, {s:{r:1,c:0},e:{r:1,c:nc-1}}];
+  days.forEach(d=>{
+    const start = aoa.length, list = d.rows.length ? d.rows : [null];
+    list.forEach((e,i)=>{
+      if(!e){ aoa.push(["", wdl(d.data), fdate(d.data)]); return; }
+      const c = calc(e);
+      aoa.push([e.os||"", i?"":wdl(d.data), i?"":fdate(d.data), e.inicio, e.fim, (e.descricao||"")+(e.emergencia?" (EMERGÊNCIA)":""), H(c.total), c.e50?H(c.e50):"", c.e100?H(c.e100):"", ...(C.val?[c.valor]:[]), ...repExtra(e,C)]);
+    });
+    if(list.length>1){ merges.push({s:{r:start,c:1},e:{r:start+list.length-1,c:1}}, {s:{r:start,c:2},e:{r:start+list.length-1,c:2}}); }
+  });
+  const first = 4, last = aoa.length, totR = aoa.length;
+  aoa.push(["TOTAL","","","","","", H(t.total), H(t.e50), H(t.e100), ...(C.val?[t.valor]:[])]);
+  merges.push({s:{r:totR,c:0},e:{r:totR,c:5}});
+  aoa.push([]); aoa.push(["RESUMO DE HORAS","","","","","","HORAS",...(C.val?["","","VALOR"]:[])]);
+  const sumStart = aoa.length;
+  repSummary(t).forEach(r=>aoa.push([r[0],"","","","","",H(r[1]),...(C.val?["","",Math.round(r[2]*100)/100]:[])]));
+  const ws = X.utils.aoa_to_sheet(aoa), valCol = C.val ? 9 : -1;
+  ["G","H","I"].forEach((L,k)=>{ ws[`${L}${totR+1}`] = {t:"n", v:[H(t.total),H(t.e50),H(t.e100)][k], f:`SUM(${L}${first}:${L}${last})`}; });
+  if(C.val) ws[`J${totR+1}`] = {t:"n", v:t.valor, f:`SUM(J${first}:J${last})`};
+  const range = X.utils.decode_range(ws["!ref"]);
+  for(let R=3; R<=range.e.r; R++) for(let Cc=6; Cc<=range.e.c; Cc++){
+    const cell = ws[X.utils.encode_cell({r:R,c:Cc})]; if(!cell || cell.t!=="n") continue;
+    cell.z = (Cc===valCol && R<sumStart) || (R>=sumStart && Cc===9) ? '"R$" #,##0.00' : "0.00";
+  }
+  ws["!merges"] = merges;
+  ws["!cols"] = [10,14,11,8,8,52,8,8,8,...(C.val?[13]:[]),...(C.unid?[16]:[]),...(C.emp?[18]:[]),...(C.prof?[22]:[])].map(w=>({wch:w}));
+  return ws;
+}
+async function repXlsx(){
+  const groups = repGroups(), all = repRows();
+  if(!all.length){ toast("Nenhum apontamento nesse período."); return; }
+  if(!window.XLSX){ toast("Preparando planilha…"); try{ await loadScript("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"); }catch(err){ toast("Não consegui carregar o gerador de Excel. Verifique a conexão."); return; } }
+  const X = window.XLSX, wb = X.utils.book_new(), used = new Set(), v = state.rep.valores;
+  const sheetName = s => { let n = String(s||"Controle").replace(/[\\/?*[\]:]/g,"").slice(0,31) || "Controle", k = 2; while(used.has(n)) n = n.slice(0,28)+" "+(k++); used.add(n); return n; };
+  if(groups.length>1){
+    const H = m => Math.round(m/60*10000)/10000, by = state.rep.by;
+    const aoa = [[`Resumo por ${DIMS[by].label.toLowerCase()} - ${repTitle()}`], [DIMS[by].label.toUpperCase(),"OS","HORAS",`EXTRA ${state.cfg.extraPct}%`,`EXTRA ${state.cfg.feriadoPct}%`,...(v?["VALOR"]:[])]];
+    groups.forEach(g=>{ const t=sumCalc(g.rows); aoa.push([g.label, g.rows.length, H(t.total), H(t.e50), H(t.e100), ...(v?[t.valor]:[])]); });
+    const t = sumCalc(all); aoa.push(["TOTAL", all.length, H(t.total), H(t.e50), H(t.e100), ...(v?[t.valor]:[])]);
+    const ws = X.utils.aoa_to_sheet(aoa);
+    for(let R=2; R<aoa.length; R++) for(let c=2; c<=5; c++){ const cell = ws[X.utils.encode_cell({r:R,c})]; if(cell && cell.t==="n") cell.z = c===5 ? '"R$" #,##0.00' : "0.00"; }
+    ws["!cols"] = [28,6,10,10,10,14].map(w=>({wch:w}));
+    X.utils.book_append_sheet(wb, ws, sheetName("Resumo"));
+  }
+  groups.forEach(g=>X.utils.book_append_sheet(wb, xlsxSheet(X, g.rows), sheetName(g.key!=null ? g.label : (oneOf(g.rows,"prof") || "Controle"))));
+  const buf = X.write(wb, {type:"array", bookType:"xlsx"});
+  offerFile(`controle-ordens-${repFileTag()}.xlsx`, new Blob([buf]));
+}
+
+/* ---------- FECHAMENTOS ---------- */
+function fechRows(de, ate, emp){ return state.ap.filter(e=>e.data>=de && e.data<=ate && (!emp || empOf(e)===emp)); }
+function nextFech(){ const y = new Date().getFullYear(); const n = state.fech.map(f=>f.numero||"").filter(x=>x.startsWith(`F-${y}-`)).map(x=>+x.split("-")[2]||0); return `F-${y}-${String((n.length?Math.max(...n):0)+1).padStart(3,"0")}`; }
+const fechRecebido = f => state.rec.filter(r=>r.origem==="fech" && r.fechId===f.id).reduce((s,r)=>s+numIn(r.valor),0);
+const fechSaldo = f => Math.max(0, Math.round(((+f.valor||0) - fechRecebido(f))*100)/100);
+function fechConflict(de, ate, emp){ return state.fech.find(f=>f.de<=ate && f.ate>=de && (!f.empresa || !emp || f.empresa===emp)); }
+function fechFormHtml(){
+  const r = state.rep, emps = dimVals("emp"), cur = r.f.emp!==ALL ? r.f.emp : (emps.length===1 ? emps[0] : "");
+  return `<header><h2>Fechar período</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <form class="form" id="fechForm">
+    <div class="grid3">
+      <label class="field"><span>De</span><input type="date" id="fx-de" value="${esc(r.de)}" required></label>
+      <label class="field"><span>Até</span><input type="date" id="fx-ate" value="${esc(r.ate)}" required></label>
+      <label class="field"><span>Empresa</span><select id="fx-emp"><option value="">Todas as empresas</option>${emps.map(v=>`<option ${v===cur?"selected":""}>${esc(v)}</option>`).join("")}</select></label>
+    </div>
+    <div id="fx-prev" class="preview"></div>
+    <p class="muted" style="margin:0">Depois de fechado, as OS desse período ficam travadas, inclusive para os funcionários. O fechamento aparece no Financeiro como enviado, aguardando pagamento. Se precisar corrigir algo, reabra por lá.</p>
+    <footer><button type="button" class="btn" data-act="closeModal">Cancelar</button><button class="btn primary" type="submit" id="fx-ok">Fechar e baixar PDF</button></footer>
+  </form>`;
+}
+function updateFech(){
+  const de = $("#fx-de")?.value, ate = $("#fx-ate")?.value, emp = $("#fx-emp")?.value || ""; if(!de || !ate) return;
+  const rows = fechRows(de, ate, emp), t = sumCalc(rows), cf = fechConflict(de, ate, emp);
+  $("#fx-prev").innerHTML = `<div class="line"><span>${rows.length} OS · ${new Set(rows.map(e=>e.profissional).filter(Boolean)).size} funcionário(s)</span><span class="mono">${fdec(t.total)} h</span></div>
+    <div class="line"><span class="muted">Normal ${fdec(t.n)} h · Extra ${fdec(t.e50+t.e100)} h</span><span class="mono"><b>${brl(t.valor)}</b></span></div>
+    ${cf?`<div class="warnbox">Esse período já tem o fechamento ${esc(cf.numero)} (${fdate(cf.de)} a ${fdate(cf.ate)}). Escolha outras datas.</div>`:""}
+    ${!rows.length?`<div class="warnbox">Não há OS nesse período.</div>`:""}`;
+  $("#fx-ok").disabled = !!cf || !rows.length;
+}
+document.addEventListener("change", e=>{ if(e.target.closest && e.target.closest("#fechForm")) updateFech(); });
+async function submitFech(){
+  const de = $("#fx-de").value, ate = $("#fx-ate").value, emp = $("#fx-emp").value || "";
+  if(!de || !ate || de>ate){ toast("Confira as datas."); return; }
+  const rows = fechRows(de, ate, emp); if(!rows.length){ toast("Não há OS nesse período."); return; }
+  if(fechConflict(de, ate, emp)){ toast("Esse período já foi fechado."); return; }
+  const t = sumCalc(rows);
+  const f = {numero:nextFech(), de, ate, empresa:emp, os:rows.length, horas:t.total, valor:t.valor, enviadoEm:today(), criadoEm:new Date().toISOString()};
+  $("#fx-ok").disabled = true;
+  try{ f.id = await save("fechamentos", f); if(!state.fech.find(x=>x.id===f.id)) state.fech = [...state.fech, f]; closeModal(); toast(`Fechamento ${f.numero} criado`); await fechPdf(f); }
+  catch(err){ $("#fx-ok").disabled = false; toast(writeErr(err)); }
+}
+async function fechPdf(f){
+  const saved = clone(state.rep);
+  state.rep = {...state.rep, modo:"periodo", de:f.de, ate:f.ate, f:{prof:ALL, unid:ALL, emp:f.empresa||ALL}, fechNum:f.numero};
+  try{ await repPdf(); } finally { state.rep = saved; }
+}
+/* ---------- PDF ---------- */
+const GREEN=[27,122,61], NAVY=[29,63,143], INK=[23,33,26], GREY=[95,105,98];
+function pdfDoc(landscape){ if(!window.jspdf){ toast("Gerador de PDF ainda carregando. Tente em alguns segundos."); return null; } return new window.jspdf.jsPDF({unit:"mm",format:"a4",orientation:landscape?"landscape":"portrait"}); }
+const pw = doc => doc.internal.pageSize.getWidth(), ph = doc => doc.internal.pageSize.getHeight();
+function pdfHeader(doc, title, sub){
+  const E = state.cfg.empresa, R = pw(doc)-14;
+  try{ doc.addImage(LOGO,"JPEG",14,9,24,24); }catch(e){}
+  doc.setTextColor(...INK); doc.setFont("helvetica","bold"); doc.setFontSize(15); doc.text(E.nome||"",42,16);
+  doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...GREY);
+  doc.text(`CNPJ: ${E.cnpj||""}`,42,21.5); doc.text(`${E.email||""}  |  ${E.telefone||""}`,42,26); doc.text(`Montagens e manutenção mecânica industrial  |  ${E.cidade||""}`,42,30.5);
+  doc.setTextColor(...NAVY); doc.setFont("helvetica","bold"); doc.setFontSize(12.5); doc.text(title,R,16,{align:"right"});
+  doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...GREY); (Array.isArray(sub)?sub:[sub]).forEach((s,i)=>doc.text(s,R,21.5+i*4.5,{align:"right"}));
+  doc.setDrawColor(...GREEN); doc.setLineWidth(0.8); doc.line(14,36,R,36);
+  return 43;
+}
+function pdfFooter(doc){
+  const n = doc.getNumberOfPages(), E = state.cfg.empresa, R = pw(doc)-14, Y = ph(doc)-8;
+  for(let i=1;i<=n;i++){ doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(...GREY); doc.setFont("helvetica","normal"); doc.text(`${E.nome} - CNPJ ${E.cnpj}`,14,Y); doc.text(`Página ${i} de ${n}`,R,Y,{align:"right"}); }
+}
+function ensure(doc,y,need){ if(y+need>ph(doc)-17){ doc.addPage(); return 20; } return y; }
+function signature(doc, y, left, right){
+  y = ensure(doc, y, 40);
+  const R = pw(doc)-14, mid = pw(doc)/2;
+  doc.setFont("helvetica","italic"); doc.setFontSize(9.5); doc.setTextColor(...INK); doc.text(`${state.cfg.empresa.cidade||"Anápolis GO"}, ${extenso()}.`,R,y,{align:"right"}); y += 22;
+  doc.setDrawColor(...GREY); doc.setLineWidth(0.3); doc.setFont("helvetica","normal"); doc.setFontSize(8.5);
+  if(right){ doc.line(14,y,mid-11,y); doc.line(mid+11,y,R,y); doc.text(left,(14+mid-11)/2,y+4.5,{align:"center"}); doc.text(right,(mid+11+R)/2,y+4.5,{align:"center"}); }
+  else { doc.line(mid-45,y,mid+45,y); doc.text(left,mid,y+4.5,{align:"center"}); }
+  return y+10;
+}
+function repPdfSub(){ const r = state.rep; return [...(r.fechNum?[`Fechamento Nº ${r.fechNum}`]:[]), r.modo!=="dia"?`Período: ${fdate(r.de)} a ${fdate(r.ate)}`:`${WDL[parseYmd(r.dia).getDay()]}, ${fdate(r.dia)}`, `Emitido em ${fdate(today())}`]; }
+async function imgData(id){
+  try{
+    await assinarFotos([id]);
+    const res = await fetch(blobSrc(id)); if(!res.ok) throw 0; const b = await res.blob();
+    const url = await new Promise((ok,no)=>{ const fr=new FileReader(); fr.onload=()=>ok(fr.result); fr.onerror=no; fr.readAsDataURL(b); });
+    const im = await new Promise((ok,no)=>{ const i=new Image(); i.onload=()=>ok(i); i.onerror=no; i.src=url; });
+    return {url, w:im.naturalWidth, h:im.naturalHeight, fmt: b.type==="image/png" ? "PNG" : "JPEG"};
+  }catch(e){ return null; }
+}
+async function pdfFotos(doc, rows){
+  const items = rows.flatMap(e=>(e.fotos||[]).map(id=>({id, e}))); if(!items.length) return;
+  doc.addPage(); let y = pdfHeader(doc, "REGISTRO FOTOGRÁFICO", repPdfSub()) + 2;
+  const W = pw(doc), cols = 3, gap = 6, bw = (W-28-gap*(cols-1))/cols, bh = bw*0.68;
+  let col = 0;
+  for(const it of items){
+    if(col===0 && y + bh + 10 > ph(doc)-14){ doc.addPage(); y = 20; }
+    const x = 14 + col*(bw+gap), im = await imgData(it.id);
+    doc.setDrawColor(205,212,201); doc.setLineWidth(0.2); doc.rect(x, y, bw, bh);
+    if(im){ const k = Math.min(bw/im.w, bh/im.h), w = im.w*k, h = im.h*k; try{ doc.addImage(im.url, im.fmt, x+(bw-w)/2, y+(bh-h)/2, w, h); }catch(err){} }
+    else { doc.setFontSize(8); doc.setTextColor(...GREY); doc.text("Foto indisponível", x+bw/2, y+bh/2, {align:"center"}); }
+    doc.setFontSize(7.8); doc.setTextColor(...INK); doc.setFont("helvetica","normal");
+    doc.text(doc.splitTextToSize(`OS ${it.e.os||"s/n"} · ${fdate(it.e.data)} · ${it.e.descricao||""}`, bw)[0], x, y+bh+4);
+    col++; if(col===cols){ col = 0; y += bh + 10; }
+  }
+}
+async function pdfGroup(doc, rows){
+  const cfg = state.cfg, t = sumCalc(rows), C = repCols(rows), days = repDays(rows);
+  const nDias = days.filter(d=>d.rows.length).length, emp = oneOf(rows,"emp"), prof = oneOf(rows,"prof"), unid = oneOf(rows,"unid");
+  let y = pdfHeader(doc, repHeading(rows).toUpperCase(), repPdfSub());
+  doc.setFontSize(9.5); doc.setTextColor(...INK);
+  const info = [["Prestador:", `${cfg.empresa.nome}${cfg.empresa.responsavel?" - "+cfg.empresa.responsavel:""}`]];
+  if(emp) info.push(["Contratante:", emp]);
+  if(prof && !C.prof && profs().length) info.push(["Funcionário:", prof]);
+  if(unid && !C.unid) info.push(["Unidade:", unid]);
+  info.push(["Resumo:", `${nDias} ${nDias>1?"dias trabalhados":"dia trabalhado"} · ${rows.length} ordens de serviço · ${fdec(t.total)} horas`]);
+  info.forEach(([a,b])=>{ doc.setFont("helvetica","bold"); doc.text(a,14,y); doc.setFont("helvetica","normal"); doc.text(b,40,y); y+=5; });
+  y += 1;
+  const head = [repHead(C)], ncols = head[0].length, body = [], shade = [244,246,243];
+  days.forEach(d=>{
+    const hol = holidayName(d.data), sun = parseYmd(d.data).getDay()===0, k = Math.max(1,d.rows.length);
+    const dia = {content: wdl(d.data)+(hol?`\n${hol}`:""), rowSpan:k, styles:{halign:"center"}}, data = {content: fdate(d.data), rowSpan:k, styles:{halign:"center"}};
+    if(!d.rows.length){ const st = (sun||hol) ? {fillColor:shade} : {}; body.push([{content:"",styles:st}, {...dia, styles:{...dia.styles,...st,textColor:GREY}}, {...data, styles:{...data.styles,...st,textColor:GREY}}, {content:"", colSpan:ncols-3, styles:st}]); return; }
+    d.rows.forEach((e,i)=>{ const c = calc(e);
+      body.push([e.os||"-", ...(i===0?[dia,data]:[]), e.inicio, e.fim, (e.descricao||"")+(e.emergencia?" (emergência)":""), {content:repH(c.total),styles:{fontStyle:"bold"}}, repX(c.e50), repX(c.e100), ...(C.val?[brl(c.valor)]:[]), ...repExtra(e,C)]); });
+  });
+  const yellow = {fillColor:[255,240,150], textColor:INK, fontStyle:"bold"}, nExtra = ncols - 9 - (C.val?1:0);
+  const foot = [[{content:"TOTAL",colSpan:6,styles:yellow}, ...[repH(t.total), repH(t.e50), repH(t.e100), ...(C.val?[brl(t.valor)]:[])].map(x=>({content:x,styles:{...yellow,halign:"right"}})), ...Array.from({length:nExtra},()=>({content:"",styles:yellow}))]];
+  const cs = {0:{cellWidth:18}, 1:{cellWidth:22}, 2:{cellWidth:19}, 3:{cellWidth:13,halign:"center"}, 4:{cellWidth:13,halign:"center"}, 6:{cellWidth:15,halign:"right"}, 7:{cellWidth:13,halign:"right"}, 8:{cellWidth:13,halign:"right"}};
+  let ci = 9; if(C.val) cs[ci++] = {cellWidth:24, halign:"right"}; if(C.unid) cs[ci++] = {cellWidth:24}; if(C.emp) cs[ci++] = {cellWidth:24}; if(C.prof) cs[ci++] = {cellWidth:30};
+  doc.autoTable({startY:y, head, body, foot, theme:"grid", margin:{left:14,right:14}, showFoot:"lastPage",
+    styles:{fontSize:7.8,cellPadding:1.4,textColor:INK,lineColor:[205,212,201],lineWidth:0.2,valign:"middle"},
+    headStyles:{fillColor:GREEN,textColor:255,fontStyle:"bold",halign:"center"}, columnStyles:cs});
+  y = doc.lastAutoTable.finalY + 7;
+  y = ensure(doc,y,48);
+  doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(...NAVY); doc.text("RESUMO DE HORAS",14,y); y += 2;
+  const sum = repSummary(t).map((s,i)=>{ const st = i>=3 ? {fontStyle:"bold"} : {}; if(i===4) Object.assign(st,{fillColor:[226,240,230],textColor:[20,95,47]}); return [{content:s[0],styles:st},{content:fdec(s[1]),styles:st},{content:fh(s[1]),styles:{...st,textColor:i===4?[20,95,47]:GREY}}, ...(C.val?[{content:brl(s[2]),styles:st}]:[])]; });
+  doc.autoTable({startY:y, theme:"grid", margin:{left:14,right:pw(doc)-14-(C.val?160:130)}, body:sum,
+    head:[["", "Decimal", "h:min", ...(C.val?["Valor"]:[])]],
+    styles:{fontSize:9,cellPadding:1.8,textColor:INK,lineColor:[205,212,201],lineWidth:0.2},
+    headStyles:{fillColor:[244,247,243],textColor:GREY,fontStyle:"bold",fontSize:8},
+    columnStyles:{1:{halign:"right",cellWidth:22},2:{halign:"right",cellWidth:22},3:{halign:"right",cellWidth:30}}});
+  y = doc.lastAutoTable.finalY + 6;
+  signature(doc, y, `${cfg.empresa.nome}${prof && !C.prof && profs().length?" - "+prof:cfg.empresa.responsavel?" - "+cfg.empresa.responsavel:""}`, `Responsável ${emp||"contratante"} (visto)`);
+  if(state.rep.fotos) await pdfFotos(doc, rows);
+}
+async function repPdf(){
+  const groups = repGroups(), all = repRows();
+  if(!all.length){ toast("Nenhum apontamento nesse período."); return; }
+  const doc = pdfDoc(true); if(!doc) return;
+  const v = state.rep.valores, by = state.rep.by;
+  if(groups.length>1){
+    let y = pdfHeader(doc, `RESUMO POR ${DIMS[by].label.toUpperCase()}`, repPdfSub());
+    const t = sumCalc(all);
+    doc.autoTable({startY:y+2, theme:"grid", margin:{left:14,right:14},
+      head:[[DIMS[by].label.toUpperCase(),"OS","HORAS",`EXTRA ${state.cfg.extraPct}%`,`EXTRA ${state.cfg.feriadoPct}%`,...(v?["VALOR"]:[])]],
+      body: groups.map(g=>{ const c=sumCalc(g.rows); return [g.label, String(g.rows.length), fdec(c.total), fdec(c.e50), fdec(c.e100), ...(v?[brl(c.valor)]:[])]; }),
+      foot:[["TOTAL", String(all.length), fdec(t.total), fdec(t.e50), fdec(t.e100), ...(v?[brl(t.valor)]:[])]],
+      styles:{fontSize:9.5,cellPadding:2,textColor:INK,lineColor:[205,212,201],lineWidth:0.2}, headStyles:{fillColor:GREEN,textColor:255}, footStyles:{fillColor:[255,240,150],textColor:INK},
+      columnStyles:{1:{halign:"right",cellWidth:20},2:{halign:"right",cellWidth:28},3:{halign:"right",cellWidth:28},4:{halign:"right",cellWidth:28},5:{halign:"right",cellWidth:36}}});
+    doc.setFontSize(9); doc.setTextColor(...GREY); doc.setFont("helvetica","normal"); doc.text("O detalhamento de cada um começa na próxima página.",14,doc.lastAutoTable.finalY+7);
+  }
+  if(state.rep.fotos) toast("Gerando PDF com fotos…");
+  for(const [i,g] of groups.entries()){ if(groups.length>1 || i>0) doc.addPage(); await pdfGroup(doc, g.rows); }
+  pdfFooter(doc);
+  offerFile(`controle-ordens-${repFileTag()}.pdf`, doc.output("blob"));
+}
+function orcPdf(o){
+  const doc = pdfDoc(); if(!doc) return;
+  const T = orcTotals(o), E = state.cfg.empresa, val = orcValidade(o);
+  let y = pdfHeader(doc, "PROPOSTA DE ORÇAMENTO", [`Nº ${o.numero||"-"}`, `Emissão: ${fdate(o.data)}`]);
+  const C = o.cliente||{};
+  doc.setFillColor(240,244,238); doc.roundedRect(14,y-4,182,24,2,2,"F");
+  doc.setFontSize(8); doc.setTextColor(...GREY); doc.setFont("helvetica","bold"); doc.text("CLIENTE",18,y+0.5);
+  doc.setFontSize(10.5); doc.setTextColor(...INK); doc.text(C.nome||"-",18,y+6);
+  doc.setFont("helvetica","normal"); doc.setFontSize(8.8);
+  const l2 = [C.documento?`CNPJ/CPF: ${C.documento}`:"", C.cidade||""].filter(Boolean).join("   |   ");
+  const l3 = [C.contato?`A/C: ${C.contato}`:"", C.telefone||"", C.email||""].filter(Boolean).join("   |   ");
+  if(l2) doc.text(l2,18,y+11); if(l3) doc.text(l3,18,y+15.5);
+  y += 28;
+  const block = (title, text) => {
+    if(!text) return;
+    doc.setFont("helvetica","normal"); doc.setFontSize(9.2);
+    const lines = doc.splitTextToSize(text, 182);
+    y = ensure(doc, y, 12);
+    doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(...NAVY); doc.text(title,14,y); y+=5;
+    doc.setFont("helvetica","normal"); doc.setFontSize(9.2); doc.setTextColor(...INK);
+    lines.forEach(l=>{ y = ensure(doc,y,5); doc.text(l,14,y); y+=4.4; }); y+=3;
+  };
+  if(o.titulo){ doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.setTextColor(...INK); const tl=doc.splitTextToSize(`Objeto: ${o.titulo}`,182); tl.forEach(l=>{doc.text(l,14,y); y+=5.5;}); y+=2; }
+  if(o.apresentacao) block("Quem somos", E.sobre);
+  block("Escopo dos serviços", o.escopo);
+  const itens = (o.itens||[]).filter(i=>i.desc||numIn(i.valor));
+  y = ensure(doc,y,30);
+  doc.autoTable({startY:y, theme:"grid", margin:{left:14,right:14},
+    head:[["Item","Descrição","Un.","Qtd.","Valor unit.","Total"]],
+    body: itens.map((i,k)=>[String(k+1), i.desc||"", i.un||"", String(numIn(i.qtd)).replace(".",","), brl(numIn(i.valor)), brl(numIn(i.qtd)*numIn(i.valor))]),
+    styles:{fontSize:8.8,cellPadding:2,textColor:INK,lineColor:[210,216,206],lineWidth:0.2,valign:"middle"},
+    headStyles:{fillColor:GREEN,textColor:255}, columnStyles:{0:{cellWidth:12,halign:"center"},2:{cellWidth:14,halign:"center"},3:{cellWidth:16,halign:"right"},4:{cellWidth:28,halign:"right"},5:{cellWidth:30,halign:"right"}}});
+  y = doc.lastAutoTable.finalY + 2;
+  const tot = [["Subtotal", brl(T.sub)]];
+  if(T.desc) tot.push([`Desconto (${String(numIn(o.descontoPct)).replace(".",",")}%)`, "- "+brl(T.desc)]);
+  tot.push([{content:"VALOR TOTAL",styles:{fontStyle:"bold",fontSize:10.5}},{content:brl(T.total),styles:{fontStyle:"bold",fontSize:10.5,textColor:GREEN}}]);
+  doc.autoTable({startY:y, theme:"plain", margin:{left:120,right:14}, body:tot, styles:{fontSize:9.2,cellPadding:1.4,textColor:INK}, columnStyles:{1:{halign:"right"}}});
+  y = doc.lastAutoTable.finalY + 7;
+  const cond = [];
+  if(o.pagamento) cond.push(["Condições de pagamento", o.pagamento]);
+  if(o.prazo) cond.push(["Prazo de execução", o.prazo]);
+  if(val) cond.push(["Validade da proposta", `${o.validadeDias} dias (até ${fdate(val)})`]);
+  if(o.obs) cond.push(["Observações", o.obs]);
+  if(cond.length){ y = ensure(doc,y,20); doc.autoTable({startY:y, theme:"plain", margin:{left:14,right:14}, body:cond, styles:{fontSize:9,cellPadding:1.4,textColor:INK}, columnStyles:{0:{fontStyle:"bold",cellWidth:46,textColor:NAVY}}}); y = doc.lastAutoTable.finalY + 6; }
+  signature(doc, y+4, `${E.nome}${E.responsavel?" - "+E.responsavel:""}`, `De acordo - ${C.nome||"Cliente"}`);
+  pdfFooter(doc);
+  offerFile(`orcamento-${o.numero||"rascunho"}-${(C.nome||"cliente").replace(/[^\wÀ-ú]+/g,"-").slice(0,30)}.pdf`, doc.output("blob"));
+}
+
+/* ---------- ORÇAMENTOS ---------- */
+function orcCard(o){
+  const T = orcTotals(o), st = ST[o.status]||ST.rascunho, val = orcValidade(o);
+  const vencido = o.status==="enviado" && val && val < today();
+  const rec = orcAberto(o) ? orcRecebido(o.id) : 0;
+  return `<button class="orccard" data-act="editOrc" data-id="${o.id}">
+    <span style="min-width:0"><b>${esc(o.cliente?.nome||"Sem cliente")}</b><br><span class="muted">${esc(o.titulo||"Sem título")}</span></span>
+    <span class="val">${brl(T.total)}</span>
+    <span class="meta"><span class="mono">Nº ${esc(o.numero||"-")}</span> · ${fdate(o.data)} <span class="pill ${st[1]}">${st[0]}</span>${vencido?'<span class="pill warn">Validade vencida</span>':""}${orcAberto(o)?(rec>=T.total-0.005?'<span class="pill good">Recebido</span>':`<span class="pill info">A receber ${brl(T.total-rec)}</span>`):""}${orcAberto(o)?(()=>{ const a=orcAndamento(o); return a.ents.length||a.prev ? `<span class="pill ${a.pct>100?"bad":""}">${fdec(a.h*60)} de ${fdec(a.prev*60)} h</span>` : ""; })():""}${o.exemplo?'<span class="pill">Exemplo</span>':""}</span></button>`;
+}
+function vOrcamentos(){
+  const f = state.orcFilter;
+  const list = state.orc.filter(o=>f==="todos"||o.status===f).sort((a,b)=>(b.numero||"").localeCompare(a.numero||""));
+  const cnt = k => state.orc.filter(o=>k==="todos"||o.status===k).length;
+  const sumSt = k => state.orc.filter(o=>o.status===k).reduce((s,o)=>s+orcTotals(o).total,0);
+  return `${exampleBanner()}
+  <div class="pagehead"><div><span class="eyebrow">Orçamentos</span><h1>Propostas</h1><p class="muted">Monte a proposta, baixe o PDF com a marca da GAAP e acompanhe a resposta do cliente.</p></div><button class="btn primary" data-act="newOrc">+ Novo orçamento</button></div>
+  <div class="kpis" style="margin:0 0 16px">
+    <div class="kpi"><span class="eyebrow">Rascunhos</span><span class="v">${cnt("rascunho")}</span><span class="s">${brl(sumSt("rascunho"))}</span></div>
+    <div class="kpi"><span class="eyebrow">Enviados</span><span class="v">${cnt("enviado")}</span><span class="s">${brl(sumSt("enviado"))} aguardando</span></div>
+    <div class="kpi"><span class="eyebrow">Aprovados</span><span class="v">${cnt("aprovado")+cnt("concluido")}</span><span class="s">${brl(sumSt("aprovado")+sumSt("concluido"))}</span></div>
+    <div class="kpi"><span class="eyebrow">Recusados</span><span class="v">${cnt("recusado")}</span><span class="s">${brl(sumSt("recusado"))}</span></div>
+  </div>
+  <div class="filters">${[["todos","Todos"],...Object.entries(ST).map(([k,v])=>[k,v[0]])].map(([k,l])=>`<button class="chipbtn" data-act="orcFilter" data-f="${k}" aria-pressed="${f===k}">${l} (${cnt(k)})</button>`).join("")}</div>
+  ${list.length?`<div class="list">${list.map(orcCard).join("")}</div>`:`<div class="empty"><b>Nenhum orçamento ${f==="todos"?"ainda":"com esse status"}</b>Crie uma proposta com itens de mão de obra, material e serviços.</div>`}`;
+}
+function nextNumero(){ const y = new Date().getFullYear(); const n = state.orc.map(o=>o.numero||"").filter(s=>s.startsWith(y+"-")).map(s=>+s.split("-")[1]||0); return `${y}-${String((n.length?Math.max(...n):0)+1).padStart(3,"0")}`; }
+function newOrcDraft(){ return {cliente:{nome:"",documento:"",contato:"",telefone:"",email:"",cidade:""}, titulo:"", escopo:"", itens:[{tipo:"mo",desc:"Mão de obra - montagem/manutenção mecânica",un:"h",qtd:"8",valor:String(state.cfg.valorHora)}], descontoPct:"", pagamento:"50% na aprovação e 50% na conclusão dos serviços", prazo:"", validadeDias:15, obs:"", status:"rascunho", data:today(), apresentacao:true}; }
+function orcAndamento(o){
+  const prev = (o.itens||[]).filter(i=>i.tipo==="mo" || String(i.un||"").trim().toLowerCase()==="h").reduce((s,i)=>s+numIn(i.qtd),0);
+  const ents = state.ap.filter(e=>e.orcId===o.id), h = sumCalc(ents).total/60, cu = custoSum(ents);
+  return {prev, ents, h, cu, pct: prev ? Math.round(100*h/prev) : null};
+}
+function vOrcEdit(){
+  const o = state.orcDraft; const C = o.cliente;
+  const and = o.id && orcAberto(o) ? orcAndamento(o) : null;
+  const clientes = [...new Map(state.orc.filter(x=>x.cliente?.nome).map(x=>[x.cliente.nome,x.cliente])).keys()];
+  return `<div class="pagehead"><div><span class="eyebrow">${o.id?`Orçamento Nº ${esc(o.numero)}`:"Novo orçamento"}</span><h1>${esc(o.titulo||"Proposta")}</h1></div>
+    <div class="row"><button class="btn" data-act="nav" data-view="orcamentos">Voltar</button><button class="btn" data-act="orcPdf">Salvar e baixar PDF</button><button class="btn primary" data-act="saveOrc">Salvar</button></div></div>
+  <div class="form" id="orcForm">
+    ${and?`<div class="panel form"><header class="row" style="justify-content:space-between"><h3>Andamento do serviço</h3><button class="btn sm primary" data-act="orcLancar" data-id="${esc(o.id)}">Lançar horas neste serviço</button></header>
+      <div class="summary" style="margin:0"><span>Mão de obra prevista <b>${fdec(and.prev*60)} h</b></span><span>Lançada <b>${fdec(and.h*60)} h</b></span>${and.pct!=null?`<span><b>${and.pct}%</b> usada</span>`:""}${temCustos()?`<span>Custo da equipe <b>${brl(and.cu)}</b></span><span>Valor do orçamento − equipe <b>${brl(orcTotals(o).total-and.cu)}</b></span>`:""}</div>
+      ${and.pct!=null?`<div class="bar ${and.pct>100?"over":""}"><i style="width:${Math.min(100,and.pct)}%"></i></div>`:""}
+      ${and.pct>100?`<div class="warnbox">As horas lançadas já passaram do previsto no orçamento.</div>`:""}
+      ${and.ents.length?`<div class="tablewrap"><table><thead><tr><th>Data</th><th>Funcionário</th><th>OS</th><th>Início</th><th>Fim</th><th class="r">Horas</th></tr></thead><tbody>${and.ents.sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio)).map(e=>`<tr><td class="mono">${fdate(e.data)}</td><td>${esc(e.profissional||"-")}</td><td class="mono">${esc(e.os||"-")}</td><td class="mono">${esc(e.inicio)}</td><td class="mono">${esc(e.fim)}</td><td class="r mono">${fdec(calc(e).total)}</td></tr>`).join("")}</tbody></table></div>`:`<p class="muted" style="margin:0">Nenhuma hora lançada ainda. Ao lançar as OS do dia, escolha este orçamento em “Serviço de orçamento”.</p>`}
+    </div>`:""}
+    <div class="panel form"><h3>Cliente</h3>
+      <div class="grid2"><label class="field"><span>Nome / razão social</span><input data-k="cliente.nome" list="orc-cli" value="${esc(C.nome)}" placeholder="Ex.: Cerealista Boa Safra Ltda"><datalist id="orc-cli">${clientes.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></label>
+      <label class="field"><span>CNPJ / CPF</span><input data-k="cliente.documento" value="${esc(C.documento)}"></label></div>
+      <div class="grid3"><label class="field"><span>A/C (contato)</span><input data-k="cliente.contato" value="${esc(C.contato)}"></label>
+      <label class="field"><span>Telefone</span><input data-k="cliente.telefone" inputmode="tel" value="${esc(C.telefone)}"></label>
+      <label class="field"><span>E-mail</span><input data-k="cliente.email" inputmode="email" value="${esc(C.email)}"></label></div>
+      <label class="field"><span>Cidade / endereço</span><input data-k="cliente.cidade" value="${esc(C.cidade)}"></label>
+    </div>
+    <div class="panel form"><h3>Proposta</h3>
+      <div class="grid3"><label class="field" style="grid-column:1/-1"><span>Objeto (título)</span><input data-k="titulo" value="${esc(o.titulo)}" placeholder="Ex.: Montagem de transportador helicoidal 12 m"></label>
+      <label class="field"><span>Data de emissão</span><input type="date" data-k="data" value="${esc(o.data)}"></label>
+      <label class="field"><span>Validade (dias)</span><input type="number" min="1" data-k="validadeDias" value="${esc(o.validadeDias)}"></label>
+      <label class="field"><span>Status</span><select data-k="status">${Object.entries(ST).map(([k,v])=>`<option value="${k}" ${o.status===k?"selected":""}>${v[0]}</option>`).join("")}</select></label></div>
+      <label class="field"><span>Escopo dos serviços</span><textarea data-k="escopo" rows="4" placeholder="Descreva o que será executado, o que está incluso e o que não está.">${esc(o.escopo)}</textarea></label>
+      <label class="check"><input type="checkbox" data-k="apresentacao" ${o.apresentacao?"checked":""}> Incluir “Quem somos” no PDF</label>
+    </div>
+    <div class="panel form"><header class="row" style="justify-content:space-between"><h3>Itens</h3><span class="row"><button class="btn sm" data-act="addItem" data-t="mo">+ Mão de obra</button><button class="btn sm" data-act="addItem" data-t="mat">+ Material</button><button class="btn sm" data-act="addItem" data-t="srv">+ Serviço</button></span></header>
+      <div class="items" id="items">${itemsHtml(o)}</div>
+      <div class="grid3"><label class="field"><span>Desconto (%)</span><input data-k="descontoPct" inputmode="decimal" value="${esc(o.descontoPct)}" placeholder="0"></label></div>
+      <div class="totals" id="orcTotals">${totalsHtml(o)}</div>
+    </div>
+    <div class="panel form"><h3>Condições</h3>
+      <div class="grid2"><label class="field"><span>Condições de pagamento</span><input data-k="pagamento" value="${esc(o.pagamento)}"></label>
+      <label class="field"><span>Prazo de execução</span><input data-k="prazo" value="${esc(o.prazo)}" placeholder="Ex.: 10 dias úteis após aprovação"></label></div>
+      <label class="field"><span>Observações</span><textarea data-k="obs" rows="3" placeholder="Ex.: Içamento e andaimes por conta do cliente. Inclui ART.">${esc(o.obs)}</textarea></label>
+    </div>
+    <div class="row" style="justify-content:space-between">${o.id?`<span class="row"><button class="btn danger" data-act="delOrc">Excluir orçamento</button><button class="btn" data-act="dupOrc">Duplicar</button></span>`:"<span></span>"}
+      <span class="row"><button class="btn" data-act="orcPdf">Salvar e baixar PDF</button><button class="btn primary" data-act="saveOrc">Salvar</button></span></div>
+  </div>`;
+}
+function itemsHtml(o){
+  if(!o.itens.length) return `<div class="empty">Adicione mão de obra, materiais ou serviços.</div>`;
+  const lab = {mo:"Mão de obra",mat:"Material",srv:"Serviço"};
+  return o.itens.map((i,k)=>`<div class="itemrow" data-i="${k}">
+    <label class="field desc"><span>${lab[i.tipo]||"Item"} ${k+1}</span><input data-f="desc" value="${esc(i.desc)}" placeholder="Descrição"></label>
+    <label class="field"><span>Un.</span><input data-f="un" value="${esc(i.un)}"></label>
+    <label class="field"><span>Qtd.</span><input data-f="qtd" inputmode="decimal" value="${esc(i.qtd)}"></label>
+    <label class="field"><span>Valor unit. (R$)</span><input data-f="valor" inputmode="decimal" value="${esc(i.valor)}"></label>
+    <span class="tot" data-tot="${k}">${brl(numIn(i.qtd)*numIn(i.valor))}</span>
+    <button class="iconbtn" data-act="delItem" data-i="${k}" aria-label="Remover item">✕</button></div>`).join("");
+}
+function totalsHtml(o){ const T=orcTotals(o); return `<div><span>Subtotal</span><span class="mono">${brl(T.sub)}</span></div>${T.desc?`<div><span>Desconto</span><span class="mono">- ${brl(T.desc)}</span></div>`:""}<div class="grand"><span>Total</span><span>${brl(T.total)}</span></div>`; }
+document.addEventListener("input", e=>{
+  if(state.view!=="orcEdit" || !e.target.closest("#orcForm")) return;
+  const o = state.orcDraft; const t = e.target;
+  if(t.dataset.k){ const v = t.type==="checkbox" ? t.checked : t.value; const p = t.dataset.k.split("."); if(p.length===2) o[p[0]][p[1]] = v; else o[p[0]] = v; }
+  if(t.dataset.f){ const k = +t.closest(".itemrow").dataset.i; o.itens[k][t.dataset.f] = t.value; const el=document.querySelector(`[data-tot="${k}"]`); if(el) el.textContent = brl(numIn(o.itens[k].qtd)*numIn(o.itens[k].valor)); }
+  $("#orcTotals").innerHTML = totalsHtml(o);
+  state.orcDirty = true;
+});
+document.addEventListener("change", e=>{ if(state.view==="orcEdit" && e.target.dataset && e.target.dataset.k && (e.target.type==="checkbox"||e.target.tagName==="SELECT")){ const o=state.orcDraft; const p=e.target.dataset.k; o[p] = e.target.type==="checkbox"?e.target.checked:e.target.value; state.orcDirty=true; } });
+async function saveOrc(){
+  const o = clone(state.orcDraft);
+  if(!o.cliente.nome.trim()){ toast("Informe o nome do cliente."); return false; }
+  if(!o.numero) o.numero = nextNumero();
+  o.validadeDias = +o.validadeDias || 15;
+  delete o.exemplo;
+  try{ const id = await save("orcamentos", o); state.orcDraft.id = id; state.orcDraft.numero = o.numero; state.orcDirty=false; toast(`Orçamento ${o.numero} salvo`); return true; }
+  catch(err){ toast(writeErr(err)); return false; }
+}
+
+/* ---------- FINANCEIRO ---------- */
+function vFinanceiro(){
+  const t = totalsReceber();
+  const recH = state.rec.filter(r=>r.origem==="horas"), recEmp = r => r.empresa || state.cfg.contratante || "";
+  const apH = state.ap.filter(e=>!e.orcId);
+  const multiEmp = new Set([...apH.map(empOf), ...recH.map(recEmp)]).size > 1;
+  const keys = [...new Set([...apH.map(e=>ym(e.data)+"|"+(multiEmp?empOf(e):"")), ...recH.map(r=>(r.competencia||"")+"|"+(multiEmp?recEmp(r):""))])].filter(k=>!k.startsWith("|")).sort((a,b)=>b.localeCompare(a));
+  const fechRecs = state.rec.filter(r=>r.origem==="fech"), shareCache = {};
+  const share = (f, m, emp) => { const key = f.id+"|"+m+"|"+emp; if(key in shareCache) return shareCache[key]; const rows = fechRows(f.de, f.ate, f.empresa||""), tot = sumCalc(rows).valor; return shareCache[key] = tot ? sumCalc(rows.filter(e=>ym(e.data)===m && (!multiEmp || empOf(e)===emp))).valor/tot : 0; };
+  const mrows = keys.map(k=>{ const [m,emp] = k.split("|"); const c=sumCalc(apH.filter(e=>ym(e.data)===m && (!multiEmp || empOf(e)===emp)));
+    const rec = recH.filter(r=>r.competencia===m && (!multiEmp || recEmp(r)===emp)).reduce((s,r)=>s+numIn(r.valor),0)
+      + fechRecs.reduce((s,r)=>{ const f = state.fech.find(x=>x.id===r.fechId); return s + (f ? numIn(r.valor)*share(f, m, emp) : 0); }, 0);
+    return {m,emp,c,rec,saldo:Math.round((c.valor-rec)*100)/100}; });
+  const fechs = [...state.fech].sort((a,b)=>(b.de||"").localeCompare(a.de||""));
+  const aguard = fechs.reduce((s,f)=>s+fechSaldo(f),0);
+  const byEmp = multiEmp ? [...new Set(mrows.map(r=>r.emp))].map(emp=>{ const rs=mrows.filter(r=>r.emp===emp); const v=rs.reduce((s,r)=>s+r.c.valor,0), rc=rs.reduce((s,r)=>s+r.rec,0); return {emp, v, rc, saldo:Math.max(0,Math.round((v-rc)*100)/100)}; }) : [];
+  const orcs = state.orc.filter(orcAberto);
+  const recs = [...state.rec].sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+  const stPill = (saldo, rec) => saldo<=0.005 ? '<span class="pill good">Recebido</span>' : rec>0 ? '<span class="pill warn">Parcial</span>' : '<span class="pill">Pendente</span>';
+  return `${exampleBanner()}
+  <div class="pagehead"><div><span class="eyebrow">Financeiro</span><h1>A receber</h1><p class="muted">Horas por mês de competência e orçamentos aprovados. Registre cada pagamento recebido para baixar o saldo.</p></div><button class="btn primary" data-act="newRec">+ Registrar recebimento</button></div>
+  <div class="kpis" style="margin:0">
+    <div class="kpi"><span class="eyebrow">A receber total</span><span class="v">${brl(t.horas+t.orc)}</span><span class="s">horas + orçamentos</span></div>
+    <div class="kpi"><span class="eyebrow">Horas a receber</span><span class="v">${brl(t.horas)}</span><span class="s">${brl(t.prod)} produzido · ${brl(t.recH)} recebido</span></div>
+    <div class="kpi"><span class="eyebrow">Orçamentos a receber</span><span class="v">${brl(t.orc)}</span><span class="s">${brl(t.orcTot)} aprovado · ${brl(t.recO)} recebido</span></div>
+    <div class="kpi"><span class="eyebrow">Fechamentos aguardando</span><span class="v">${brl(aguard)}</span><span class="s">${fechs.filter(f=>fechSaldo(f)>0.005).length} enviado(s) sem pagamento completo</span></div>
+  </div>
+  <section class="section"><header><h2>Fechamentos enviados</h2><button class="btn sm" data-act="nav" data-view="relatorios">Fechar um período</button></header>
+  ${fechs.length?`<div class="tablewrap"><table><thead><tr><th>Nº</th><th>Período</th><th>Empresa</th><th class="r">OS</th><th class="r">Horas</th><th class="r">Valor</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
+  <tbody>${fechs.map(f=>{ const rc = fechRecebido(f), sd = fechSaldo(f); return `<tr><td class="mono"><b>${esc(f.numero)}</b></td><td class="mono">${fdate(f.de)} a ${fdate(f.ate)}</td><td>${esc(f.empresa||"Todas")}</td><td class="r mono">${f.os||0}</td><td class="r mono">${fdec(+f.horas||0)}</td><td class="r mono">${brl(+f.valor||0)}</td><td class="r mono">${brl(rc)}</td><td class="r mono">${brl(sd)}</td>
+    <td>${sd<=0.005?'<span class="pill good">Recebido</span>':rc>0?'<span class="pill warn">Parcial</span>':'<span class="pill info">Enviado, aguardando</span>'}</td>
+    <td><span class="row" style="flex-wrap:nowrap"><button class="btn sm" data-act="fechPdfBtn" data-id="${f.id}">PDF</button>${sd>0.005?`<button class="btn sm" data-act="newRec" data-o="fech" data-id="${f.id}" data-v="${sd}">Receber</button>`:""}<button class="btn sm danger" data-act="fechReabrir" data-id="${f.id}">Reabrir</button></span></td></tr>`; }).join("")}</tbody></table></div>`
+  :`<div class="empty"><b>Nenhum período fechado</b>Em Relatórios, escolha “Período / fechamento” e toque em “Fechar período…” quando mandar o relatório para a empresa.</div>`}</section>
+  ${byEmp.length?`<section class="section"><header><h2>Horas a receber por empresa</h2></header><div class="tablewrap"><table><thead><tr><th>Empresa</th><th class="r">Produzido</th><th class="r">Recebido</th><th class="r">A receber</th></tr></thead><tbody>${byEmp.map(r=>`<tr><td>${esc(r.emp||"(sem empresa)")}</td><td class="r mono">${brl(r.v)}</td><td class="r mono">${brl(r.rc)}</td><td class="r mono"><b>${brl(r.saldo)}</b></td></tr>`).join("")}</tbody></table></div></section>`:""}
+  <section class="section"><header><h2>Horas por mês${multiEmp?" e empresa":""}</h2></header>
+  ${mrows.length?`<div class="tablewrap"><table><thead><tr><th>Competência</th>${multiEmp?"<th>Empresa</th>":""}<th class="r">Normal</th><th class="r">Extra ${state.cfg.extraPct}%</th><th class="r">Extra ${state.cfg.feriadoPct}%</th><th class="r">Valor</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
+  <tbody>${mrows.map(r=>`<tr><td style="text-transform:capitalize">${ymLabel(r.m)}</td>${multiEmp?`<td>${esc(r.emp||"(sem empresa)")}</td>`:""}<td class="r mono">${fh(r.c.n)}</td><td class="r mono">${fh(r.c.e50)}</td><td class="r mono">${fh(r.c.e100)}</td><td class="r mono">${brl(r.c.valor)}</td><td class="r mono">${brl(r.rec)}</td><td class="r mono">${brl(Math.max(0,r.saldo))}</td><td>${stPill(r.saldo,r.rec)}</td><td>${r.saldo>0.005?`<button class="btn sm" data-act="newRec" data-o="horas" data-m="${r.m}" data-e="${esc(r.emp||"")}" data-v="${r.saldo}">Receber</button>`:""}</td></tr>`).join("")}</tbody></table></div>`
+  :`<div class="empty"><b>Sem horas registradas</b>Os meses aparecem aqui conforme você aponta as OS.</div>`}</section>
+  <section class="section"><header><h2>Orçamentos aprovados</h2></header>
+  ${orcs.length?`<div class="tablewrap"><table><thead><tr><th>Nº</th><th>Cliente</th><th class="r">Total</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
+  <tbody>${orcs.map(o=>{const T=orcTotals(o).total, rec=orcRecebido(o.id), s=Math.round((T-rec)*100)/100; return `<tr><td class="mono">${esc(o.numero)}</td><td>${esc(o.cliente?.nome)}<br><span class="muted">${esc(o.titulo||"")}</span></td><td class="r mono">${brl(T)}</td><td class="r mono">${brl(rec)}</td><td class="r mono">${brl(Math.max(0,s))}</td><td>${stPill(s,rec)}</td><td>${s>0.005?`<button class="btn sm" data-act="newRec" data-o="orc" data-id="${o.id}" data-v="${s}">Receber</button>`:""}</td></tr>`;}).join("")}</tbody></table></div>`
+  :`<div class="empty"><b>Nenhum orçamento aprovado</b>Quando você marcar um orçamento como Aprovado, ele entra aqui como valor a receber.</div>`}</section>
+  <section class="section"><header><h2>Recebimentos registrados</h2><span class="muted">${brl(state.rec.filter(r=>ym(r.data||"")===ym(today())).reduce((s,r)=>s+numIn(r.valor),0))} recebido em ${ymLabel(ym(today()))}</span></header>
+  ${recs.length?`<div class="tablewrap"><table><thead><tr><th>Data</th><th>Origem</th><th>Observação</th><th class="r">Valor</th><th></th></tr></thead>
+  <tbody>${recs.map(r=>`<tr><td class="mono">${fdate(r.data)}</td><td>${r.origem==="fech"?`Fechamento ${esc(state.fech.find(f=>f.id===r.fechId)?.numero||"(reaberto)")}${r.empresa?` · ${esc(r.empresa)}`:""}`:r.origem==="horas"?`Horas · <span style="text-transform:capitalize">${ymLabel(r.competencia||"2000-01")}</span>${multiEmp?` · ${esc(recEmp(r))}`:""}`:`Orçamento ${esc(state.orc.find(o=>o.id===r.orcId)?.numero||"(excluído)")}`}${r.exemplo?' <span class="pill">Exemplo</span>':""}</td><td>${esc(r.obs||"")}</td><td class="r mono">${brl(numIn(r.valor))}</td><td><button class="btn sm danger" data-act="delRec" data-id="${r.id}">Excluir</button></td></tr>`).join("")}</tbody></table></div>`
+  :`<div class="empty"><b>Nenhum recebimento registrado</b>Use “Registrar recebimento” quando a empresa ou o cliente pagar.</div>`}</section>`;
+}
+function recForm(o){
+  const orcs = state.orc.filter(orcAberto), fs = state.fech.filter(f=>fechSaldo(f)>0.005 || f.id===o.id);
+  return `<header><h2>Registrar recebimento</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <form class="form" id="recForm">
+    <div class="grid2"><label class="field"><span>Data do pagamento</span><input type="date" id="r-data" value="${today()}" required></label>
+    <label class="field"><span>Valor recebido (R$)</span><input id="r-valor" inputmode="decimal" value="${o.v?String(o.v).replace(".",","):""}" required></label></div>
+    <label class="field"><span>Referente a</span><select id="r-origem"><option value="fech" ${o.o==="fech"?"selected":""} ${fs.length?"":"disabled"}>Fechamento enviado</option><option value="horas" ${!o.o||o.o==="horas"?"selected":""}>Horas trabalhadas (por mês)</option><option value="orc" ${o.o==="orc"?"selected":""} ${orcs.length?"":"disabled"}>Orçamento aprovado</option></select></label>
+    <label class="field" id="r-fech-w" ${o.o==="fech"?"":"hidden"}><span>Fechamento</span><select id="r-fech">${fs.map(f=>`<option value="${f.id}" ${f.id===o.id?"selected":""}>${esc(f.numero)} · ${fdate(f.de)} a ${fdate(f.ate)} · saldo ${brl(fechSaldo(f))}</option>`).join("")}</select></label>
+    <div class="grid2" id="r-comp-w" ${o.o==="orc"||o.o==="fech"?"hidden":""}><label class="field"><span>Mês de competência</span><input type="month" id="r-comp" value="${o.m||ym(today())}"></label>
+    <label class="field"><span>Empresa que pagou</span><select id="r-emp">${dimVals("emp").map(v=>`<option ${v===(o.e||state.cfg.contratante)?"selected":""}>${esc(v)}</option>`).join("")||'<option value="">(sem empresa)</option>'}</select></label></div>
+    <label class="field" id="r-orc-w" ${o.o==="orc"?"":"hidden"}><span>Orçamento</span><select id="r-orc">${orcs.map(x=>`<option value="${x.id}" ${x.id===o.id?"selected":""}>${esc(x.numero)} · ${esc(x.cliente?.nome)} · ${brl(orcTotals(x).total)}</option>`).join("")}</select></label>
+    <label class="field"><span>Observação</span><input id="r-obs" placeholder="Ex.: PIX, nota fiscal 123"></label>
+    <footer><span></span><button class="btn primary" type="submit">Salvar recebimento</button></footer>
+  </form>`;
+}
+document.addEventListener("change", e=>{ if(e.target.id==="r-origem"){ const v=e.target.value; $("#r-comp-w").hidden=v!=="horas"; $("#r-orc-w").hidden=v!=="orc"; $("#r-fech-w").hidden=v!=="fech"; } });
+async function submitRec(){
+  const r = {data:$("#r-data").value, valor:numIn($("#r-valor").value), origem:$("#r-origem").value, obs:$("#r-obs").value.trim()};
+  if(r.origem==="horas"){ r.competencia = $("#r-comp").value; r.empresa = $("#r-emp").value; }
+  else if(r.origem==="fech"){ r.fechId = $("#r-fech").value; const f = state.fech.find(x=>x.id===r.fechId); if(!f){ toast("Escolha o fechamento."); return; } r.empresa = f.empresa||""; }
+  else r.orcId = $("#r-orc").value;
+  if(!r.data || !(r.valor>0)){ toast("Informe a data e um valor maior que zero."); return; }
+  try{ await save("recebimentos", r); closeModal(); toast(`Recebimento de ${brl(r.valor)} registrado`); }
+  catch(err){ toast(writeErr(err)); }
+}
+
+/* ---------- AJUSTES ---------- */
+function vAjustes(){
+  const c = state.cfg, E = c.empresa; const y = new Date().getFullYear();
+  const hol = Object.entries(holidays(y)).sort();
+  return `<div class="pagehead"><div><span class="eyebrow">Ajustes</span><h1>Empresa, valores e jornada</h1><p class="muted">Valores novos valem para os próximos apontamentos. Os já lançados mantêm o valor da hora da época.</p></div></div>
+  ${state.mode==="local"?`<div class="banner">Os dados estão sendo salvos só neste navegador. Exporte um backup com frequência.</div>`:""}
+  <form class="form" id="cfgForm">
+    <div class="panel form"><h3>Valores da hora</h3>
+      <div class="grid3"><label class="field"><span>Valor da hora normal, padrão (R$)</span><input id="c-vh" inputmode="decimal" value="${String(c.valorHora).replace(".",",")}"></label>
+      <label class="field"><span>Extra dias úteis e sábado (%)</span><input id="c-p50" type="number" min="0" value="${c.extraPct}"></label>
+      <label class="field"><span>Domingo e feriado (%)</span><input id="c-p100" type="number" min="0" value="${c.feriadoPct}"></label></div>
+      <p class="muted" style="margin:0">Hora normal ${brl(c.valorHora)} · extra ${brl(c.valorHora*(1+c.extraPct/100))} · domingo/feriado ${brl(c.valorHora*(1+c.feriadoPct/100))}</p>
+    </div>
+    <div class="panel form"><h3>Jornada normal</h3><p class="muted" style="margin:0">Fora desses horários a hora conta como extra. Deixe em branco o dia sem jornada.</p>
+      <div class="tablewrap"><table><thead><tr><th>Dia</th><th>Entrada</th><th>Saída</th></tr></thead><tbody>
+      ${[1,2,3,4,5,6].map(d=>`<tr><td>${WD[d]}</td><td><input type="time" id="j-ini-${d}" value="${esc(c.jornada[d]?.ini||"")}" style="border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:4px 6px"></td><td><input type="time" id="j-fim-${d}" value="${esc(c.jornada[d]?.fim||"")}" style="border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:4px 6px"></td></tr>`).join("")}
+      <tr><td>Domingo</td><td colspan="2" class="muted">Sempre extra ${c.feriadoPct}%</td></tr></tbody></table></div>
+      <label class="field" style="max-width:340px"><span>Tolerância (minutos)</span><input id="c-tol" type="number" min="0" max="30" value="${+c.tolerancia||0}"></label>
+      <p class="muted" style="margin:0">Minutos antes da entrada ou depois da saída até esse limite contam como hora normal. A CLT admite até 5 minutos por marcação. Use 0 para contar tudo como extra.</p>
+      <label class="check"><input type="checkbox" id="c-alm" ${c.almoco.ativo?"checked":""}> Não contar o horário de almoço</label>
+      <div class="grid3"><label class="field"><span>Almoço início</span><input type="time" id="c-alm-ini" value="${esc(c.almoco.ini)}"></label><label class="field"><span>Almoço fim</span><input type="time" id="c-alm-fim" value="${esc(c.almoco.fim)}"></label></div>
+    </div>
+    <div class="panel form"><h3>Feriados</h3><p class="muted" style="margin:0">Feriados nacionais já entram automaticamente. Inclua municipais e estaduais abaixo, um por linha, no formato dd/mm Nome (ou dd/mm/aaaa para um ano só).</p>
+      <label class="check"><input type="checkbox" id="c-carn" ${c.feriados.carnaval?"checked":""}> Carnaval (segunda e terça) conta como feriado</label>
+      <label class="check"><input type="checkbox" id="c-corp" ${c.feriados.corpus?"checked":""}> Corpus Christi conta como feriado</label>
+      <label class="field"><span>Feriados locais</span><textarea id="c-fer" rows="3">${esc(c.feriados.extras)}</textarea></label>
+      <details><summary class="muted" style="cursor:pointer">Ver feriados de ${y} (${hol.length})</summary><div class="tablewrap" style="margin-top:8px"><table><tbody>${hol.map(([d,n])=>`<tr><td class="mono">${fdate(d)}</td><td>${WDS[parseYmd(d).getDay()]}</td><td>${esc(n)}</td></tr>`).join("")}</tbody></table></div></details>
+    </div>
+    <div class="panel form"><h3>Funcionários, unidades e empresas</h3>
+      <div class="grid2"><label class="field"><span>Funcionários (um por linha)</span><textarea id="c-profs" rows="4" placeholder="Ex.: Juliano de Oliveira">${esc(c.profissionais)}</textarea></label>
+      <label class="field"><span>Unidades / locais (um por linha)</span><textarea id="c-unids" rows="4" placeholder="Ex.: Uruaçu">${esc(c.unidades)}</textarea></label></div>
+      <label class="field"><span>Empresas contratantes (uma por linha; a primeira é a padrão)</span><textarea id="c-emps" rows="3" placeholder="Ex.: Branil">${esc(empresasCfg().join("\n"))}</textarea></label>
+      <p class="muted" style="margin:0">Funcionários, unidades e empresas aparecem como filtros e na opção “Separar por” em Horas, Relatórios e Painel. Ao apontar uma OS feita por mais de um funcionário, marque todos e o sistema cria um apontamento para cada.</p>
+    </div>
+    <div class="panel form" id="acessos"><h3>Acessos</h3>
+      <p class="muted" style="margin:0">Cada pessoa entra com o próprio e-mail e senha. Quem criar conta aparece aqui como “Aguardando”: escolha qual funcionário é e toque em Liberar. O funcionário só vê as próprias OS, sem valores.</p>
+      <div class="tablewrap"><table class="inputs"><thead><tr><th>E-mail</th><th>Situação</th><th>Funcionário</th><th></th></tr></thead><tbody>
+      ${state.perfis.map(p=>{ const eu = p.user_id===session?.user?.id; const st = {dono:['good','Responsável'],funcionario:['good','Liberado'],pendente:['warn','Aguardando'],bloqueado:['bad','Bloqueado']}[p.papel]||['','?'];
+        return `<tr data-uid="${esc(p.user_id)}"><td>${esc(p.email)}${eu?' <b>(você)</b>':""}</td><td><span class="pill ${st[0]}">${st[1]}</span></td>
+        <td>${p.papel==="dono"?"—":`<select class="pf-nome" aria-label="Funcionário de ${esc(p.email)}"><option value="">Escolha…</option>${profs().map(n=>`<option ${p.nome===n?"selected":""}>${esc(n)}</option>`).join("")}</select>`}</td>
+        <td>${p.papel==="dono"?"":`<span class="row" style="flex-wrap:nowrap"><button type="button" class="btn sm primary" data-act="perfilLiberar" data-uid="${esc(p.user_id)}">${p.papel==="funcionario"?"Salvar":"Liberar"}</button>${p.papel!=="bloqueado"?`<button type="button" class="btn sm danger" data-act="perfilBloquear" data-uid="${esc(p.user_id)}">Bloquear</button>`:""}</span>`}</td></tr>`; }).join("") || `<tr><td colspan="4" class="muted">Ninguém além de você ainda.</td></tr>`}
+      </tbody></table></div>
+      <p class="muted" style="margin:0">Para a equipe entrar: mande o endereço do sistema; cada um toca em “Criar conta”, confirma pelo e-mail e aparece aqui para você liberar.</p>
+    </div>
+    <div class="panel form"><h3>Custo da equipe e valor da hora por empresa</h3>
+      <p class="muted" style="margin:0">O custo da equipe é usado só no Painel para mostrar o lucro. Nunca aparece nos relatórios enviados.</p>
+      <div class="tablewrap"><table class="inputs"><thead><tr><th>Funcionário</th><th>Como você paga</th><th>Valor (R$)</th></tr></thead><tbody>
+      ${profs().map(n=>{ const cu=(c.custos||{})[n]||{}; return `<tr data-cu="${esc(n)}"><td>${esc(n)}</td><td><select class="cu-t" aria-label="Forma de pagamento de ${esc(n)}"><option value="hora" ${cu.tipo!=="mes"?"selected":""}>Por hora</option><option value="mes" ${cu.tipo==="mes"?"selected":""}>Salário mensal</option></select></td><td><input class="cu-v" inputmode="decimal" aria-label="Valor pago a ${esc(n)}" value="${cu.valor!=null?String(cu.valor).replace(".",","):""}" placeholder="0,00"></td></tr>`; }).join("") || `<tr><td colspan="3" class="muted">Cadastre os funcionários acima e salve para preencher os custos.</td></tr>`}
+      </tbody></table></div>
+      <p class="muted" style="margin:0">Por hora: a hora extra do funcionário usa os mesmos adicionais (${c.extraPct}% e ${c.feriadoPct}%). Salário mensal: o custo da hora é o salário dividido por ${HORAS_MES} horas (padrão da CLT), com os mesmos adicionais nas extras.</p>
+      <div class="tablewrap"><table class="inputs"><thead><tr><th>Empresa</th><th>Valor da hora (R$)</th><th>Extra (%)</th><th>Domingo e feriado (%)</th></tr></thead><tbody>
+      ${empresasCfg().map(n=>{ const t=(c.taxas||{})[n]||{}; return `<tr data-tx="${esc(n)}"><td>${esc(n)}</td><td><input class="tx-v" inputmode="decimal" aria-label="Valor da hora de ${esc(n)}" value="${t.valorHora!=null?String(t.valorHora).replace(".",","):""}" placeholder="${String(c.valorHora).replace(".",",")}"></td><td><input class="tx-p50" type="number" min="0" aria-label="Extra de ${esc(n)}" value="${t.extraPct??""}" placeholder="${c.extraPct}"></td><td><input class="tx-p100" type="number" min="0" aria-label="Domingo e feriado de ${esc(n)}" value="${t.feriadoPct??""}" placeholder="${c.feriadoPct}"></td></tr>`; }).join("") || `<tr><td colspan="4" class="muted">Cadastre as empresas acima e salve.</td></tr>`}
+      </tbody></table></div>
+      <p class="muted" style="margin:0">Em branco usa o valor padrão (${brl(c.valorHora)}, ${c.extraPct}% e ${c.feriadoPct}%). Valores novos valem para os próximos lançamentos; os já lançados mantêm o valor da época.</p>
+    </div>
+    <div class="panel form"><h3>Dados da empresa (aparecem nos PDFs)</h3>
+      <div class="grid2"><label class="field"><span>Nome</span><input id="e-nome" value="${esc(E.nome)}"></label><label class="field"><span>CNPJ</span><input id="e-cnpj" value="${esc(E.cnpj)}"></label>
+      <label class="field"><span>E-mail</span><input id="e-email" value="${esc(E.email)}"></label><label class="field"><span>Telefone</span><input id="e-tel" value="${esc(E.telefone)}"></label>
+      <label class="field"><span>Cidade</span><input id="e-cid" value="${esc(E.cidade)}"></label><label class="field"><span>Responsável técnico (assinatura)</span><input id="e-resp" value="${esc(E.responsavel)}"></label></div>
+      <label class="field"><span>Quem somos</span><textarea id="e-sobre" rows="5">${esc(E.sobre)}</textarea></label>
+    </div>
+    <div class="row" style="justify-content:flex-end"><button class="btn primary" type="submit">Salvar ajustes</button></div>
+  </form>
+  <section class="section"><header><h2>Backup</h2></header>
+    <div class="panel form"><p class="muted" style="margin:0">Exporte todos os apontamentos, orçamentos e recebimentos em um arquivo. Para restaurar, importe o arquivo; registros com o mesmo código são substituídos.</p>
+      <div class="row"><button class="btn" data-act="exportJson">Exportar backup</button><label class="btn" for="imp">Importar backup</label><input type="file" id="imp" accept="application/json,.json" hidden></div></div>
+  </section>`;
+}
+async function submitCfg(){
+  const g = id => $("#"+id).value;
+  const c = clone(state.cfg);
+  c.valorHora = numIn(g("c-vh")) || 60; c.extraPct = +g("c-p50") || 0; c.feriadoPct = +g("c-p100") || 0;
+  [1,2,3,4,5,6].forEach(d=>c.jornada[d] = {ini:g("j-ini-"+d), fim:g("j-fim-"+d)});
+  c.almoco = {ativo:$("#c-alm").checked, ini:g("c-alm-ini"), fim:g("c-alm-fim")};
+  c.tolerancia = Math.max(0, +g("c-tol") || 0);
+  c.profissionais = lines(g("c-profs")).join("\n"); c.unidades = lines(g("c-unids")).join("\n");
+  c.feriados = {carnaval:$("#c-carn").checked, corpus:$("#c-corp").checked, extras:g("c-fer")};
+  c.empresa = {nome:g("e-nome"), cnpj:g("e-cnpj"), email:g("e-email"), telefone:g("e-tel"), cidade:g("e-cid"), responsavel:g("e-resp"), sobre:g("e-sobre")};
+  c.custos = {}; document.querySelectorAll("[data-cu]").forEach(tr=>{ const v = numIn(tr.querySelector(".cu-v").value); if(v>0) c.custos[tr.dataset.cu] = {tipo:tr.querySelector(".cu-t").value, valor:v}; });
+  c.taxas = {}; document.querySelectorAll("[data-tx]").forEach(tr=>{ const q = k=>tr.querySelector(k).value.trim(), t = {}; if(q(".tx-v")) t.valorHora = numIn(q(".tx-v")); if(q(".tx-p50")!=="") t.extraPct = +q(".tx-p50"); if(q(".tx-p100")!=="") t.feriadoPct = +q(".tx-p100"); if(Object.keys(t).length) c.taxas[tr.dataset.tx] = t; });
+  const emps = lines(g("c-emps")), oldDef = state.cfg.contratante || "";
+  c.empresas = emps.join("\n"); c.contratante = emps[0] || "";
+  try{
+    if(oldDef && c.contratante !== oldDef){ for(const e of state.ap.filter(x=>!x.empresa)) await save("apontamentos", {...e, empresa:oldDef}); }
+    await saveCfg(c); state.cfg = deepMerge(DEFAULT_CFG,c); holCache={}; toast("Ajustes salvos"); state.rendered=null; render(); }
+  catch(err){ toast(writeErr(err)); }
+}
+document.addEventListener("change", async e=>{
+  if(e.target.id!=="imp" || !e.target.files[0]) return;
+  try{
+    const d = JSON.parse(await e.target.files[0].text());
+    if(!d || !Array.isArray(d.apontamentos)) throw new Error("formato");
+    toast("Importando…");
+    if(d.config) await saveCfg(d.config);
+    for(const col of COLS) for(const row of (d[col]||[])) await save(col, row);
+    toast("Backup importado");
+  }catch(err){ toast("Arquivo inválido. Use um backup exportado por este sistema."); }
+  e.target.value = "";
+});
+
+/* ---------- actions ---------- */
+const A = {
+  nav(b){ if(state.view==="orcEdit" && state.orcDirty && b.dataset.view!=="orcEdit"){ if(!b.dataset.armed){ b.dataset.armed="1"; toast("Há alterações não salvas no orçamento. Toque de novo para sair sem salvar."); setTimeout(()=>delete b.dataset.armed,4000); return; } } state.orcDirty=false; state.view=b.dataset.view; state.rendered=null; render(); window.scrollTo(0,0); },
+  month(b){ state.month = shiftYm(state.month, +b.dataset.d); render(); },
+  newDay(){ dayOpen(state.view==="horas" && ym(today())!==state.month ? state.month+"-01" : today()); },
+  dayAdd(){ const d=state.day, last=d.rows[d.rows.length-1]; const r=blankRow(); r.ini = last&&last.fim ? nextStart(last.fim) : ""; d.rows.push(r); renderDayRows(); updateDay(); const os=document.querySelectorAll('#d-rows [data-f="os"]'); os[os.length-1]?.focus(); },
+  dayDel(b){ const d=state.day; d.rows.splice(+b.dataset.r,1); if(!d.rows.length) d.rows.push(blankRow()); renderDayRows(); updateDay(); },
+  dayPreset(b){ $("#d-sp-ini").value=b.dataset.a; $("#d-sp-fim").value=b.dataset.b; },
+  daySplit(){ const d=state.day, a=hm($("#d-sp-ini").value), b0=hm($("#d-sp-fim").value), n=Math.max(1,Math.min(12,parseInt($("#d-sp-n").value)||1));
+    if(a==null||b0==null||a===b0){ toast("Informe o início e o fim do período."); return; }
+    const b = b0<=a ? b0+1440 : b0, dur=b-a, t=x=>{ x%=1440; return `${pad(Math.floor(x/60))}:${pad(x%60)}`; };
+    d.rows = d.rows.filter(r=>r.os||r.desc||r.fim);
+    for(let k=0;k<n;k++){ const r=blankRow(); r.ini=t(a+Math.round(k*dur/n)); r.fim=t(a+Math.round((k+1)*dur/n)); d.rows.push(r); }
+    d.rows.sort((x,y)=>(x.ini||"99").localeCompare(y.ini||"99"));
+    renderDayRows(); updateDay();
+    const nx = dayPresets(d.data).find(p=>hm(p[1])>=b0); if(nx){ $("#d-sp-ini").value=nx[1]; $("#d-sp-fim").value=nx[2]; }
+    const first = d.rows.findIndex(r=>!r.os); document.querySelectorAll('#d-rows [data-f="os"]')[first]?.focus(); },
+  newAp(){ const last = [...state.ap].filter(e=>e.data===today()).sort((a,b)=>b.fim.localeCompare(a.fim))[0]; openModal(apForm({data:today(), inicio:last?last.fim:"07:00", fim:"", cliente:last?last.cliente:""})); updateApPreview(); },
+  editAp(b){ const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; const lk = lockedE(e); if(lk){ toast(lockMsg(lk)); return; } openModal(apForm(e)); updateApPreview(); },
+  dupAp(){ const e = readApForm(); delete e.id; delete e.exemplo; delete e.valorHora; delete e.extraPct; delete e.feriadoPct; e.data = today(); openModal(apForm(e)); updateApPreview(); },
+  async delAp(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; const lk = lockedE(e); if(lk){ toast(lockMsg(lk)); return; } try{ await removeAp(e); (e.fotos||[]).forEach(id=>deleteAssetIfUnused(id,[e.id])); closeModal(); toast("Apontamento excluído"); }catch(err){ toast(writeErr(err)); } },
+  fotoDel(b){ state.apFotos = (state.apFotos||[]).filter(x=>x!==b.dataset.id); const box=$("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); },
+  async fotoVer(b){ await assinarFotos([b.dataset.id]); const src = blobSrc(b.dataset.id); const back = $("#modal").hidden ? null : $("#modal").innerHTML; const m=$("#modal"); const prevHtml = back; m.innerHTML = `<div class="sheet wide" role="dialog" aria-modal="true"><header><h2>Foto</h2><button class="iconbtn" data-act="${prevHtml?"fotoVoltar":"closeModal"}" aria-label="Fechar">✕</button></header><img src="${esc(src)}" alt="Foto do serviço" style="width:100%;border-radius:8px"></div>`; m.hidden=false; state.fotoBack = prevHtml; },
+  fotoVoltar(){ const m=$("#modal"); if(state.fotoBack){ m.innerHTML = state.fotoBack; state.fotoBack=null; } else closeModal(); },
+  now(b){ $("#"+b.dataset.t).value = nowHM(); updateApPreview(); },
+  closeModal,
+  repModo(b){ state.rep.modo = b.dataset.m; render(); },
+  repPdf, repXlsx,
+  repPreset(b){ const r=state.rep, t=today(); if(b.dataset.p==="mes"){ r.de=ym(t)+"-01"; r.ate=t; } else { const m=shiftYm(ym(t),-1); const [yy,mm]=m.split("-").map(Number); r.de=m+"-01"; r.ate=`${m}-${pad(new Date(yy,mm,0).getDate())}`; } render(); },
+  repCopy(){ const rows=repRows(); if(!rows.length){ toast("Nenhum apontamento nesse período."); return; } copyText(repText()); },
+  orcFilter(b){ state.orcFilter = b.dataset.f; render(); },
+  pby(b){ state.pby = b.dataset.k; render(); },
+  hmode(b){ state.hmode = b.dataset.m; render(); },
+  fechAbrir(){ openModal(fechFormHtml()); updateFech(); },
+  fechPdfBtn(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(f) fechPdf(f); },
+  async fechReabrir(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; if(fechRecebido(f)>0){ toast("Esse fechamento tem recebimento registrado. Exclua o recebimento antes de reabrir."); return; } if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } try{ await removeDoc("fechamentos", f.id); toast(`Fechamento ${f.numero} reaberto. As OS podem ser alteradas de novo.`); }catch(err){ toast(writeErr(err)); } },
+  osHist(b){ openModal(osHistHtml(b.dataset.os), "wide"); },
+  osLancar(b){ const g = osGroups(state.ap.filter(e=>(e.os||"(sem nº)")===b.dataset.os))[0]; const l = g ? g.rows[g.rows.length-1] : {}; closeModal(); dayOpen(today(), {emp:empOf(l)||lastEmp(), orcId:l.orcId||"", row:{os:b.dataset.os==="(sem nº)"?"":b.dataset.os, desc:l.descricao||"", cli:l.cliente||""}}); },
+  orcLancar(b){ const o = state.orc.find(x=>x.id===b.dataset.id); if(!o) return; dayOpen(today(), {orcId:o.id, emp:o.cliente?.nome||""}); },
+  authModo(b){ state.auth = b.dataset.m; render(); },
+  irAcessos(){ state.view = "ajustes"; state.rendered = null; render(); setTimeout(()=>$("#acessos")?.scrollIntoView({behavior:"smooth"}), 50); },
+  async perfilLiberar(b){ const tr = b.closest("tr"), nome = tr.querySelector(".pf-nome")?.value || ""; if(!nome){ toast("Escolha qual funcionário é essa pessoa."); return; }
+    if(state.perfis.some(p=>p.user_id!==b.dataset.uid && p.papel==="funcionario" && p.nome===nome)){ toast(`${nome} já está ligado a outro e-mail.`); return; }
+    const {error} = await sb.from("perfis").update({papel:"funcionario", nome}).eq("user_id", b.dataset.uid); if(error){ toast(writeErr(dbErr(error))); return; }
+    state.perfis = state.perfis.map(p=>p.user_id===b.dataset.uid ? {...p, papel:"funcionario", nome} : p); toast(`Acesso liberado para ${nome}.`); state.rendered=null; render(); $("#acessos")?.scrollIntoView(); },
+  async perfilBloquear(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; }
+    const {error} = await sb.from("perfis").update({papel:"bloqueado"}).eq("user_id", b.dataset.uid); if(error){ toast(writeErr(dbErr(error))); return; }
+    state.perfis = state.perfis.map(p=>p.user_id===b.dataset.uid ? {...p, papel:"bloqueado"} : p); toast("Acesso bloqueado."); state.rendered=null; render(); $("#acessos")?.scrollIntoView(); },
+  async reverificar(){ if(session) await boot(); },
+  async sair(){ closeModal(); await sb.auth.signOut(); },
+  newOrc(){ state.orcDraft = newOrcDraft(); state.orcDirty=false; state.view="orcEdit"; state.rendered=null; render(); window.scrollTo(0,0); },
+  editOrc(b){ const o = state.orc.find(x=>x.id===b.dataset.id); if(!o) return; state.orcDraft = deepMerge(newOrcDraft(), clone(o)); state.orcDraft.itens = clone(o.itens||[]); state.orcDirty=false; state.view="orcEdit"; state.rendered=null; render(); window.scrollTo(0,0); },
+  addItem(b){ const t=b.dataset.t; const o=state.orcDraft; o.itens.push(t==="mo"?{tipo:"mo",desc:"Mão de obra",un:"h",qtd:"",valor:String(state.cfg.valorHora)}:t==="mat"?{tipo:"mat",desc:"",un:"pç",qtd:"1",valor:""}:{tipo:"srv",desc:"",un:"vb",qtd:"1",valor:""}); $("#items").innerHTML=itemsHtml(o); $("#orcTotals").innerHTML=totalsHtml(o); state.orcDirty=true; const ins=$("#items").querySelectorAll('[data-f="desc"]'); ins[ins.length-1]?.focus(); },
+  delItem(b){ const o=state.orcDraft; o.itens.splice(+b.dataset.i,1); $("#items").innerHTML=itemsHtml(o); $("#orcTotals").innerHTML=totalsHtml(o); state.orcDirty=true; },
+  async saveOrc(){ if(await saveOrc()){ const h=document.querySelector(".pagehead .eyebrow"); if(h) h.textContent=`Orçamento Nº ${state.orcDraft.numero}`; } },
+  async orcPdf(){ if(await saveOrc()) orcPdf(state.orcDraft); },
+  dupOrc(){ const o = clone(state.orcDraft); delete o.id; delete o.numero; o.status="rascunho"; o.data=today(); o.titulo = o.titulo ? o.titulo+" (cópia)" : ""; state.orcDraft=o; state.orcDirty=true; state.rendered=null; render(); toast("Cópia criada. Salve para gerar um novo número."); },
+  async delOrc(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } try{ await removeDoc("orcamentos", state.orcDraft.id); state.orcDirty=false; state.view="orcamentos"; state.rendered=null; render(); toast("Orçamento excluído"); }catch(err){ toast(writeErr(err)); } },
+  newRec(b){ openModal(recForm({o:b.dataset.o, m:b.dataset.m, e:b.dataset.e, v:b.dataset.v?Math.round(+b.dataset.v*100)/100:"", id:b.dataset.id})); },
+  async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } try{ await removeDoc("recebimentos", b.dataset.id); toast("Recebimento excluído"); }catch(err){ toast(writeErr(err)); } },
+  async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
+  exportJson(){ const d = {sistema:"GAAP Gestão de Serviços", versao:1, exportadoEm:new Date().toISOString(), config:state.cfg, apontamentos:state.ap, orcamentos:state.orc, recebimentos:state.rec}; offerFile(`backup-gaap-${today()}.json`, JSON.stringify(d,null,1)); }
+};
+document.addEventListener("click", e=>{ const b = e.target.closest("[data-act]"); if(!b) return; const f = A[b.dataset.act]; if(f){ if(b.tagName==="BUTTON" && b.type!=="submit") e.preventDefault(); f(b,e); } });
+
+renderNav();
+initStore();
