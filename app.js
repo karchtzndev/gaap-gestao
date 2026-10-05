@@ -65,7 +65,13 @@ function holidays(y){
 const holidayName = ds => holidays(+ds.slice(0,4))[ds] || null;
 
 /* ---------- cálculo de horas ---------- */
-function calc(e){
+let calcCache = new WeakMap();
+function calc(e){ // memória: mesma OS e mesma configuração → mesmo resultado
+  if(!e || typeof e!=="object") return calcRaw(e);
+  const c = calcCache.get(e); if(c && c.cfg===state.cfg) return c.r;
+  const r = Object.freeze(calcRaw(e)); calcCache.set(e, {cfg:state.cfg, r}); return r;
+}
+function calcRaw(e){
   const cfg = state.cfg;
   const r = {n:0,e50:0,e100:0,total:0,valor:0,vn:0,v50:0,v100:0};
   const s0 = hm(e.inicio), f0 = hm(e.fim);
@@ -206,57 +212,100 @@ const MSG_DB = {SEM_PERMISSAO:"Seu acesso ainda não foi liberado para lançar O
 function dbErr(error){
   const m = String(error?.message||"");
   if(m.startsWith("PERIODO_FECHADO:")) return {code:"db", message:`Esse período já foi fechado (${m.split(":")[1]}). Fale com o responsável.`};
+  if(m==="CONFLITO") return {code:"db", conflito:true, message:MSG_CONFLITO};
   if(MSG_DB[m]) return {code:"db", message:MSG_DB[m]};
   if(error?.code==="42501" || /row-level security/i.test(m)) return {code:"invalid_argument", message:""};
   return {code:"unavailable", message:""};
 }
-async function fetchAll(table){
-  const out = []; const step = 1000;
-  for(let from=0; ; from+=step){
-    const {data, error} = await sb.from(table).select("id,data").order("id").range(from, from+step-1);
-    if(error) throw error; out.push(...data); if(data.length < step) break;
+async function fetchAll(table, desde){
+  const out = []; const step = 1000; let ultimo = "";
+  for(;;){
+    let q = sb.from(table).select("id,data,atualizado_em").order("id").limit(step);
+    if(ultimo) q = q.gt("id", ultimo); if(desde) q = q.gt("atualizado_em", desde);
+    const {data, error} = await q;
+    if(error) throw error; out.push(...data); if(data.length < step) break; ultimo = data[data.length-1].id;
   }
   return out;
+}
+const doRow = r => { if(r.atualizado_em && (!state.lido || r.atualizado_em > state.lido)) state.lido = r.atualizado_em; return {id:r.id, ...r.data, _v:r.atualizado_em}; };
+const semV = o => { const d = clone(o); delete d._v; delete d.id; delete d._col; return d; };
+const MSG_CONFLITO = "Este registro foi alterado em outro aparelho enquanto você editava. Atualizei com a versão mais nova: confira e faça sua alteração de novo.";
+async function recarregarDoc(col, id){
+  if(state.worker){ await loadWorker(); return; }
+  if(col==="config"){ const {data} = await sb.from("config").select("data,atualizado_em").eq("id","main").maybeSingle(); if(data){ state.cfg = deepMerge(DEFAULT_CFG, data.data); state.cfgV = data.atualizado_em; holCache = {}; calcCache = new WeakMap(); } return; }
+  const {data} = await sb.from(col).select("id,data,atualizado_em").eq("id", id).maybeSingle();
+  const k = KEY[col];
+  if(!data || (col==="apontamentos" && data.data?.excluido)) setList(k, state[k].filter(x=>x.id!==id)); else upsertLocal(k, doRow(data));
 }
 const setList = (k, list) => { state[k] = list; if(k==="ap") mmCache.ref = null; };
 function upsertLocal(k, row){ setList(k, [...state[k].filter(x=>x.id!==row.id), row]); }
 async function save(col, obj){
-  const id = obj.id || uid(); const data = clone(obj);
-  delete data.id; delete data._col; data.atualizadoEm = new Date().toISOString();
+  const id = obj.id || uid(), versao = obj._v || null; const data = semV(obj);
+  data.atualizadoEm = new Date().toISOString(); state.gen = (state.gen||0) + 1;
   if(state.worker){
-    const {data:newId, error} = await sb.rpc("func_salvar_os", {p_id:id, p_data:data});
-    if(error) throw dbErr(error);
-    const row = {...data, id:newId||id, profissional:state.me, lancadoPor:"funcionario"}; delete row.valorHora; delete row.extraPct; delete row.feriadoPct;
+    const {data:ret, error} = await sb.rpc("func_salvar_os", {p_id:id, p_data:{...data, ...(versao?{_v:versao}:{})}});
+    if(error){ const e = dbErr(error); if(e.conflito) await recarregarDoc(col, id).catch(()=>{}); throw e; }
+    const [newId, v] = String(ret||id).split("|");
+    const row = {...data, id:newId||id, profissional:state.me, lancadoPor:"funcionario", tipo:"auto", ...(v?{_v:v}:{})}; delete row.valorHora; delete row.extraPct; delete row.feriadoPct;
     upsertLocal("ap", row); scheduleRender(); return row.id;
   }
-  const {error} = await sb.from(col).upsert({id, data});
-  if(error) throw dbErr(error);
-  upsertLocal(KEY[col], {id, ...data}); scheduleRender();
+  const {data:v, error} = await sb.rpc("salvar_doc", {p_tabela:col, p_id:id, p_data:data, p_versao:versao});
+  if(error){ const e = dbErr(error); if(e.conflito) await recarregarDoc(col, id).catch(()=>{}); throw e; }
+  upsertLocal(KEY[col], {id, ...data, _v:v}); scheduleRender();
   return id;
 }
+async function saveMany(col, lista){ // registros novos em lote (importação)
+  for(let i=0; i<lista.length; i+=500){
+    const {error} = await sb.from(col).upsert(lista.slice(i, i+500).map(r=>({id:r.id, data:semV(r)})));
+    if(error) throw dbErr(error);
+  }
+}
 async function removeDoc(col, id){
+  state.gen = (state.gen||0) + 1;
   if(state.worker){ const {error} = await sb.rpc("func_excluir_os", {p_id:id}); if(error) throw dbErr(error); }
   else { const {error} = await sb.from(col).delete().eq("id", id); if(error) throw dbErr(error); }
   setList(KEY[col], state[KEY[col]].filter(x=>x.id!==id)); scheduleRender();
 }
 const removeAp = e => removeDoc("apontamentos", e.id);
 async function saveCfg(cfg){
-  holCache = {};
-  const {error} = await sb.from("config").upsert({id:"main", data:cfg});
-  if(error) throw dbErr(error);
+  holCache = {}; calcCache = new WeakMap(); const d = clone(cfg); delete d._v;
+  const {data:v, error} = await sb.rpc("salvar_doc", {p_tabela:"config", p_id:"main", p_data:d, p_versao:state.cfgV||null});
+  if(error){ const e = dbErr(error); if(e.conflito){ await recarregarDoc("config").catch(()=>{}); e.message = "A configuração foi alterada em outro aparelho. Recarreguei a versão mais nova: refaça sua alteração."; } throw e; }
+  state.cfgV = v;
 }
 async function loadOwner(){
-  const [cfg, perfis, ...rows] = await Promise.all([sb.from("config").select("data").eq("id","main").maybeSingle(), sb.from("perfis").select("*").order("criado_em"), ...COLS.map(fetchAll)]);
+  const g = state.gen;
+  const [cfg, perfis, ...rows] = await Promise.all([sb.from("config").select("data,atualizado_em").eq("id","main").maybeSingle(), sb.from("perfis").select("*").order("criado_em"), ...COLS.map(c=>fetchAll(c))]);
   if(cfg.error) throw cfg.error;
-  state.cfg = deepMerge(DEFAULT_CFG, cfg.data?.data || null); holCache = {};
+  if(g!==state.gen) return false;
+  state.lido = "";
+  state.cfg = deepMerge(DEFAULT_CFG, cfg.data?.data || null); state.cfgV = cfg.data?.atualizado_em || null; holCache = {}; calcCache = new WeakMap();
   state.perfis = perfis.data || [];
-  COLS.forEach((c,i)=>{ let list = rows[i].map(r=>({id:r.id, ...r.data})); if(c==="apontamentos") list = list.filter(e=>!e.excluido); setList(KEY[c], list); });
+  COLS.forEach((c,i)=>{ let list = rows[i].map(doRow); if(c==="apontamentos") list = list.filter(e=>!e.excluido); setList(KEY[c], list); });
+  return true;
+}
+// atualização incremental: só o que mudou desde a última leitura
+async function loadOwnerInc(){
+  if(!state.lido) return loadOwner();
+  const g = state.gen, desde = state.lido;
+  const [cfg, perfis, exc, ...rows] = await Promise.all([sb.from("config").select("data,atualizado_em").eq("id","main").maybeSingle(), sb.from("perfis").select("*").order("criado_em"), sb.rpc("excluidos_desde", {p_desde:desde}), ...COLS.map(c=>fetchAll(c, desde))]);
+  if(cfg.error) throw cfg.error; if(exc.error) throw exc.error;
+  if(g!==state.gen) return false;
+  if(cfg.data && cfg.data.atualizado_em !== state.cfgV && !state.cfgDirty){ state.cfg = deepMerge(DEFAULT_CFG, cfg.data.data); state.cfgV = cfg.data.atualizado_em; holCache = {}; calcCache = new WeakMap(); }
+  state.perfis = perfis.data || state.perfis;
+  COLS.forEach((c,i)=>{ if(!rows[i].length) return; const k = KEY[c], novos = rows[i].map(doRow), ids = new Set(novos.map(x=>x.id));
+    setList(k, [...state[k].filter(x=>!ids.has(x.id)), ...novos.filter(x=>!(c==="apontamentos" && x.excluido))]); });
+  (exc.data||[]).forEach(x=>{ const k = KEY[x.tabela]; if(k) setList(k, state[k].filter(y=>y.id!==x.registro_id)); });
+  return true;
 }
 async function loadWorker(){
+  const g = state.gen;
   const [pc, os] = await Promise.all([sb.rpc("pub_config"), sb.rpc("minhas_os")]);
   if(pc.error) throw pc.error; if(os.error) throw os.error;
-  state.pub = pc.data || {}; state.cfg = deepMerge(DEFAULT_CFG, state.pub.cfg || {}); holCache = {};
+  if(g!==state.gen) return false;
+  state.pub = pc.data || {}; state.cfg = deepMerge(DEFAULT_CFG, state.pub.cfg || {}); holCache = {}; calcCache = new WeakMap();
   setList("ap", (os.data||[]).map(r=>({id:r.id, ...r.data})));
+  return true;
 }
 async function carregar(){
   if(!session || !perfil) return;
@@ -289,11 +338,13 @@ async function initStore(){
 /* atualiza sozinho: ao voltar para a aba e a cada 2 minutos */
 let recarregando = false;
 async function atualizar(){
-  if(recarregando || !session || !perfil || !state.ready || !$("#modal").hidden || ["orcEdit","ajustes"].includes(state.view)) return;
-  recarregando = true; try{ await carregar(); scheduleRender(); }catch(e){} finally{ recarregando = false; }
+  if(document.hidden || recarregando || !session || !perfil || !state.ready || !$("#modal").hidden || ["orcEdit","ajustes"].includes(state.view)) return;
+  recarregando = true;
+  try{ const ok = perfil.papel==="dono" ? await loadOwnerInc() : perfil.papel==="funcionario" ? await loadWorker() : false; if(ok) scheduleRender(); else if(ok===false) setTimeout(atualizar, 3000); }
+  catch(e){} finally{ recarregando = false; }
 }
 document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) atualizar(); });
-setInterval(atualizar, 120000);
+setInterval(atualizar, 300000);
 /* fotos no Storage privado: o id é o caminho do arquivo */
 const assets = {
   async upload(blob, {type}){
@@ -336,9 +387,9 @@ document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("#modal").hi
 document.addEventListener("input", e=>{ if(e.target.closest("#apForm,#dayForm,#fechForm,#recForm,#despForm")) state.modalDirty = true; });
 const rascunho = {
   key(){ return "gaap-rascunho-dia-" + (session?.user?.id || ""); },
-  salvar(){ try{ const d = state.day; if(d && d.rows.some(r=>r.os||r.desc||r.fim)) localStorage.setItem(this.key(), JSON.stringify(d)); }catch(err){} },
+  salvar(){ try{ const d = state.day; if($("#dayForm") && d && d.rows.some(r=>r.os||r.desc||r.fim)) localStorage.setItem(this.key(), JSON.stringify(d)); }catch(err){} },
   ler(){ try{ return JSON.parse(localStorage.getItem(this.key())||"null"); }catch(err){ return null; } },
-  limpar(){ try{ localStorage.removeItem(this.key()); }catch(err){} }
+  limpar(){ clearTimeout(state.rascT); try{ localStorage.removeItem(this.key()); }catch(err){} }
 };
 window.addEventListener("pagehide", ()=>{ if($("#dayForm")) rascunho.salvar(); });
 
@@ -431,8 +482,15 @@ async function compressImage(file, stamp){
   }catch(e){ return file; }
 }
 function photoErr(err){ const c = err && err.code; return c==="quota_or_state" ? "Espaço para fotos esgotado. Apague fotos antigas." : c==="too_large" ? "Foto muito grande." : c==="unsupported_type" ? "Formato de imagem não aceito. Use JPG ou PNG." : c==="rate_limited" ? "Muitas fotos de uma vez. Espere um pouco e tente de novo." : "Não consegui enviar a foto. Verifique a conexão."; }
+function enviandoFotos(delta){
+  state.enviando = Math.max(0, (state.enviando||0) + delta);
+  document.querySelectorAll("#d-save,#apForm [type=submit],#despForm [type=submit]").forEach(b=>{ if(state.enviando){ b.dataset.txt ||= b.textContent; b.disabled = true; b.textContent = "Enviando fotos…"; } else if(b.dataset.txt){ b.disabled = false; b.textContent = b.dataset.txt; delete b.dataset.txt; } });
+}
 async function uploadPhotos(files, ctx){
   if(!assets){ toast("Fotos indisponíveis nesta visualização."); return []; }
+  enviandoFotos(+1); try{ return await uploadPhotosInt(files, ctx); } finally { enviandoFotos(-1); if(state.day) updateDay(); }
+}
+async function uploadPhotosInt(files, ctx){
   const ids = [], ok = ["image/jpeg","image/png","image/webp","image/gif"];
   for(const f of files){
     try{ toast(`Enviando foto ${ids.length+1} de ${files.length}…`);
@@ -821,7 +879,12 @@ function dayOpen(ds, opt={}){
   ds = ds || today();
   let last = []; try{ last = JSON.parse(localStorage.getItem("gaap-last-prof")||"[]"); }catch(err){}
   const ps = profs();
-  const draft = (!opt.row && !opt.orcId) ? rascunho.ler() : null;
+  let draft = (!opt.row && !opt.orcId) ? rascunho.ler() : null;
+  if(draft && draft.rows){ // rascunho cujo conteúdo já está todo salvo é descartado
+    const ativas = draft.rows.filter(r=>r.os||r.desc||r.fim), ids = ativas.flatMap(r=>Object.values(r.ids||{}));
+    if(!ativas.length || (ids.length && ids.length >= ativas.length * Math.max(1,(draft.profs||[]).length||1) && ids.every(id=>state.ap.some(e=>e.id===id)))){ rascunho.limpar(); draft = null; }
+  }
+  if(draft && ds && opt.pedido && draft.data!==ds && !confirm(`Há um lançamento de ${fdate(draft.data)} que não foi salvo. Continuar esse lançamento? (Cancelar descarta e abre ${fdate(ds)})`)){ rascunho.limpar(); draft = null; }
   if(draft && draft.rows && draft.rows.length){
     state.day = draft;
     openModal(dayForm(), "wide"); state.modalDirty = true;
@@ -955,6 +1018,7 @@ document.addEventListener("change", e=>{
   updateDay();
 });
 async function submitDay(){
+  if(state.enviando){ toast("Aguarde: as fotos ainda estão sendo enviadas."); return; }
   const d = state.day, {who, rows} = dayEntries();
   if(!d.data){ toast("Informe a data."); return; }
   if(profs().length && !d.profs.length && !state.worker){ toast("Marque quem trabalhou."); return; }
@@ -966,6 +1030,8 @@ async function submitDay(){
   const btn = $("#d-save"); btn.disabled = true;
   const base = {...(state.worker ? {} : rateFor(d.emp || state.cfg.contratante || "")), tipo:"auto", obs:"", ...(d.orcId?{orcId:d.orcId}:{})};
   const col = "apontamentos", quem = state.worker ? [state.me] : who;
+  for(const r of rows){ const row = d.rows[r.i]; row.ids ||= {}; for(const pr of quem) row.ids[pr||"_"] ||= uid(); }
+  rascunho.salvar();
   let n = 0;
   try{
     for(const r of rows) for(const pr of quem){
@@ -983,6 +1049,7 @@ document.addEventListener("change", e=>{ if(e.target.closest("#apForm")) updateA
 document.addEventListener("submit", async e=>{
   if(e.target.id==="apForm"){
     e.preventDefault();
+    if(state.enviando){ toast("Aguarde: as fotos ainda estão sendo enviadas."); return; }
     const d = readApForm(); delete d.andamento;
     if(!d.data || !d.inicio || !d.fim){ toast("Preencha data, início e término."); return; }
     if(d.inicio===d.fim){ toast("Início e término iguais. Confira os horários."); return; }
@@ -1243,7 +1310,8 @@ const pushSuportado = () => "serviceWorker" in navigator && "PushManager" in win
 function b64u(s){ const p = "=".repeat((4 - s.length % 4) % 4), b = atob((s + p).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from(b, c=>c.charCodeAt(0)); }
 async function pushEstado(){
   if(!pushSuportado()) return;
-  try{ const reg = await navigator.serviceWorker.register("/sw.js"); const sub = await reg.pushManager.getSubscription(); state.pushOn = !!sub; }catch(err){}
+  try{ const reg = await navigator.serviceWorker.register("/sw.js"); const sub = await reg.pushManager.getSubscription(); state.pushOn = false;
+    if(sub){ const {data} = await sb.from("push_inscricoes").select("endpoint").eq("endpoint", sub.endpoint).maybeSingle(); state.pushOn = !!data; } }catch(err){}
 }
 function lembretesHtml(){
   let corpo;
@@ -1704,6 +1772,7 @@ function despForm(x){
   </form>`;
 }
 async function submitDesp(){
+  if(state.enviando){ toast("Aguarde: a foto do comprovante ainda está sendo enviada."); return; }
   const id = $("#despForm").dataset.id, tipo = $("#dp-tipo").value;
   const x = {...(state.desp.find(d=>d.id===id)||{}), id:id||undefined, data:$("#dp-data").value, tipo, empresa:$("#dp-emp").value.trim(), unidade:$("#dp-unid").value.trim(), os:$("#dp-os").value.trim(), orcId:$("#dp-orc")?$("#dp-orc").value:"", reembolsavel:$("#dp-reemb").checked, obs:$("#dp-obs").value.trim(), fotos:[...(state.dpFotos||[])]};
   if(tipo==="Km rodado"){ x.km = numIn($("#dp-km").value); x.valorKm = numIn($("#dp-vkm").value); x.valor = Math.round(x.km*x.valorKm*100)/100; try{ localStorage.setItem("gaap-valor-km", $("#dp-vkm").value); }catch(err){} }
@@ -1981,17 +2050,26 @@ async function carregarBackups(){
 }
 async function importarDados(d, fotos){
   if(!d || !Array.isArray(d.apontamentos)) throw new Error("formato");
-  const tot = COLS.reduce((n,c)=>n+(d[c]||[]).length,0);
-  if(!confirm(`Importar ${tot} registros${fotos?` e ${fotos.length} fotos`:""} deste backup? Registros com o mesmo código serão substituídos.`)) return false;
+  // só entra o que não existe hoje; o que já existe fica como está (é mais novo ou igual)
+  const plano = {}; let novos = 0, mantidos = 0, conflitos = 0;
+  for(const col of COLS){
+    const atuais = new Map(state[KEY[col]].map(x=>[x.id, x]));
+    plano[col] = (d[col]||[]).filter(r=>{ if(!r || !r.id || !/^[A-Za-z0-9_-]{1,64}$/.test(r.id)) return false;
+      if(atuais.has(r.id)){ mantidos++; return false; }
+      if(col==="fechamentos" && fechConflict(r.de, r.ate, r.empresa||"")){ conflitos++; return false; }
+      novos++; return true; });
+  }
+  if(!confirm(`Backup de ${d.exportadoEm?new Date(d.exportadoEm).toLocaleString("pt-BR"):"data desconhecida"}:\n• ${novos} registro(s) que não existem hoje serão restaurados\n• ${mantidos} que já existem ficam como estão (não voltam para a versão antiga)${conflitos?`\n• ${conflitos} fechamento(s) ignorado(s): o período já tem outro fechamento`:""}${fotos?`\n• ${fotos.length} foto(s)`:""}\nAntes, uma cópia do estado atual é guardada no servidor. Continuar?`)) return false;
+  try{ await sb.rpc("fazer_backup", {p_origem:"pre-importacao"}); }catch(err){}
   let n = 0, nf = 0;
   for(const f of (fotos||[])){
     const {error} = await sb.storage.from("fotos").upload(f.path, f.blob, {contentType:f.type, upsert:true});
     if(!error) nf++; if(nf%10===0) toast(`Enviando fotos… ${nf} de ${fotos.length}`);
   }
-  if(d.config) await saveCfg(deepMerge(DEFAULT_CFG, d.config));
-  for(const col of ["fechamentos", ...COLS.filter(c=>c!=="fechamentos")]) for(const row of (d[col]||[])){ if(!row || !row.id) continue; await save(col, row); n++; if(n%20===0) toast(`Importando… ${n} de ${tot}`); }
+  if(d.config){ const atual = clone(state.cfg); delete atual._v; await saveCfg(deepMerge(deepMerge(DEFAULT_CFG, d.config), atual)); }
+  for(const col of ["fechamentos", ...COLS.filter(c=>c!=="fechamentos")]){ await saveMany(col, plano[col]); n += plano[col].length; toast(`Importando… ${n} de ${novos}`); }
   await loadOwner(); state.rendered = null; render();
-  toast(`Backup importado: ${n} registros${fotos?`, ${nf} fotos`:""}.`);
+  toast(`Backup importado: ${n} registro(s) restaurado(s), ${mantidos} mantido(s)${fotos?`, ${nf} foto(s)`:""}.`);
   return true;
 }
 const JSZIP = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
@@ -2012,7 +2090,7 @@ async function submitCfg(){
   const emps = lines(g("c-emps")), oldDef = state.cfg.contratante || "";
   c.empresas = emps.join("\n"); c.contratante = emps[0] || "";
   try{
-    if(oldDef && c.contratante !== oldDef){ for(const e of state.ap.filter(x=>!x.empresa)) await save("apontamentos", {...e, empresa:oldDef}); }
+    if(oldDef && c.contratante !== oldDef){ const {error} = await sb.rpc("aplicar_empresa_padrao", {p_emp:oldDef}); if(error) throw dbErr(error); await loadOwner(); }
     await saveCfg(c); state.cfg = deepMerge(DEFAULT_CFG,c); holCache={}; toast("Ajustes salvos"); state.rendered=null; render(); }
   catch(err){ toast(writeErr(err)); }
 }
@@ -2055,12 +2133,14 @@ const A = {
   newAp(){ const last = [...state.ap].filter(e=>e.data===today()).sort((a,b)=>b.fim.localeCompare(a.fim))[0]; openModal(apForm({data:today(), inicio:last?last.fim:"07:00", fim:"", cliente:last?last.cliente:""})); updateApPreview(); },
   editAp(b){ const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; const lk = lockedE(e); if(lk){ toast(lockMsg(lk)); return; } openModal(apForm(e)); updateApPreview(); },
   dupAp(){ const e = readApForm(); delete e.id; delete e.exemplo; delete e.valorHora; delete e.extraPct; delete e.feriadoPct; e.data = today(); openModal(apForm(e)); updateApPreview(); },
-  async delAp(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; const lk = lockedE(e); if(lk){ toast(lockMsg(lk)); return; } try{ await removeAp(e); closeModal(); toastAcao(`OS ${e.os||"s/n"} excluída.`, "Desfazer", async ()=>{ const r = {...e}; delete r.excluido; await save("apontamentos", r); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
+  async delAp(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; const lk = lockedE(e); if(lk){ toast(lockMsg(lk)); return; } try{ await removeAp(e); closeModal(); toastAcao(`OS ${e.os||"s/n"} excluída.`, "Desfazer", async ()=>{ const r = {...e}; delete r.excluido; delete r._v; await save("apontamentos", r); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   fotoDel(b){ state.apFotos = (state.apFotos||[]).filter(x=>x!==b.dataset.id); const box=$("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); },
-  async fotoVer(b){ await assinarFotos([b.dataset.id]); const src = blobSrc(b.dataset.id); const back = $("#modal").hidden ? null : $("#modal").innerHTML; const m=$("#modal"); const prevHtml = back; m.innerHTML = `<div class="sheet wide" role="dialog" aria-modal="true"><header><h2>Foto</h2><button class="iconbtn" data-act="${prevHtml?"fotoVoltar":"closeModal"}" aria-label="Fechar">✕</button></header><img src="${esc(src)}" alt="Foto do serviço" style="width:100%;border-radius:8px"></div>`; m.hidden=false; state.fotoBack = prevHtml; },
-  fotoVoltar(){ const m=$("#modal"); if(state.fotoBack){ m.innerHTML = state.fotoBack; state.fotoBack=null; } else closeModal(); },
+  async fotoVer(b){ await assinarFotos([b.dataset.id]); const src = blobSrc(b.dataset.id);
+    let v = $("#fotoview"); if(!v){ v = document.createElement("div"); v.id = "fotoview"; v.className = "modal fotoview"; document.body.appendChild(v); }
+    v.innerHTML = `<div class="sheet wide" role="dialog" aria-modal="true"><header><h2>Foto${fotoTipo(b.dataset.id)?` · ${fotoTipo(b.dataset.id)}`:""}</h2><button class="iconbtn" data-act="fotoVoltar" aria-label="Fechar">✕</button></header><img src="${esc(src)}" alt="Foto do serviço" style="width:100%;border-radius:8px"></div>`; v.hidden = false; },
+  fotoVoltar(){ const v = $("#fotoview"); if(v){ v.hidden = true; v.innerHTML = ""; } },
   now(b){ $("#"+b.dataset.t).value = nowHM(); updateApPreview(); },
-  closeModal,
+  closeModal(){ tryCloseModal(); },
   repModo(b){ state.rep.modo = b.dataset.m; render(); },
   repPdf, repXlsx,
   repPreset(b){ const r=state.rep, t=today();
@@ -2074,7 +2154,7 @@ const A = {
   fechPdfBtn(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(f) fechPdf(f, !!b.dataset.atual); },
   newDesp(){ state.dpId = null; openModal(despForm({})); },
   editDesp(b){ const x = state.desp.find(d=>d.id===b.dataset.id); if(x){ state.dpId = null; openModal(despForm(x)); } },
-  async delDesp(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const lk = state.fech.find(f=>(f.despIds||[]).includes(b.dataset.id)); if(lk){ toast(`Essa despesa está no fechamento ${lk.numero}.`); return; } const x = state.desp.find(d=>d.id===b.dataset.id); try{ await removeDoc("despesas", b.dataset.id); closeModal(); toastAcao("Despesa excluída.", "Desfazer", async ()=>{ await save("despesas", {...x}); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
+  async delDesp(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const lk = state.fech.find(f=>(f.despIds||[]).includes(b.dataset.id)); if(lk){ toast(`Essa despesa está no fechamento ${lk.numero}.`); return; } const x = state.desp.find(d=>d.id===b.dataset.id); try{ await removeDoc("despesas", b.dataset.id); closeModal(); toastAcao("Despesa excluída.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("despesas", y); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   irFechar(b){ state.view = "relatorios"; state.rep = {...state.rep, modo:"periodo", de:b.dataset.de, ate:ymd(addDays(parseYmd(today()),-1))}; state.rendered = null; render(); setTimeout(()=>{ openModal(fechFormHtml()); updateFech(); }, 30); },
   async fechCobrar(b){
     const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return;
@@ -2120,7 +2200,11 @@ const A = {
     const {error} = await sb.from("perfis").update({papel:"bloqueado"}).eq("user_id", b.dataset.uid); if(error){ toast(writeErr(dbErr(error))); return; }
     state.perfis = state.perfis.map(p=>p.user_id===b.dataset.uid ? {...p, papel:"bloqueado"} : p); toast("Acesso bloqueado."); state.rendered=null; render(); $("#acessos")?.scrollIntoView(); },
   async reverificar(){ if(session) await boot(); },
-  async sair(){ closeModal(); await sb.auth.signOut(); },
+  async sair(b){
+    if(b && !b.dataset.armed){ b.dataset.armed="1"; b.title="Toque de novo para sair"; toast("Toque de novo em Sair para confirmar."); setTimeout(()=>{ if(b) delete b.dataset.armed; }, 4000); return; }
+    closeModal();
+    try{ if(pushSuportado()){ const reg = await navigator.serviceWorker.getRegistration("/sw.js"); const sub = await reg?.pushManager.getSubscription(); if(sub){ await sb.from("push_inscricoes").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); } } }catch(err){}
+    state.pushOn = false; rascunho.limpar(); await sb.auth.signOut(); },
   newOrc(){ state.orcDraft = newOrcDraft(); state.orcDirty=false; state.view="orcEdit"; state.rendered=null; render(); window.scrollTo(0,0); },
   editOrc(b){ const o = state.orc.find(x=>x.id===b.dataset.id); if(!o) return; state.orcDraft = deepMerge(newOrcDraft(), clone(o)); state.orcDraft.itens = clone(o.itens||[]); state.orcDirty=false; state.view="orcEdit"; state.rendered=null; render(); window.scrollTo(0,0); },
   addItem(b){ const t=b.dataset.t; const o=state.orcDraft; o.itens.push(t==="mo"?{tipo:"mo",desc:"Mão de obra",un:"h",qtd:"",valor:String(state.cfg.valorHora)}:t==="mat"?{tipo:"mat",desc:"",un:"pç",qtd:"1",valor:""}:{tipo:"srv",desc:"",un:"vb",qtd:"1",valor:""}); $("#items").innerHTML=itemsHtml(o); $("#orcTotals").innerHTML=totalsHtml(o); state.orcDirty=true; const ins=$("#items").querySelectorAll('[data-f="desc"]'); ins[ins.length-1]?.focus(); },
@@ -2130,7 +2214,7 @@ const A = {
   dupOrc(){ const o = clone(state.orcDraft); delete o.id; delete o.numero; o.status="rascunho"; o.data=today(); o.titulo = o.titulo ? o.titulo+" (cópia)" : ""; state.orcDraft=o; state.orcDirty=true; state.rendered=null; render(); toast("Cópia criada. Salve para gerar um novo número."); },
   async delOrc(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } try{ await removeDoc("orcamentos", state.orcDraft.id); state.orcDirty=false; state.view="orcamentos"; state.rendered=null; render(); toast("Orçamento excluído"); }catch(err){ toast(writeErr(err)); } },
   newRec(b){ openModal(recForm({o:b.dataset.o, m:b.dataset.m, e:b.dataset.e, v:b.dataset.v?Math.round(+b.dataset.v*100)/100:"", id:b.dataset.id})); },
-  async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ await save("recebimentos", {...x}); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
+  async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("recebimentos", y); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   recarregar(){ location.reload(); },
   dayDescartar(){ rascunho.limpar(); closeModal(); },
@@ -2164,10 +2248,18 @@ const A = {
     state.crIds = null; openModal(cronoForm({troca:true, profs: quem.length?quem:(e.profissional?[e.profissional]:[]), unid:e.cliente, emp:e.empresa})); setTimeout(()=>$("#cr-os")?.focus(), 50); },
   async histVoltar(b){ const h = (state.hist||[])[+b.dataset.i], id = $("#f-hist")?.dataset.id; if(!h || !id) return;
     if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; }
-    const atual = state.ap.find(x=>x.id===id); const lk = atual && lockedE(atual); if(lk){ toast(lockMsg(lk)); return; }
-    try{ await save("apontamentos", {...h.antes, id}); closeModal(); toast("Versão anterior restaurada."); }catch(err){ toast(writeErr(err)); } },
+    const atual = state.ap.find(x=>x.id===id); if(!atual) return;
+    const campos = CAMPOS.map(c=>c[0]).filter(k=>JSON.stringify(h.antes?.[k]??"")!==JSON.stringify(h.depois?.[k]??""));
+    const mudouDepois = campos.filter(k=>JSON.stringify(atual[k]??"")!==JSON.stringify(h.depois?.[k]??""));
+    const novo = {...atual}; campos.forEach(k=>{ if(h.antes?.[k]===undefined) delete novo[k]; else novo[k] = h.antes[k]; });
+    const lk = lockedE(atual) || lockedE(novo); if(lk){ toast(lockMsg(lk)); return; }
+    if(mudouDepois.length && !confirm(`Esses campos foram alterados de novo depois: ${mudouDepois.join(", ")}. Desfazer mesmo assim?`)) return;
+    try{ await save("apontamentos", novo); closeModal(); toast(`Desfeito: ${campos.map(k=>(CAMPOS.find(c=>c[0]===k)||[k,k])[1]).join(", ")}.`); }catch(err){ toast(writeErr(err)); } },
   async lixoRestaurar(b){ const x = (state.lixo||[])[+b.dataset.i]; if(!x) return; b.disabled = true;
-    const d = {...x.dados, id:x.registro_id}; delete d.excluido; delete d.excluidoEm; delete d.excluidoPor;
+    const d = {...x.dados, id:x.registro_id}; delete d.excluido; delete d.excluidoEm; delete d.excluidoPor; delete d._v;
+    if(x.tabela==="fechamentos"){ const cf = fechConflict(d.de, d.ate, d.empresa||""); if(cf){ b.disabled = false; toast(`Já existe o fechamento ${cf.numero} para esse período. Não dá para restaurar este.`); return; } }
+    if(["apontamentos","despesas"].includes(x.tabela)){ const lk = lockOf(d.data, x.tabela==="apontamentos" ? empOf(d) : (d.empresa||state.cfg.contratante||"")); if(lk){ b.disabled = false; toast(`Esse item é de um período já fechado (${lk.numero}). Reabra o fechamento para restaurar.`); return; } }
+    if(x.tabela==="recebimentos" && d.fechId && !state.fech.some(f=>f.id===d.fechId) && !confirm("O fechamento deste recebimento não existe mais. Restaurar mesmo assim?")){ b.disabled = false; return; }
     try{ await save(x.tabela, d); await loadOwner(); toast(`${TAB_LABEL[x.tabela]||"Item"} restaurado.`); carregarLixeira(); }catch(err){ b.disabled = false; toast(writeErr(err)); } },
   async arqEnviar(){ const a = state.arquivo; if(!a) return; try{ await navigator.share({files:[a.file], title:a.filename}); closeModal(); }catch(err){ if(err && err.name==="AbortError") return; baixarBlob(a.blob, a.filename); closeModal(); } },
   arqBaixar(){ const a = state.arquivo; if(!a) return; baixarBlob(a.blob, a.filename); closeModal(); },
@@ -2194,7 +2286,8 @@ const A = {
       b.textContent = "Compactando…";
       const blob = await zip.generateAsync({type:"blob", compression:"STORE"});
       await offerFile(`backup-gaap-completo-${today()}.zip`, blob);
-      state.cfg.backupBaixadoEm = new Date().toISOString(); await saveCfg(state.cfg);
+      await sb.rpc("marcar_backup_baixado"); state.cfg.backupBaixadoEm = new Date().toISOString();
+      { const {data} = await sb.from("config").select("atualizado_em").eq("id","main").maybeSingle(); if(data && !state.cfgDirty) state.cfgV = data.atualizado_em; }
       toast(falhas ? `Backup gerado, mas ${falhas} foto(s) não baixaram.` : "Backup completo gerado. Guarde o arquivo fora do celular.");
       state.rendered = null; render(); $("#backup")?.scrollIntoView();
     }catch(err){ toast("Não consegui gerar o backup. Verifique a conexão e tente de novo."); }
