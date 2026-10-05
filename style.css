@@ -366,3 +366,7 @@ input,select,textarea{font-size:16px}
   table.cards-sm tfoot{display:block} table.cards-sm tfoot tr{display:block;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--surface-2)}
   table.cards-sm tfoot th{display:inline-block;margin-right:10px;border:0;padding:2px 0}
 }
+/* iPhone: campo de data/hora não passa da coluna */
+input[type="date"],input[type="time"],input[type="month"]{-webkit-appearance:none;appearance:none;min-width:0;max-width:100%;width:100%;display:block;text-align:left}
+input[type="date"]::-webkit-date-and-time-value,input[type="time"]::-webkit-date-and-time-value{text-align:left}
+.field{min-width:0}

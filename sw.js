@@ -2,7 +2,7 @@
 // - arquivos do app: tenta a rede primeiro e guarda uma cópia; sem internet usa a cópia
 // - bibliotecas (CDN, fontes): usa a cópia guardada (versões fixas)
 // - dados (Supabase) não passam por aqui: o app guarda os dados e a fila de envio no IndexedDB
-const CACHE = "gaap-app-v5";
+const CACHE = "gaap-app-v6";
 const SHELL = ["/", "/app.js", "/style.css", "/config.js", "/logo.js", "/logo.jpg", "/icon-192.png", "/badge-96.png", "/manifest.webmanifest",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",

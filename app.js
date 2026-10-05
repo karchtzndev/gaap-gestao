@@ -110,7 +110,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.05-5";
+const VERSAO = "2026.10.05-6";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -835,6 +835,7 @@ function vMais(){
     ${card("equipe","Equipe: acerto e pagamentos","Quanto pagar a cada técnico, vales, recibos")}
     ${card("equipe","Documentos e validades","ASO, NR-10, NR-35, integração, certidões")}
     ${card("equipamentos","Equipamentos e preventivas","Histórico por máquina e plano de preventivas")}
+    ${card("financeiro","Fechamentos e PDF do fiscal","Abril a setembro e os próximos: PDF e Excel no modelo da Brejeiro")}
     ${card("","Pacote do contador","Planilha do mês e comprovantes", "pacoteContador")}
     ${card("ajustes","Ajustes","Valores, jornada, contratantes, equipe, backup")}
   </div>`;
@@ -1466,7 +1467,7 @@ function vRelatorios(){
       <button class="btn" data-act="repXlsx">Baixar Excel</button>
       <button class="btn" data-act="repCopy">Copiar texto</button>
       <button class="btn" data-act="repWhats">Enviar texto no WhatsApp</button>
-      ${r.modo==="periodo"?`<button class="btn" data-act="fechAbrir">Fechar período…</button>`:""}
+      ${r.modo==="periodo"?`<button class="btn" data-act="repTerceiros">Fechamento p/ fiscal (modelo Brejeiro)</button><button class="btn" data-act="fechAbrir">Fechar período…</button>`:""}
     </div>
   </div>
   <div id="repOut"></div>`;
@@ -1528,12 +1529,23 @@ function groupHtml(rows){
   <tfoot><tr style="background:var(--warn-bg)"><td colspan="6">TOTAL</td><td class="r mono">${repH(t.total)}</td><td class="r mono">${repH(t.e50)}</td><td class="r mono">${repH(t.e100)}</td>${C.val?`<td class="r mono">${brl(t.valor)}</td>`:""}${"<td></td>".repeat(nExtra)}</tr></tfoot></table></div>
   <div class="tablewrap" style="max-width:600px"><table><tbody>${repSummary(t).map((r,i)=>`<tr ${i>=3?'style="font-weight:700"':""}><td>${r[0]}</td><td class="r mono">${fdec(r[1])} h</td><td class="r mono muted">${fh(r[1])}</td>${C.val?`<td class="r mono">${brl(r[2])}</td>`:""}</tr>`).join("")}</tbody></table></div></section>`;
 }
+// fechamentos que caem no período escolhido (inclusive os das planilhas importadas), com os PDFs
+function fechsDoPeriodo(){
+  const [de, ate] = repRange(), emp = state.rep.f.emp;
+  const fs = state.fech.filter(f=>f.de<=ate && f.ate>=de && (!emp || emp===ALL || chaveEmp(f.empresa||"")===chaveEmp(emp))).sort((a,b)=>b.de.localeCompare(a.de));
+  if(!fs.length) return "";
+  return `<section class="section" style="margin-top:14px"><header><h2>Fechamentos deste período</h2><button class="btn sm" data-act="nav" data-view="financeiro">Ver no Financeiro</button></header>
+  <div class="fechlist">${fs.map(f=>`<div class="fechcard"><div class="fc-top"><span><b class="mono">${esc(f.numero)}</b> · ${f.competencia?ymLabel(f.competencia):`${fdate(f.de)} a ${fdate(f.ate)}`}${f.empresa?` · ${esc(f.empresa)}`:""}</span><span class="pill ${fechSaldo(f)>0.005?"warn":"good"}">${fechSaldo(f)>0.005?"A receber":"Recebido"}</span></div>
+    <p class="muted" style="margin:0">${f.os||0} OS · ${fdec(+f.horas||0)} h · <b>${brl(+f.valor||0)}</b>${f.itens?" · planilha aprovada":""}</p>
+    <div class="row fc-acts"><button class="btn sm primary" data-act="terceirosPdf" data-id="${esc(f.id)}">Ver PDF do fiscal</button><button class="btn sm" data-act="terceirosXlsx" data-id="${esc(f.id)}">Excel</button>${f.itens?"":`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}">PDF de horas enviado</button>`}</div></div>`).join("")}</div></section>`;
+}
 function renderReport(){
   const out = $("#repOut"); if(!out) return;
   const rows = repRows();
-  if(!rows.length){ out.innerHTML = `<div class="empty" style="margin-top:20px"><b>Nenhum apontamento em ${repTitle()}</b>Escolha outras datas ou filtros, ou registre as OS em Horas.</div>`; return; }
+  const fz = fechsDoPeriodo();
+  if(!rows.length){ out.innerHTML = fz || `<div class="empty" style="margin-top:20px"><b>Nenhum apontamento em ${repTitle()}</b>Escolha outras datas ou filtros, ou registre as OS em Horas.</div>`; return; }
   const groups = repGroups(), by = state.rep.by;
-  out.innerHTML = (groups.length>1 ? `<section class="section"><header><h2>Resumo por ${DIMS[by].label.toLowerCase()}</h2><span class="muted">${repTitle()}</span></header>${dimTable(rows, by)}</section>` : "")
+  out.innerHTML = fz + (groups.length>1 ? `<section class="section"><header><h2>Resumo por ${DIMS[by].label.toLowerCase()}</h2><span class="muted">${repTitle()}</span></header>${dimTable(rows, by)}</section>` : "")
     + groups.map(g=>groupHtml(g.rows)).join("");
 }
 document.addEventListener("change", e=>{
@@ -2778,6 +2790,9 @@ const A = {
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("recebimentos", y); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   recarregar(){ location.reload(); },
+  repTerceiros(){ const [de, ate] = repRange(), e = state.rep.f.emp, emp = (e && e!==ALL) ? e : (state.cfg.contratante || "");
+    if(!fechRows(de, ate, emp).length){ toast(`Não há OS lançadas de ${fdate(de)} a ${fdate(ate)}${emp?` para ${emp}`:""}. Os meses que vieram das planilhas ficam em “Fechamentos deste período”, logo abaixo.`); return; }
+    fechTerceiros({numero:"prévia", de, ate, empresa:emp, competencia:ate.slice(0,7)}, "pdf"); },
   novaEmpresa(){ if(state.cfgDirty){ toast("Salve os ajustes antes de criar uma empresa."); return; }
     openModal(`<header><h2>Nova empresa contratante</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
     <form class="form" id="empForm">
