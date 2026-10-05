@@ -65,6 +65,10 @@ e cole o conteúdo de cada arquivo no modelo correspondente:
 - **Horas e OS:** lançamento do dia em lote ou avulso, cronômetro, fotos antes/durante/depois com carimbo, equipamento e preventiva por OS.
 - **Sem internet:** o app abre com os dados guardados no aparelho; lançamentos, cronômetro e fotos ficam numa fila e são enviados sozinhos quando a conexão volta (aviso "a enviar" no topo).
 - **Financeiro:** fechamentos congelados, NF, vencimentos, retenções, glosas, recebimentos e o pacote do contador (.zip com planilha e comprovantes).
+- **Fechamento para o fiscal:** no modelo pedido pela Brejeiro ("FECHAMENTO DE TERCEIROS - HORAS E VALORES"), em PDF ou Excel, com uma folha por centro (unidade). Os fechamentos de abril a setembro/2026 foram importados das planilhas aprovadas.
+- **Unidades por empresa:** cada contratante tem sua lista (ex.: 1001 - ANÁPOLIS); ao lançar, escolhe na lista ou cria outra.
+- **Adicional noturno:** horas entre 22h e 5h com o percentual de cada contratante (Brejeiro: 20%).
+- **Prévia dos PDFs:** todo PDF abre para conferência antes de enviar ou baixar.
 - **Aprovação da medição:** link pelo WhatsApp para o cliente aprovar ou contestar OS por OS (vale 30 dias).
 - **Reajuste:** novo valor da hora com data de vigência (sugestão pelo IPCA do Banco Central) e carta de reajuste em PDF; lançamentos antigos mantêm o valor antigo.
 - **Mais → Equipe:** acerto por período com vales e pagamentos e recibo em PDF; documentos (ASO, NRs, certidões) com aviso 30 dias antes de vencer.
@@ -80,6 +84,8 @@ e cole o conteúdo de cada arquivo no modelo correspondente:
 | `011_ideias.sql` | Pagamentos da equipe, equipamentos, documentos (bucket `documentos`) e aprovação da medição pelo cliente |
 | `012_vigencia_taxa.sql` | Valor da hora pela data do serviço (reajuste com vigência) também nos lançamentos dos funcionários |
 | `013_ajustes_seguranca.sql` | Tira do acesso anônimo a criação de link de aprovação; índice para os lembretes |
+| `014_unidades_por_empresa.sql` | Lista de unidades de cada contratante também para o funcionário |
+| `015_adicional_noturno.sql` | Adicional noturno (22h às 5h) por contratante, inclusive nos lançamentos dos funcionários |
 
 ## Rotinas automáticas
 

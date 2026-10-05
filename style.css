@@ -350,3 +350,6 @@ input,select,textarea{font-size:16px}
 .synctag.off{background:#eceff3;color:#3b4552}
 /* Android: puxar a tela para baixo dentro de uma janela não recarrega a página */
 .modal,.sheet{overscroll-behavior:contain}
+/* prévia do PDF */
+.pv-paginas{display:grid;gap:10px;background:#e9ecef;padding:10px;border-radius:10px;max-height:70vh;overflow:auto;-webkit-overflow-scrolling:touch}
+.pv-pag{width:100%;height:auto;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18);border-radius:2px}
