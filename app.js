@@ -99,7 +99,7 @@ function calcRaw(e){
     if(early && early<=tol){ r.e50-=early; r.n+=early; }
     if(late && late<=tol){ r.e50-=late; r.n+=late; }
   }
-  const T = rateFor(empOf(e));
+  const T = rateFor(empOf(e), e.data);
   const rate = (e.valorHora ?? T.valorHora) / 60;
   const p50 = e.extraPct ?? T.extraPct, p100 = e.feriadoPct ?? T.feriadoPct;
   r.vn = rate*r.n; r.v50 = rate*r.e50*(1+p50/100); r.v100 = rate*r.e100*(1+p100/100);
@@ -108,8 +108,9 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100)*100)/100;
   return r;
 }
-function rateFor(emp){
-  const t = (state.cfg.taxas||{})[emp] || {}, num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
+function rateFor(emp, data){
+  let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
+  if(data && t.desde && data < t.desde){ const h = (t.historico||[]).filter(x=>data < x.ate).sort((a,b)=>a.ate.localeCompare(b.ate))[0]; if(h) t = h; }
   return {valorHora:num0(t.valorHora, +state.cfg.valorHora), extraPct:num0(t.extraPct, +state.cfg.extraPct), feriadoPct:num0(t.feriadoPct, +state.cfg.feriadoPct)};
 }
 let mmCache = {ref:null, map:null};
@@ -139,7 +140,8 @@ function overlaps(list){
 const MEIOS = ["Ligação","WhatsApp","Presencial","Rádio","Outro"];
 function emergTxt(e){ if(!e.emergencia) return ""; const a = e.acion||{};
   return ["EMERGÊNCIA", a.por?`acionado por ${a.por}`:"", a.as?`às ${a.as}`:"", a.meio?`via ${a.meio}`:"", a.motivo?`(${a.motivo})`:""].filter(Boolean).join(" "); }
-function descRep(e){ return [e.descricao||"", emergTxt(e), e.obs?`Obs.: ${e.obs}`:""].filter(Boolean).join(" · "); }
+function descRep(e){ const q = e.equipId && eqDe(e.equipId), pl = q && e.prevId && (q.plano||[]).find(x=>x.id===e.prevId);
+  return [e.descricao||"", q?`Equip. ${q.tag||""}${pl?` (preventiva: ${pl.atividade})`:""}`:"", emergTxt(e), e.obs?`Obs.: ${e.obs}`:""].filter(Boolean).join(" · "); }
 function acionadores(){ const m = {}; state.ap.forEach(e=>{ const p = e.acion?.por; if(p) m[p] = (m[p]||0)+1; }); return Object.keys(m).sort((a,b)=>m[b]-m[a]).slice(0,30); }
 /* ---------- ficha da contratante ---------- */
 const ficha = emp => ((state.cfg.contratantes||{})[emp]) || {};
@@ -179,6 +181,25 @@ function conferencia(de, ate, quem){
   return out;
 }
 const hhmm = m => `${pad(Math.floor(m/60))}:${pad(m%60)}`;
+function alertasDinheiro(){
+  const out = [], hoje = today();
+  state.fech.forEach(f=>{ const sd = fechSaldo(f); if(sd<=0.005) return; const d = diasEntre(fechVenc(f), hoje);
+    if(d>0) out.push({nivel:"bad", txt:`${f.numero}${f.empresa?` (${f.empresa})`:""} vencido há ${d} dia${d>1?"s":""}: ${brl(sd)}`, btn:`<button class="btn sm" data-act="fechCobrar" data-id="${esc(f.id)}">Cobrar</button>`});
+    else if(d>=-3) out.push({nivel:"warn", txt:`${f.numero} vence ${d===0?"hoje":`em ${-d} dia${d<-1?"s":""}`}: ${brl(sd)}`, btn:`<button class="btn sm" data-act="fechCobrar" data-id="${esc(f.id)}">Lembrar</button>`});
+    if((!f.nf || !f.nf.numero || f.nf.status==="emitir") && diasEntre(f.enviadoEm||f.ate, hoje) >= 2) out.push({nivel:"warn", txt:`${f.numero}: nota fiscal ainda não emitida`, btn:`<button class="btn sm" data-act="fechNF" data-id="${esc(f.id)}">Nota fiscal</button>`});
+  });
+  empresasCfg().forEach(emp=>{ const m0 = medicao(emp, 0), m1 = medicao(emp, -1); if(!m0) return;
+    if(m0[1]===hoje) out.push({nivel:"info", txt:`Hoje é o dia de corte da medição ${emp} (${fdate(m0[0])} a ${fdate(m0[1])}).`, btn:`<button class="btn sm" data-act="irFechar" data-de="${m0[0]}" data-ate="${m0[1]}">Fechar medição</button>`});
+    if(m1 && !fechConflict(m1[0], m1[1], emp) && state.ap.some(e=>e.data>=m1[0] && e.data<=m1[1] && !e.orcId && chaveEmp(empOf(e))===chaveEmp(emp)))
+      out.push({nivel:"warn", txt:`Medição ${emp} de ${fdate(m1[0])} a ${fdate(m1[1])} ainda não foi fechada.`, btn:`<button class="btn sm" data-act="irFechar" data-de="${m1[0]}" data-ate="${m1[1]}">Fechar</button>`});
+  });
+  return out;
+}
+function alertasHtml(){
+  const a = [...alertasDinheiro(), ...(typeof alertasEquipe==="function" ? alertasEquipe() : [])]; if(!a.length) return "";
+  return `<section class="section"><header><h2>Para fazer hoje</h2><span class="pill ${a.some(x=>x.nivel==="bad")?"bad":"warn"}">${a.length}</span></header>
+  <div class="list">${a.slice(0,10).map(x=>`<div class="item alerta" style="cursor:default"><span class="dot-${x.nivel}"></span><span>${esc(x.txt)}</span><span>${x.btn||""}</span></div>`).join("")}</div></section>`;
+}
 function confHtml(lista, titulo, max=8){
   if(!lista.length) return "";
   const tot = lista.reduce((s,x)=>s+x.falta,0);
@@ -198,10 +219,10 @@ const orcAberto = o => ["aprovado","concluido"].includes(o.status);
 function orcValidade(o){ if(!o.data) return null; return ymd(addDays(parseYmd(o.data), +o.validadeDias||0)); }
 
 /* ---------- dados (Supabase) ---------- */
-const COLS = ["apontamentos","orcamentos","recebimentos","fechamentos","despesas"];
-const KEY = {apontamentos:"ap",orcamentos:"orc",recebimentos:"rec",fechamentos:"fech",despesas:"desp"};
+const COLS = ["apontamentos","orcamentos","recebimentos","fechamentos","despesas","pagamentos","equipamentos","documentos"];
+const KEY = {apontamentos:"ap",orcamentos:"orc",recebimentos:"rec",fechamentos:"fech",despesas:"desp",pagamentos:"pag",equipamentos:"eq",documentos:"docs"};
 const state = {
-  ready:false, cfg:clone(DEFAULT_CFG), ap:[], orc:[], rec:[], fech:[], desp:[], perfis:[], worker:false, me:"", pub:null, hmode:"dia", osQ:"",
+  ready:false, cfg:clone(DEFAULT_CFG), ap:[], orc:[], rec:[], fech:[], desp:[], pag:[], eq:[], docs:[], perfis:[], worker:false, me:"", pub:null, hmode:"dia", osQ:"",
   view:"painel", month:ym(today()), orcFilter:"todos", orcDraft:null, auth:"entrar",
   rep:{modo:"dia", dia:today(), de:ym(today())+"-01", ate:today(), valores:true, f:{prof:"__all",unid:"__all",emp:"__all"}, by:"", vazios:true, fmt:"dec"},
   hf:{f:{prof:"__all",unid:"__all",emp:"__all"}, by:""}, pby:"prof"
@@ -329,7 +350,7 @@ async function initStore(){
   sb.auth.onAuthStateChange((ev, s)=>{
     const tinha = !!session; session = s;
     if(ev==="PASSWORD_RECOVERY"){ state.auth = "nova-senha"; state.ready = true; render(); return; }
-    if(ev==="SIGNED_OUT"){ perfil = null; Object.assign(state, {worker:false, me:"", ap:[], orc:[], rec:[], fech:[], desp:[], perfis:[], pub:null, view:"painel", auth:"entrar"}); render(); return; }
+    if(ev==="SIGNED_OUT"){ perfil = null; Object.assign(state, {worker:false, me:"", ap:[], orc:[], rec:[], fech:[], desp:[], pag:[], eq:[], docs:[], perfis:[], pub:null, view:"painel", auth:"entrar"}); render(); return; }
     if(ev==="SIGNED_IN" && !tinha) boot();
   });
   if(!session){ state.ready = true; render(); return; }
@@ -396,16 +417,18 @@ window.addEventListener("pagehide", ()=>{ if($("#dayForm")) rascunho.salvar(); }
 
 /* ---------- nav ---------- */
 const ICONS = {
+  mais:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>',
   painel:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 13h8V3H3zM13 21h8V11h-8zM3 21h8v-6H3zM13 3v6h8V3z"/></svg>',
   horas:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   relatorios:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>',
   orcamentos:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h10"/><rect x="2" y="3" width="20" height="18" rx="2"/></svg>',
   financeiro:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 6.5c-1-1.5-3-2-5-2-2.5 0-4.5 1.2-4.5 3.3 0 4.7 9.5 2.4 9.5 7.2 0 2.2-2.2 3.5-5 3.5-2.2 0-4.3-.8-5.3-2.5"/></svg>'
 };
-const NAV = [["painel","Painel"],["horas","Horas"],["relatorios","Relatórios"],["orcamentos","Orçamentos"],["financeiro","Financeiro"]];
+const NAV = [["painel","Painel"],["horas","Horas"],["relatorios","Relatórios"],["orcamentos","Orçamentos"],["financeiro","Financeiro"],["mais","Mais"]];
+const MAIS_VIEWS = ["mais","equipe","equipamentos"];
 function renderNav(){
   if(state.worker){ $("#tabbar").hidden = true; $("#railnav").innerHTML = ""; const g=document.querySelector('.topbar [data-view="ajustes"]'); if(g) g.hidden = true; return; }
-  const cur = state.view==="orcEdit" ? "orcamentos" : state.view;
+  const cur = state.view==="orcEdit" ? "orcamentos" : MAIS_VIEWS.includes(state.view) ? "mais" : state.view;
   const html = NAV.map(([k,l])=>`<button class="navbtn" data-act="nav" data-view="${k}" ${cur===k?'aria-current="page"':""}>${ICONS[k]}<span>${l}</span></button>`).join("");
   $("#tabbar").innerHTML = html; $("#railnav").innerHTML = html;
 }
@@ -417,7 +440,7 @@ function render(){
   if(!state.ready){ v.innerHTML = `<div class="loading">Carregando seus dados…</div>`; return; }
   if(!sessOk()){ document.body.classList.add("locked"); v.innerHTML = vLogin(); state.rendered = "login"; const f = $("#lg-email") || $("#lg-senha"); if(f && window.innerWidth>700) f.focus(); return; }
   document.body.classList.remove("locked");
-  const fn = state.worker ? vWorker : ({painel:vPainel, horas:vHoras, relatorios:vRelatorios, orcamentos:vOrcamentos, orcEdit:vOrcEdit, financeiro:vFinanceiro, ajustes:vAjustes}[state.view] || vPainel);
+  const fn = state.worker ? vWorker : ({painel:vPainel, horas:vHoras, relatorios:vRelatorios, orcamentos:vOrcamentos, orcEdit:vOrcEdit, financeiro:vFinanceiro, ajustes:vAjustes, mais:vMais, equipe:vEquipe, equipamentos:vEquipamentos}[state.view] || vPainel);
   try{ v.innerHTML = cronoBar() + fn(); }
   catch(err){ console.error(err); v.innerHTML = `<div class="empty"><b>Não consegui mostrar esta tela.</b>Algum registro está com dado inválido. Toque em Atualizar; se continuar, me avise.<div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" data-act="recarregar">Atualizar</button></div></div>`; }
   state.rendered = state.view;
@@ -450,6 +473,14 @@ const lockedE = e => lockOf(e.data, empOf(e));
 const lockMsg = f => state.worker ? `Esse período já foi fechado (${f.numero||""}). Fale com o responsável para alterar.` : `Período fechado (${f.numero||""}). Para alterar, reabra o fechamento no Financeiro.`;
 function orcOpts(){ return state.worker ? (state.pub?.orcs||[]) : state.orc.filter(orcAberto).map(o=>({id:o.id, numero:o.numero||"", titulo:o.titulo||"", cliente:o.cliente?.nome||""})); }
 function orcNum(id){ const o = orcOpts().find(x=>x.id===id) || state.orc.find(x=>x.id===id); return o ? (o.numero||"") : ""; }
+const eqList = () => (state.worker ? (state.pub?.equipamentos||[]) : state.eq.filter(x=>!x.inativo)).slice().sort((a,b)=>(a.tag||"").localeCompare(b.tag||""));
+const eqDe = id => (state.worker ? (state.pub?.equipamentos||[]) : state.eq).find(x=>x.id===id);
+function eqSelect(attr, equipId, prevId){
+  const ls = eqList(); if(!ls.length) return "";
+  const cur = equipId ? `${equipId}|${prevId||""}` : "";
+  return `<label class="field"><span>Equipamento / preventiva (opcional)</span><select ${attr}><option value="">—</option>${ls.map(q=>`<option value="${esc(q.id)}|" ${cur===`${q.id}|`?"selected":""}>${esc(q.tag||"")} ${esc(q.nome||"")}</option>${(q.plano||[]).map(pl=>`<option value="${esc(q.id)}|${esc(pl.id)}" ${cur===`${q.id}|${pl.id}`?"selected":""}>&nbsp;&nbsp;↳ preventiva: ${esc(pl.atividade||"")}</option>`).join("")}`).join("")}</select></label>`;
+}
+const eqSplit = v => { const [a,b] = String(v||"").split("|"); return {equipId:a||undefined, prevId:b||undefined}; };
 function orcSelect(id, cur){
   const os = orcOpts(); if(!os.length && !cur) return "";
   return `<label class="field"><span>Serviço de orçamento (empreitada)</span><select id="${id}"><option value="">Não, horas do contrato</option>${os.map(o=>`<option value="${esc(o.id)}" ${o.id===cur?"selected":""}>${esc(o.numero)} · ${esc(o.cliente)} · ${esc(o.titulo)}</option>`).join("")}</select></label>`;
@@ -619,6 +650,119 @@ function vWorker(){
   <div style="margin-top:16px">${lembretesHtml()}</div>
   <p class="muted" style="margin-top:16px">Você está lançando como <b>${esc(me)}</b>. <button class="btn sm" data-act="sair">Sair</button></p>`;
 }
+/* ---------- MAIS ---------- */
+function vMais(){
+  const card = (view, t, d, act) => `<button class="maiscard" data-act="${act||"nav"}" ${view?`data-view="${view}"`:""}><b>${t}</b><span class="muted">${d}</span></button>`;
+  return `<div class="pagehead"><div><span class="eyebrow">Mais</span><h1>Ferramentas</h1></div></div>
+  <div class="maisgrid">
+    ${card("equipe","Equipe: acerto e pagamentos","Quanto pagar a cada técnico, vales, recibos")}
+    ${card("equipe","Documentos e validades","ASO, NR-10, NR-35, integração, certidões")}
+    ${card("equipamentos","Equipamentos e preventivas","Histórico por máquina e plano de preventivas")}
+    ${card("","Pacote do contador","Planilha do mês e comprovantes", "pacoteContador")}
+    ${card("ajustes","Ajustes","Valores, jornada, contratantes, equipe, backup")}
+  </div>`;
+}
+/* ---------- EQUIPE: acerto e documentos ---------- */
+const TIPOS_PAG = {vale:["Vale / adiantamento",-1], pagamento:["Pagamento",-1], bonus:["Bônus",1], desconto:["Desconto",-1]};
+const TIPOS_DOC = ["ASO","NR-10","NR-11","NR-12","NR-33","NR-35","Integração na contratante","Ficha de EPI","CND Federal","CND FGTS","CND Trabalhista","CND Estadual","CND Municipal","Alvará","Seguro","Contrato","Outro"];
+function acertoDe(nome, de, ate){
+  const aps = state.ap.filter(e=>e.profissional===nome && e.data>=de && e.data<=ate && !e.andamento), c = sumCalc(aps), cu = Math.round(custoSum(aps)*100)/100;
+  const pags = state.pag.filter(x=>x.profissional===nome && ((x.tipo==="pagamento" && x.ref) ? (x.ref.de===de && x.ref.ate===ate) : (x.data>=de && x.data<=ate)));
+  const som = t => Math.round(pags.filter(x=>x.tipo===t).reduce((s,x)=>s+numIn(x.valor),0)*100)/100;
+  const v = {vale:som("vale"), pago:som("pagamento"), bonus:som("bonus"), desconto:som("desconto")};
+  return {aps, c, cu, pags, ...v, saldo:Math.round((cu + v.bonus - v.desconto - v.vale - v.pago)*100)/100};
+}
+function docStatus(x){ if(!x.validade) return ["", "sem validade"]; const d = diasEntre(today(), x.validade); return d<0 ? ["bad", `vencido há ${-d} dia${d<-1?"s":""}`] : d<=30 ? ["warn", `vence em ${d} dia${d!==1?"s":""}`] : ["good", `válido até ${fdate(x.validade)}`]; }
+function vEquipe(){
+  const q = state.eqp ||= {de:ym(today())+"-01", ate:today()}, ps = profs();
+  const docs = [...state.docs].sort((a,b)=>(a.validade||"9999").localeCompare(b.validade||"9999"));
+  return `<div class="pagehead"><div><span class="eyebrow">Equipe</span><h1>Acerto e documentos</h1><p class="muted">Quanto pagar a cada técnico no período, com vales e recibos. Só você vê esta tela.</p></div><button class="btn" data-act="nav" data-view="mais">‹ Mais</button></div>
+  <div class="panel filtergrid"><label class="field"><span>De</span><input type="date" id="eq-de" value="${esc(q.de)}"></label><label class="field"><span>Até</span><input type="date" id="eq-ate" value="${esc(q.ate)}"></label>
+    <div class="field" style="grid-column:1/-1"><span>Atalhos</span><div class="row"><button class="btn sm" data-act="eqPreset" data-p="sem">Esta semana</button><button class="btn sm" data-act="eqPreset" data-p="q1">1ª quinzena</button><button class="btn sm" data-act="eqPreset" data-p="q2">2ª quinzena</button><button class="btn sm" data-act="eqPreset" data-p="mes">Este mês</button><button class="btn sm" data-act="eqPreset" data-p="ant">Mês passado</button></div></div></div>
+  ${!temCustos()?`<div class="banner"><span>Informe quanto você paga a cada funcionário (por hora ou salário) para o acerto calcular os valores.</span><button class="btn sm" data-act="nav" data-view="ajustes">Ajustes</button></div>`:""}
+  <section class="section"><header><h2>Acerto de ${fdate(q.de)} a ${fdate(q.ate)}</h2><button class="btn sm primary" data-act="pagNovo">+ Vale / pagamento</button></header>
+  ${ps.length?`<div class="fechlist">${ps.map(n=>{ const a = acertoDe(n, q.de, q.ate); return `<div class="fechcard"><div class="fc-top"><b>${esc(n)}</b><span class="pill ${a.saldo>0.005?"warn":"good"}">${a.saldo>0.005?`A pagar ${brl(a.saldo)}`:"Quitado"}</span></div>
+    <div class="fc-vals"><span>Horas<b class="mono">${fdec(a.c.total)} h</b><small>normal ${fdec(a.c.n)} · 50% ${fdec(a.c.e50)} · 100% ${fdec(a.c.e100)}</small></span><span>Custo<b class="mono">${brl(a.cu)}</b><small>${a.aps.length} OS</small></span>
+      ${a.bonus||a.desconto?`<span>Bônus / desc.<b class="mono">${brl(a.bonus-a.desconto)}</b></span>`:""}<span>Vales<b class="mono">${brl(a.vale)}</b></span><span>Pago<b class="mono">${brl(a.pago)}</b></span></div>
+    ${a.pags.length?`<p class="muted" style="margin:0;font-size:.85rem">${a.pags.map(x=>`${fdate(x.data)} ${TIPOS_PAG[x.tipo]?.[0]||x.tipo} ${brl(numIn(x.valor))}`).join(" · ")}</p>`:""}
+    <div class="row fc-acts">${a.saldo>0.005?`<button class="btn sm primary" data-act="pagNovo" data-p="${esc(n)}" data-t="pagamento" data-v="${a.saldo}">Pagar saldo</button>`:""}<button class="btn sm" data-act="pagNovo" data-p="${esc(n)}" data-t="vale">Vale</button><button class="btn sm" data-act="reciboPdf" data-p="${esc(n)}">Recibo / extrato (PDF)</button></div></div>`; }).join("")}</div>`:`<div class="empty"><b>Nenhum funcionário cadastrado</b>Cadastre em Ajustes → Funcionários.</div>`}
+  ${state.pag.length?`<details class="fichabox" style="margin-top:10px"><summary>Todos os vales e pagamentos (${state.pag.length})</summary><div class="list">${[...state.pag].sort((a,b)=>b.data.localeCompare(a.data)).slice(0,100).map(x=>`<button class="item" data-act="pagEditar" data-id="${esc(x.id)}"><span class="mono">${fdate(x.data)}</span><span><b>${esc(x.profissional)}</b> · ${TIPOS_PAG[x.tipo]?.[0]||esc(x.tipo)}${x.obs?`<br><small class="muted">${esc(x.obs)}</small>`:""}</span><span class="mono">${brl(numIn(x.valor))}</span></button>`).join("")}</div></details>`:""}
+  </section>
+  <section class="section" id="documentos"><header><h2>Documentos e validades</h2><button class="btn sm primary" data-act="docNovo">+ Documento</button></header>
+  ${docs.length?`<div class="list">${docs.map(x=>{ const [cl, st] = docStatus(x); return `<button class="item" data-act="docEditar" data-id="${esc(x.id)}"><span><b>${esc(x.tipo||"")}</b><br><small class="muted">${esc(x.titular||"Empresa")}</small></span><span>${x.obs?`<small class="muted">${esc(x.obs)}</small>`:""}${x.arquivo?' <span class="pill">📎</span>':""}</span><span class="pill ${cl}">${st}</span></button>`; }).join("")}</div>`:`<div class="empty"><b>Nenhum documento</b>Cadastre ASO, NRs, integração e certidões com a validade: o sistema avisa 30 dias antes de vencer.</div>`}
+  </section>`;
+}
+function pagForm(x){
+  return `<header><h2>${x.id?"Editar":"Novo"} lançamento da equipe</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <form class="form" id="pagForm" data-id="${esc(x.id||"")}">
+    <div class="grid2"><label class="field"><span>Funcionário</span><select id="pg-prof">${profs().map(n=>`<option ${x.profissional===n?"selected":""}>${esc(n)}</option>`).join("")}</select></label>
+    <label class="field"><span>Tipo</span><select id="pg-tipo">${Object.entries(TIPOS_PAG).map(([k,[l]])=>`<option value="${k}" ${(x.tipo||"vale")===k?"selected":""}>${l}</option>`).join("")}</select></label>
+    <label class="field"><span>Data</span><input type="date" id="pg-data" value="${esc(x.data||today())}"></label>
+    <label class="field"><span>Valor (R$)</span><input id="pg-valor" inputmode="decimal" value="${x.valor!=null?String(Math.round(numIn(x.valor)*100)/100).replace(".",","):""}"></label></div>
+    <label class="field"><span>Observação</span><input id="pg-obs" value="${esc(x.obs||"")}" placeholder="Ex.: PIX, adiantamento quinzena"></label>
+    ${x.ref?`<p class="muted" style="margin:0">Referente ao período ${fdate(x.ref.de)} a ${fdate(x.ref.ate)}.</p>`:""}
+    <footer>${x.id?`<button type="button" class="btn danger" data-act="pagExcluir" data-id="${esc(x.id)}">Excluir</button>`:"<span></span>"}<button class="btn primary" type="submit">Salvar</button></footer>
+  </form>`;
+}
+function docForm(x){
+  return `<header><h2>${x.id?"Editar":"Novo"} documento</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <form class="form" id="docForm" data-id="${esc(x.id||"")}">
+    <div class="grid2"><label class="field"><span>Tipo</span><select id="dc-tipo">${TIPOS_DOC.map(t=>`<option ${x.tipo===t?"selected":""}>${t}</option>`).join("")}</select></label>
+    <label class="field"><span>De quem</span><select id="dc-tit"><option value="Empresa">Empresa (${esc(state.cfg.empresa.nome)})</option>${profs().map(n=>`<option ${x.titular===n?"selected":""}>${esc(n)}</option>`).join("")}</select></label>
+    <label class="field"><span>Emissão</span><input type="date" id="dc-emi" value="${esc(x.emissao||"")}"></label>
+    <label class="field"><span>Validade</span><input type="date" id="dc-val" value="${esc(x.validade||"")}"></label></div>
+    <label class="field"><span>Observação</span><input id="dc-obs" value="${esc(x.obs||"")}"></label>
+    <div class="field"><span>Arquivo (PDF ou foto)</span><div class="row">${x.arquivo?`<button type="button" class="btn sm" data-act="docVer" data-path="${esc(x.arquivo)}">Abrir arquivo atual</button>`:""}<label class="btn sm" for="dc-arq">${x.arquivo?"Trocar arquivo":"+ Anexar arquivo"}</label><input type="file" id="dc-arq" accept="application/pdf,image/*" hidden><span class="muted" id="dc-arq-nome"></span></div></div>
+    <footer>${x.id?`<button type="button" class="btn danger" data-act="docExcluir" data-id="${esc(x.id)}">Excluir</button>`:"<span></span>"}<button class="btn primary" type="submit">Salvar</button></footer>
+  </form>`;
+}
+function prevStatus(q){
+  return (q.plano||[]).map(pl=>{ const feitas = state.ap.filter(e=>e.equipId===q.id && e.prevId===pl.id && !e.andamento).map(e=>e.data).sort(), ult = feitas[feitas.length-1] || "";
+    const prox = ult ? ymd(addDays(parseYmd(ult), +pl.cadaDias||30)) : today(), d = diasEntre(today(), prox);
+    return {pl, ult, prox, d, nivel: d<0 ? "bad" : d<=7 ? "warn" : "good"}; });
+}
+function alertasEquipe(){
+  if(state.worker) return [];
+  const out = [];
+  state.docs.forEach(x=>{ const [cl, st] = docStatus(x); if(cl==="bad" || cl==="warn") out.push({nivel:cl, txt:`${x.tipo} de ${x.titular||"Empresa"}: ${st}`, btn:`<button class="btn sm" data-act="docEditar" data-id="${esc(x.id)}">Ver</button>`}); });
+  state.eq.filter(q=>!q.inativo).forEach(q=>prevStatus(q).forEach(s=>{ if(s.nivel!=="good") out.push({nivel:s.nivel, txt:`Preventiva ${q.tag}: ${s.pl.atividade} ${!s.ult?"nunca feita":s.d<0?`atrasada ${-s.d} dia(s)`:s.d===0?"vence hoje":`vence em ${s.d} dia(s)`}`, btn:`<button class="btn sm" data-act="eqVer" data-id="${esc(q.id)}">Ver</button>`}); }));
+  return out;
+}
+function vEquipamentos(){
+  const ls = [...state.eq].sort((a,b)=>(a.inativo?1:0)-(b.inativo?1:0) || (a.tag||"").localeCompare(b.tag||"")), qf = (state.eqQ||"").toLowerCase();
+  const vis = ls.filter(q=>!qf || `${q.tag} ${q.nome} ${q.unidade} ${q.empresa}`.toLowerCase().includes(qf));
+  return `<div class="pagehead"><div><span class="eyebrow">Equipamentos</span><h1>Equipamentos e preventivas</h1><p class="muted">Cadastre os equipamentos (TAG) e o plano de preventivas. Ao lançar uma OS, escolha o equipamento e, se for preventiva, qual atividade.</p></div><div class="row"><button class="btn" data-act="nav" data-view="mais">‹ Mais</button><button class="btn primary" data-act="eqNovo">+ Equipamento</button></div></div>
+  ${ls.length>6?`<div class="panel" style="margin-bottom:10px"><label class="field"><span>Buscar</span><input id="eq-q" value="${esc(state.eqQ||"")}" placeholder="TAG, nome, unidade…"></label></div>`:""}
+  ${vis.length?`<div class="list">${vis.map(q=>{ const st = prevStatus(q), ruim = st.filter(x=>x.nivel==="bad").length, perto = st.filter(x=>x.nivel==="warn").length, n = state.ap.filter(e=>e.equipId===q.id).length;
+    return `<button class="item" data-act="eqVer" data-id="${esc(q.id)}"><span><b class="mono">${esc(q.tag||"")}</b>${q.inativo?' <span class="pill">inativo</span>':""}<br><small class="muted">${esc([q.unidade, q.empresa].filter(Boolean).join(" · "))}</small></span><span>${esc(q.nome||"")}<br><small class="muted">${n} OS · ${(q.plano||[]).length} preventiva(s)</small></span><span>${ruim?`<span class="pill bad">${ruim} atrasada(s)</span>`:perto?`<span class="pill warn">${perto} na semana</span>`:(q.plano||[]).length?'<span class="pill good">em dia</span>':""}</span></button>`; }).join("")}</div>`
+  :`<div class="empty"><b>Nenhum equipamento</b>Ex.: EL-02 Elevador de canecas 02, unidade Uruaçu, preventiva "Lubrificação dos mancais" a cada 30 dias.</div>`}`;
+}
+function eqForm(q){
+  const pl = q.plano && q.plano.length ? q.plano : [{id:uid(), atividade:"", cadaDias:30, horasPrev:""}]; state.eqPlano = clone(pl);
+  return `<header><h2>${q.id?"Editar":"Novo"} equipamento</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <form class="form" id="eqForm" data-id="${esc(q.id||"")}">
+    <div class="grid2"><label class="field"><span>TAG / código</span><input id="eqf-tag" value="${esc(q.tag||"")}" required placeholder="Ex.: EL-02"></label>
+    <label class="field"><span>Nome</span><input id="eqf-nome" value="${esc(q.nome||"")}" placeholder="Ex.: Elevador de canecas 02"></label>
+    <label class="field"><span>Empresa</span><input id="eqf-emp" list="emp-list" value="${esc(q.empresa||lastEmp())}"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>
+    <label class="field"><span>Unidade</span><input id="eqf-unid" list="eqf-unid-list" value="${esc(q.unidade||"")}"><datalist id="eqf-unid-list">${repUnids().map(u=>`<option value="${esc(u)}">`).join("")}</datalist></label></div>
+    <label class="field"><span>Observação (modelo, fabricante, laudo NR-12…)</span><input id="eqf-obs" value="${esc(q.obs||"")}"></label>
+    <div class="field"><span>Plano de preventivas</span><div id="eqf-plano"></div><div><button type="button" class="btn sm" data-act="eqPlanoAdd">+ Atividade</button></div></div>
+    ${q.id?`<label class="check"><input type="checkbox" id="eqf-inativo" ${q.inativo?"checked":""}> Inativo (não aparece mais nos lançamentos)</label>`:""}
+    <footer>${q.id?`<button type="button" class="btn danger" data-act="eqExcluir" data-id="${esc(q.id)}">Excluir</button>`:"<span></span>"}<button class="btn primary" type="submit">Salvar</button></footer>
+  </form>`;
+}
+function lerEqPlano(){ document.querySelectorAll("#eqf-plano .eqpl").forEach(el=>{ const p = state.eqPlano[+el.dataset.i]; if(!p) return; el.querySelectorAll("[data-pl]").forEach(i=>{ p[i.dataset.pl] = i.value; }); }); }
+function renderEqPlano(){ const box = $("#eqf-plano"); if(!box) return;
+  box.innerHTML = state.eqPlano.map((x,i)=>`<div class="grid3 eqpl" data-i="${i}"><label class="field"><span>Atividade</span><input data-pl="atividade" value="${esc(x.atividade||"")}" placeholder="Ex.: Lubrificação"></label><label class="field"><span>A cada (dias)</span><input data-pl="cadaDias" type="number" min="1" value="${esc(x.cadaDias||30)}"></label><label class="field"><span>Horas previstas</span><span class="timepair"><input data-pl="horasPrev" inputmode="decimal" value="${esc(x.horasPrev||"")}"><button type="button" class="iconbtn" data-act="eqPlanoDel" data-i="${i}" aria-label="Remover">✕</button></span></label></div>`).join(""); }
+function eqDetalhe(q){
+  const st = prevStatus(q), hs = state.ap.filter(e=>e.equipId===q.id).sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio)), t = sumCalc(hs);
+  return `<header><h2>${esc(q.tag||"")} · ${esc(q.nome||"")}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <p class="muted" style="margin:0 0 8px">${esc([q.unidade, q.empresa, q.obs].filter(Boolean).join(" · "))}</p>
+  ${st.length?`<h3 style="margin:8px 0">Preventivas</h3><div class="list">${st.map(s=>`<div class="item" style="cursor:default"><span>${esc(s.pl.atividade||"")}<br><small class="muted">a cada ${s.pl.cadaDias} dias${s.pl.horasPrev?` · ${s.pl.horasPrev} h previstas`:""}</small></span><span><small>Última: ${s.ult?fdate(s.ult):"nunca"}<br>Próxima: ${fdate(s.prox)}</small></span><span><span class="pill ${s.nivel}">${s.d<0?`atrasada ${-s.d}d`:s.d===0?"hoje":`em ${s.d}d`}</span><br><button class="btn sm" data-act="eqLancar" data-id="${esc(q.id)}" data-p="${esc(s.pl.id)}">Lançar</button></span></div>`).join("")}</div>`:""}
+  <h3 style="margin:12px 0 8px">Histórico (${hs.length} OS · ${fdec(t.total)} h)</h3>
+  ${hs.length?`<div class="list">${hs.slice(0,60).map(e=>`<div class="item" style="cursor:default"><span class="mono">${fdate(e.data)}</span><span><b>OS ${esc(e.os||"s/n")}</b> ${esc(e.descricao||"")}${e.prevId?` <span class="pill info">preventiva</span>`:""}<br><small class="muted">${esc(e.profissional||"")} · ${esc(e.inicio)}–${esc(e.fim||"…")}${e.obs?` · ${esc(e.obs)}`:""}</small></span><span class="mono">${fdec(calc(e).total)} h</span></div>`).join("")}</div>`:`<p class="muted">Nenhuma OS lançada neste equipamento ainda.</p>`}
+  <footer><button class="btn" data-act="eqEditar" data-id="${esc(q.id)}">Editar</button><button class="btn primary" data-act="eqLancar" data-id="${esc(q.id)}">Lançar OS neste equipamento</button></footer>`;
+}
 /* ---------- PAINEL ---------- */
 function totalsReceber(){
   const prod = Math.round((state.fech.reduce((s,f)=>s+(+f.valor||0),0) + sumCalc(state.ap.filter(e=>!e.andamento && !lockedE(e))).valor)*100)/100;
@@ -646,6 +790,7 @@ function vPainel(){
     <div><div class="eyebrow">Total a receber</div><div class="big">${brl(t.horas+t.orc)}</div></div>
     <div class="split"><span>Horas trabalhadas <b>${brl(t.horas)}</b></span><span>Orçamentos aprovados <b>${brl(t.orc)}</b></span></div>
   </section>
+  ${alertasHtml()}
   <div class="kpis">
     <div class="kpi"><span class="eyebrow">Hoje</span><span class="v">${fh(tc.total)}</span><span class="s">${tdAp.length} OS · ${brl(tc.valor)}</span></div>
     <div class="kpi"><span class="eyebrow">Em ${MESES[+state.month.slice(5)-1]}</span><span class="v">${fh(mc.total)}</span><span class="s">${brl(mc.valor)} em ${new Set(mAp.map(e=>e.data)).size} dias</span></div>
@@ -802,6 +947,7 @@ function apForm(e){
       <label class="field"><span>Unidade / local</span><input id="f-cli" list="cli-list" value="${esc(e.cliente||"")}" placeholder="Ex.: Uruaçu, Novo Planalto"><datalist id="cli-list">${clientes.map(c=>`<option value="${esc(c)}">`).join("")}</datalist></label>
     </div>
     ${orcSelect("f-orc", e.orcId)}
+    ${eqSelect('id="f-eq"', e.equipId, e.prevId)}
     ${state.worker?"":`<label class="field"><span>Cálculo da hora</span><select id="f-tipo">${Object.entries(TIPOS).map(([k,l])=>`<option value="${k}" ${ (e.tipo||"auto")===k?"selected":""}>${l}</option>`).join("")}</select></label>`}
     ${state.cfg.almoco.ativo?`<label class="check"><input type="checkbox" id="f-noalm" ${e.noAlmoco?"checked":""}> Trabalhei no horário de almoço (${esc(state.cfg.almoco.ini)}–${esc(state.cfg.almoco.fim)} conta como extra 50%)</label>`:""}
     <label class="check"><input type="checkbox" id="f-emerg" ${e.emergencia?"checked":""}> Chamado de emergência (fora da escala)</label>
@@ -846,7 +992,8 @@ async function carregarLixeira(){
 function readApForm(){
   const id = $("#apForm").dataset.id;
   const old = state.ap.find(x=>x.id===id) || {};
-  return {...old, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo: $("#f-tipo") ? $("#f-tipo").value : (old.tipo||"auto"), noAlmoco: $("#f-noalm") ? $("#f-noalm").checked : !!old.noAlmoco, emergencia:$("#f-emerg").checked, acion: $("#f-emerg").checked ? {por:$("#f-ac-por").value.trim(), as:$("#f-ac-as").value, meio:$("#f-ac-meio").value, motivo:$("#f-ac-mot").value.trim()} : undefined, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])], fotoMeta: Object.fromEntries((state.apFotos||[]).map(id=>[id, (old.fotoMeta||{})[id] || state.fotoMetaNovo?.[id]]).filter(([,v])=>v))};
+  const eqv = $("#f-eq") ? eqSplit($("#f-eq").value) : {equipId:old.equipId, prevId:old.prevId};
+  return {...old, ...eqv, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo: $("#f-tipo") ? $("#f-tipo").value : (old.tipo||"auto"), noAlmoco: $("#f-noalm") ? $("#f-noalm").checked : !!old.noAlmoco, emergencia:$("#f-emerg").checked, acion: $("#f-emerg").checked ? {por:$("#f-ac-por").value.trim(), as:$("#f-ac-as").value, meio:$("#f-ac-meio").value, motivo:$("#f-ac-mot").value.trim()} : undefined, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])], fotoMeta: Object.fromEntries((state.apFotos||[]).map(id=>[id, (old.fotoMeta||{})[id] || state.fotoMetaNovo?.[id]]).filter(([,v])=>v))};
 }
 function lastEmp(){ let v=""; try{ v = localStorage.getItem("gaap-last-emp")||""; }catch(err){} return v || state.cfg.contratante || ""; }
 function selProfs(){ return [...document.querySelectorAll('input[name="f-prof"]:checked')].map(x=>x.value); }
@@ -948,6 +1095,7 @@ function renderDayRows(){
     <label class="field f-desc"><span>Serviço executado</span><input data-f="desc" value="${esc(r.desc)}" placeholder="Descrição da OS"></label>
     <label class="field f-cli"><span>Unidade</span><input data-f="cli" list="d-unid-list" value="${esc(r.cli)}" placeholder="${esc(d.unid||"Igual à de cima")}"></label>
     <label class="check emerg"><input type="checkbox" data-f="emerg" ${r.emerg?"checked":""}> Emergência</label>
+    ${eqList().length?`<div class="f-eq">${eqSelect('data-f="eq"', eqSplit(r.eq).equipId, eqSplit(r.eq).prevId)}</div>`:""}
     ${state.cfg.almoco.ativo?`<label class="check noalm"><input type="checkbox" data-f="noAlm" ${r.noAlm?"checked":""}> Trabalhei no almoço (conta como extra)</label>`:""}
     <label class="field f-obs"><span>Observação (sai no relatório)</span><input data-f="obs" value="${esc(r.obs||"")}" placeholder="Opcional: peças, pendências…"></label>
     ${r.emerg?`<div class="acionrow"><label class="field"><span>Quem acionou</span><input data-f="acPor" list="acion-list" value="${esc(r.acPor||"")}" placeholder="Ex.: Carlos (supervisor)"></label>
@@ -975,7 +1123,7 @@ function updateDay(){
   d.rows.forEach((r,i)=>{
     const el = $("#d-info-"+i); if(!el) return;
     if(!r.ini || !r.fim){ el.innerHTML = r.os||r.desc ? `<span class="pill warn">Falta ${!r.ini?"início":"fim"}</span>` : ""; return; }
-    const c = calc({data:d.data, inicio:r.ini, fim:r.fim, noAlmoco:!!r.noAlm, empresa:d.emp, ...(d.orcId?{orcId:d.orcId}:{}), ...(state.worker?{}:rateFor(d.emp||state.cfg.contratante||""))});
+    const c = calc({data:d.data, inicio:r.ini, fim:r.fim, noAlmoco:!!r.noAlm, empresa:d.emp, ...(d.orcId?{orcId:d.orcId}:{}), ...(state.worker?{}:rateFor(d.emp||state.cfg.contratante||"", d.data))});
     ["n","e50","e100","total","valor"].forEach(k=>tot[k]+=c[k]);
     const others = [...ex, ...d.rows.filter((x,k)=>k!==i && x.ini && x.fim).map((x,k)=>({id:"r"+k, data:d.data, inicio:x.ini, fim:x.fim}))];
     const ov = overlaps([...others.map(o=>({...o, profissional:""})), {id:"__me", data:d.data, inicio:r.ini, fim:r.fim, profissional:""}]).has("__me");
@@ -1030,7 +1178,7 @@ async function submitDay(){
   if(bad){ toast(`Linha ${bad.i+1}: confira início e fim.`); return; }
   if(osObrigatoria(d.emp)){ const sem = rows.find(r=>!r.os.trim()); if(sem){ toast(`Linha ${sem.i+1}: a ${d.emp||state.cfg.contratante} exige o nº da OS.`); return; } }
   const btn = $("#d-save"); btn.disabled = true;
-  const base = {...(state.worker ? {} : rateFor(d.emp || state.cfg.contratante || "")), tipo:"auto", obs:"", ...(d.orcId?{orcId:d.orcId}:{})};
+  const base = {...(state.worker ? {} : rateFor(d.emp || state.cfg.contratante || "", d.data)), tipo:"auto", obs:"", ...(d.orcId?{orcId:d.orcId}:{})};
   const col = "apontamentos", quem = state.worker ? [state.me] : who;
   for(const r of rows){ const row = d.rows[r.i]; row.ids ||= {}; for(const pr of quem) row.ids[pr||"_"] ||= uid(); }
   rascunho.salvar();
@@ -1038,7 +1186,7 @@ async function submitDay(){
   try{
     for(const r of rows) for(const pr of quem){
       const row = d.rows[r.i]; row.ids ||= {}; const id = row.ids[pr||"_"] ||= uid();
-      await save(col, {...base, id, noAlmoco:!!r.noAlm, obs:(r.obs||"").trim(), ...(r.emerg?{acion:{por:(r.acPor||"").trim(), as:r.acAs||"", meio:r.acMeio||"", motivo:(r.acMot||"").trim()}}:{}), data:d.data, os:r.os.trim(), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], fotoMeta:r.fotoMeta||{}, criadoEm:new Date().toISOString()});
+      await save(col, {...base, id, ...eqSplit(r.eq), noAlmoco:!!r.noAlm, obs:(r.obs||"").trim(), ...(r.emerg?{acion:{por:(r.acPor||"").trim(), as:r.acAs||"", meio:r.acMeio||"", motivo:(r.acMot||"").trim()}}:{}), data:d.data, os:r.os.trim(), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], fotoMeta:r.fotoMeta||{}, criadoEm:new Date().toISOString()});
       n++;
     }
     try{ if(d.profs.length) localStorage.setItem("gaap-last-prof", JSON.stringify(d.profs)); if(d.emp) localStorage.setItem("gaap-last-emp", d.emp); }catch(err){}
@@ -1063,7 +1211,7 @@ document.addEventListener("submit", async e=>{
     state.apIds ||= {};
     if(novo){ d.criadoEm = state.apIds._criado ||= new Date().toISOString(); delete d.exemplo; if(!d.id) d.id = state.apIds._ ||= uid(); }
     if(state.worker){ delete d.valorHora; delete d.extraPct; delete d.feriadoPct; }
-    else if(!prev || (prev.empresa||"")!==(d.empresa||"")){ Object.assign(d, rateFor(empOf(d))); }
+    else if(!prev || (prev.empresa||"")!==(d.empresa||"") || prev.data!==d.data){ Object.assign(d, rateFor(empOf(d), d.data)); }
     const col = "apontamentos";
     const btn = e.target.querySelector('[type="submit"]'); if(btn) btn.disabled = true;
     try{
@@ -1371,7 +1519,7 @@ async function submitCrono(){
   if(!quem.length){ toast("Marque quem está na OS."); return; }
   const agora = nowHM(), data = today(), lk = lockOf(data, emp); if(lk){ toast(lockMsg(lk)); return; }
   const em = $("#cr-emerg").checked;
-  const base = {...(state.worker ? {} : rateFor(emp)), data, inicio:agora, fim:"", andamento:true, tipo:"auto", os, descricao:$("#cr-desc").value.trim(), cliente:$("#cr-unid").value.trim(), empresa:emp, emergencia:em, criadoEm:new Date().toISOString(),
+  const base = {...(state.worker ? {} : rateFor(emp, data)), data, inicio:agora, fim:"", andamento:true, tipo:"auto", os, descricao:$("#cr-desc").value.trim(), cliente:$("#cr-unid").value.trim(), empresa:emp, emergencia:em, criadoEm:new Date().toISOString(),
     ...(em?{acion:{por:$("#cr-ac-por").value.trim(), as:agora, meio:$("#cr-ac-meio").value, motivo:$("#cr-ac-mot").value.trim()}}:{})};
   try{
     const velhos = state.ap.filter(x=>x.andamento && x.data!==data && quem.includes(x.profissional||""));
@@ -1800,10 +1948,11 @@ function fechCard(f){
       <span>Saldo <b class="mono">${brl(sd)}</b><small>${nf.numero?`NF ${esc(nf.numero)}${nf.status==="cancelada"?" (cancelada)":""}`:'<span class="pill warn" style="padding:0 6px">Sem NF</span>'}</small></span>
     </div>
     ${fechAlterado(f)?`<div class="warnbox">Há OS deste período alteradas depois do fechamento. O PDF continua igual ao que foi enviado; use “PDF atual” para ver como ficaria hoje.</div>`:""}
+    ${f.aprovacao?`<p style="margin:0">${f.aprovacao.aprovado?`<span class="pill good">Aprovado por ${esc(f.aprovacao.nome||"aprovador")}${f.aprovacao.cargo?` (${esc(f.aprovacao.cargo)})`:""} em ${fdate((f.aprovacao.em||"").slice(0,10))}</span>`:`<span class="pill bad">Contestado: ${(f.aprovacao.contestadas||[]).length} OS · ${esc(f.aprovacao.nome||"")}</span>`}</p>`:f.aprovPedida?`<p class="muted" style="margin:0;font-size:.85rem">Aprovação pedida em ${fdate(f.aprovPedida)}, aguardando resposta.</p>`:""}
     ${ult?`<p class="muted" style="margin:0;font-size:.85rem">Última cobrança em ${fdate(ult)}${(f.cobrancas||[]).length>1?` (${f.cobrancas.length} no total)`:""}.</p>`:""}
     <div class="row fc-acts"><button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}">PDF enviado</button>${fechAlterado(f)?`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}" data-atual="1">PDF atual</button>`:""}
       ${sd>0.005?`<button class="btn sm primary" data-act="newRec" data-o="fech" data-id="${esc(f.id)}" data-v="${sd}">Receber</button><button class="btn sm" data-act="fechCobrar" data-id="${esc(f.id)}">Cobrar</button>`:""}
-      <button class="btn sm" data-act="fechNF" data-id="${esc(f.id)}">Nota fiscal / vencimento</button>${sd>0.005?`<button class="btn sm" data-act="fechGlosa" data-id="${esc(f.id)}">Glosa</button>`:""}
+      <button class="btn sm" data-act="fechNF" data-id="${esc(f.id)}">Nota fiscal / vencimento</button>${f.snap?`<button class="btn sm" data-act="fechAprov" data-id="${esc(f.id)}">${f.aprovacao?"Ver aprovação":"Pedir aprovação"}</button>`:""}${sd>0.005?`<button class="btn sm" data-act="fechGlosa" data-id="${esc(f.id)}">Glosa</button>`:""}
       <button class="btn sm danger" data-act="fechReabrir" data-id="${esc(f.id)}">Reabrir</button></div>
   </div>`;
 }
@@ -1839,7 +1988,7 @@ function vFinanceiro(){
   const recs = [...state.rec].sort((a,b)=>(b.data||"").localeCompare(a.data||""));
   const stPill = (saldo, rec) => saldo<=0.005 ? '<span class="pill good">Recebido</span>' : rec>0 ? '<span class="pill warn">Parcial</span>' : '<span class="pill">Pendente</span>';
   return `${exampleBanner()}
-  <div class="pagehead"><div><span class="eyebrow">Financeiro</span><h1>A receber</h1><p class="muted">Horas por mês de competência e orçamentos aprovados. Registre cada pagamento recebido para baixar o saldo.</p></div><button class="btn primary" data-act="newRec">+ Registrar recebimento</button></div>
+  <div class="pagehead"><div><span class="eyebrow">Financeiro</span><h1>A receber</h1><p class="muted">Horas por mês de competência e orçamentos aprovados. Registre cada pagamento recebido para baixar o saldo.</p></div><div class="row"><button class="btn" data-act="pacoteContador">Pacote do contador</button><button class="btn primary" data-act="newRec">+ Registrar recebimento</button></div></div>
   <div class="kpis" style="margin:0">
     <div class="kpi"><span class="eyebrow">A receber total</span><span class="v">${brl(t.horas+t.orc)}</span><span class="s">horas + orçamentos</span></div>
     <div class="kpi"><span class="eyebrow">Horas a receber</span><span class="v">${brl(t.horas)}</span><span class="s">${brl(t.prod)} produzido${t.reemb?` + ${brl(t.reemb)} despesas`:""} · ${brl(t.recH)} recebido${t.glosas?` · ${brl(t.glosas)} glosado`:""}</span></div>
@@ -1893,6 +2042,32 @@ function recForm(o){
   </form>`;
 }
 document.addEventListener("change", e=>{ if(e.target.id==="r-origem"){ const v=e.target.value; $("#r-comp-w").hidden=v!=="horas"; $("#r-orc-w").hidden=v!=="orc"; $("#r-fech-w").hidden=v!=="fech"; } });
+async function gerarPacoteContador(m, btn){
+  if(!m) return; if(btn){ btn.disabled = true; btn.textContent = "Preparando…"; }
+  try{
+    if(!window.XLSX) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
+    if(!window.JSZip) await loadScript(JSZIP);
+    const X = window.XLSX, wb = X.utils.book_new(), noMes = d => (d||"").slice(0,7)===m;
+    const fechs = state.fech.filter(f=>noMes(f.nf?.data) || noMes(f.enviadoEm));
+    X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["Fechamento","Período","Empresa","Valor serviços","Despesas reemb.","Glosas","Nº NF","Emissão NF","Situação NF","Vencimento"],
+      ...fechs.map(f=>[f.numero, `${fdate(f.de)} a ${fdate(f.ate)}`, f.empresa||"", +f.valor||0, +f.reemb||0, fechGlosa(f), f.nf?.numero||"", fdate(f.nf?.data||""), f.nf?.status||(f.nf?.numero?"emitida":"a emitir"), fdate(fechVenc(f))])]), "Notas e fechamentos");
+    const recs = state.rec.filter(r=>noMes(r.data));
+    X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["Data","Origem","Empresa","Valor recebido","ISS retido","INSS retido","IR retido","Outras retenções","Total (bruto)","Forma","Observação"],
+      ...recs.map(r=>[fdate(r.data), r.origem==="fech" ? (state.fech.find(f=>f.id===r.fechId)?.numero||"fechamento") : r.origem==="orc" ? "orçamento" : "horas", r.empresa||"", numIn(r.valor), numIn(r.ret?.iss), numIn(r.ret?.inss), numIn(r.ret?.ir), numIn(r.ret?.outras), recBruto(r), r.forma||"", r.obs||""])]), "Recebimentos");
+    const desp = state.desp.filter(x=>noMes(x.data));
+    X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["Data","Tipo","Valor","Reembolsável","Empresa","OS","Observação","Comprovante"],
+      ...desp.map(x=>[fdate(x.data), x.tipo||"", despValor(x), x.reembolsavel?"sim":"não", x.empresa||"", x.os||"", x.obs||"", (x.fotos||[]).length?`comprovantes/${x.id}-1.jpg`:""])]), "Despesas");
+    const tot = k => recs.reduce((s,r)=>s+numIn(r.ret?.[k]),0);
+    X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet([["Resumo de "+ymLabel(m)], [], ["Serviços faturados (fechamentos do mês)", fechs.reduce((s,f)=>s+(+f.valor||0),0)],
+      ["Recebido (líquido)", recs.reduce((s,r)=>s+numIn(r.valor),0)], ["ISS retido", tot("iss")], ["INSS retido", tot("inss")], ["IR retido", tot("ir")], ["Outras retenções", tot("outras")],
+      ["Despesas do mês", desp.reduce((s,x)=>s+despValor(x),0)], ["Despesas reembolsáveis", desp.filter(x=>x.reembolsavel).reduce((s,x)=>s+despValor(x),0)]]), "Resumo");
+    const zip = new JSZip(); zip.file(`contador-${m}.xlsx`, X.write(wb, {type:"array", bookType:"xlsx"}));
+    const ids = desp.flatMap(x=>(x.fotos||[]).map((id,i)=>[x, id, i])); await assinarFotos(ids.map(z=>z[1]));
+    for(const [x, id, i] of ids){ try{ const r = await fetch(assetUrls[id]); if(r.ok) zip.file(`comprovantes/${x.id}-${i+1}.jpg`, await r.blob()); }catch(err){} }
+    const blob = await zip.generateAsync({type:"blob"}); closeModal();
+    await offerFile(`pacote-contador-${m}.zip`, blob);
+  }catch(err){ toast("Não consegui gerar o pacote. Verifique a conexão."); if(btn){ btn.disabled = false; btn.textContent = "Gerar pacote"; } }
+}
 function nfTexto(f){
   const aps = (f.snap?.aps) || fechRows(f.de, f.ate, f.empresa||""), cfg = f.snap?.cfg || state.cfg;
   const taxas = [...new Map(aps.map(e=>{ const t = {...rateFor(empOf(e)), ...(e.valorHora!=null?{valorHora:+e.valorHora}:{}), ...(e.extraPct!=null?{extraPct:+e.extraPct}:{}), ...(e.feriadoPct!=null?{feriadoPct:+e.feriadoPct}:{})}; return [JSON.stringify(t), t]; })).values()];
@@ -1917,7 +2092,39 @@ document.addEventListener("submit", async e=>{
     try{ await save("fechamentos", {...f, glosas:[...(f.glosas||[]), g]}); closeModal(); toast(`Glosa de ${brl(v)} registrada`); }catch(err){ toast(writeErr(err)); } }
   if(e.target.id==="despForm"){ e.preventDefault(); submitDesp(); }
   if(e.target.id==="cronoForm"){ e.preventDefault(); submitCrono(); }
+  if(e.target.id==="pagForm"){ e.preventDefault(); const id = e.target.dataset.id, old = state.pag.find(x=>x.id===id) || {};
+    const x = {...old, id: id || (state.pgId ||= uid()), profissional:$("#pg-prof").value, tipo:$("#pg-tipo").value, data:$("#pg-data").value, valor:numIn($("#pg-valor").value), obs:$("#pg-obs").value.trim()};
+    if(!id && x.tipo==="pagamento") x.ref = {...state.eqp};
+    if(!x.profissional || !(x.valor>0) || !x.data){ toast("Informe funcionário, data e valor."); return; }
+    try{ await save("pagamentos", x); state.pgId = null; state.modalDirty = false; closeModal(); render(); toast(`${TIPOS_PAG[x.tipo][0]} de ${brl(x.valor)} para ${x.profissional} salvo.`); }catch(err){ toast(writeErr(err)); } }
+  if(e.target.id==="docForm"){ e.preventDefault(); const id = e.target.dataset.id, old = state.docs.find(x=>x.id===id) || {}, btn = e.target.querySelector("[type=submit]");
+    const x = {...old, id: id || (state.dcId ||= uid()), tipo:$("#dc-tipo").value, titular:$("#dc-tit").value, emissao:$("#dc-emi").value, validade:$("#dc-val").value, obs:$("#dc-obs").value.trim()};
+    try{ btn.disabled = true;
+      if(state.docArq){ const f = state.docArq, ext = (f.name.split(".").pop()||"pdf").toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,5) || "pdf", path = `docs/${uid()}.${ext}`;
+        const {error} = await sb.storage.from("documentos").upload(path, f, {contentType: f.type || "application/pdf"}); if(error) throw {code:"db", message:"Não consegui enviar o arquivo: "+error.message}; x.arquivo = path; }
+      await save("documentos", x); state.dcId = null; state.docArq = null; state.modalDirty = false; closeModal(); render(); toast("Documento salvo.");
+    }catch(err){ btn.disabled = false; toast(writeErr(err)); } }
+  if(e.target.id==="eqForm"){ e.preventDefault(); lerEqPlano(); const id = e.target.dataset.id, old = state.eq.find(x=>x.id===id) || {};
+    const x = {...old, id: id || (state.eqId ||= uid()), tag:$("#eqf-tag").value.trim(), nome:$("#eqf-nome").value.trim(), empresa:$("#eqf-emp").value.trim(), unidade:$("#eqf-unid").value.trim(), obs:$("#eqf-obs").value.trim(),
+      inativo: $("#eqf-inativo") ? $("#eqf-inativo").checked : false, plano: state.eqPlano.filter(p=>p.atividade.trim()).map(p=>({id:p.id||uid(), atividade:p.atividade.trim(), cadaDias:Math.max(1, +p.cadaDias||30), horasPrev:p.horasPrev}))};
+    if(!x.tag){ toast("Informe a TAG."); return; }
+    if(state.eq.some(q=>q.id!==x.id && chaveEmp(q.tag)===chaveEmp(x.tag))){ toast(`Já existe um equipamento com a TAG ${x.tag}.`); return; }
+    try{ await save("equipamentos", x); state.eqId = null; state.modalDirty = false; closeModal(); render(); toast(`Equipamento ${x.tag} salvo.`); }catch(err){ toast(writeErr(err)); } }
+  if(e.target.id==="reajForm"){ e.preventDefault(); const emp = e.target.dataset.emp, novo = numIn($("#rj-valor").value), desde = $("#rj-desde").value;
+    if(!(novo>0) || !desde){ toast("Informe o novo valor e a data."); return; }
+    const c = clone(state.cfg); c.taxas ||= {}; const t = c.taxas[emp] ||= {}, T = rateFor(emp);
+    t.historico = [...(t.historico||[]).filter(h=>h.ate < desde), {ate:desde, valorHora:T.valorHora, extraPct:T.extraPct, feriadoPct:T.feriadoPct}];
+    t.valorHora = novo; t.desde = desde;
+    try{ await saveCfg(c); state.cfg = deepMerge(DEFAULT_CFG, c); calcCache = new WeakMap();
+      // lançamentos já feitos a partir da vigência (e ainda não fechados) passam para o novo valor
+      const alvo = state.ap.filter(x=>x.data>=desde && chaveEmp(empOf(x))===chaveEmp(emp) && !lockedE(x) && !x.orcId && +x.valorHora===+T.valorHora);
+      let n = 0; for(const x of alvo){ try{ await save("apontamentos", {...x, valorHora:novo}); n++; }catch(_){} }
+      closeModal(); state.rendered = null; render(); toast(`Novo valor de ${brl(novo)} vale a partir de ${fdate(desde)}.${n?` ${n} lançamento(s) já feitos foram atualizados.`:""}`); }catch(err){ toast(writeErr(err)); } }
+  if(e.target.id==="contForm"){ e.preventDefault(); gerarPacoteContador($("#ct-mes").value, e.target.querySelector("[type=submit]")); }
 });
+document.addEventListener("change", e=>{ if(e.target.id==="dc-arq" && e.target.files[0]){ state.docArq = e.target.files[0]; const n = $("#dc-arq-nome"); if(n) n.textContent = e.target.files[0].name; }
+  if(e.target.id==="eq-de" || e.target.id==="eq-ate"){ state.eqp[e.target.id==="eq-de"?"de":"ate"] = e.target.value; state.rendered = null; render(); } });
+document.addEventListener("input", e=>{ if(e.target.id==="eq-q"){ state.eqQ = e.target.value; clearTimeout(state.eqQT); state.eqQT = setTimeout(()=>{ render(); const i = $("#eq-q"); if(i){ i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250); } });
 document.addEventListener("change", e=>{ if(e.target.id==="gl-os"){ const op = e.target.selectedOptions[0]; if(op && op.dataset.v) $("#gl-v").value = String(Math.round(+op.dataset.v*100)/100).replace(".",","); } });
 async function submitRec(){
   const r = {data:$("#r-data").value, valor:numIn($("#r-valor").value), origem:$("#r-origem").value, obs:$("#r-obs").value.trim(), forma:$("#r-forma").value, ret:{}};
@@ -1982,6 +2189,7 @@ function vAjustes(){
       <div class="tablewrap"><table class="inputs"><thead><tr><th>Empresa</th><th>Valor da hora (R$)</th><th>Extra (%)</th><th>Domingo e feriado (%)</th></tr></thead><tbody>
       ${empresasCfg().map(n=>{ const t=(c.taxas||{})[n]||{}; return `<tr data-tx="${esc(n)}"><td>${esc(n)}</td><td><input class="tx-v" inputmode="decimal" aria-label="Valor da hora de ${esc(n)}" value="${t.valorHora!=null?String(t.valorHora).replace(".",","):""}" placeholder="${String(c.valorHora).replace(".",",")}"></td><td><input class="tx-p50" type="number" min="0" aria-label="Extra de ${esc(n)}" value="${t.extraPct??""}" placeholder="${c.extraPct}"></td><td><input class="tx-p100" type="number" min="0" aria-label="Domingo e feriado de ${esc(n)}" value="${t.feriadoPct??""}" placeholder="${c.feriadoPct}"></td></tr>`; }).join("") || `<tr><td colspan="4" class="muted">Cadastre as empresas acima e salve.</td></tr>`}
       </tbody></table></div>
+      <div class="row">${empresasCfg().map(n=>`<button type="button" class="btn sm" data-act="reajuste" data-emp="${esc(n)}">Reajustar ${esc(n)}${(c.taxas||{})[n]?.desde?` (desde ${fdate(c.taxas[n].desde)})`:""}</button>`).join("")}</div>
       <p class="muted" style="margin:0">Em branco usa o valor padrão (${brl(c.valorHora)}, ${c.extraPct}% e ${c.feriadoPct}%). Valores novos valem para os próximos lançamentos; os já lançados mantêm o valor da época.</p>
     </div>
     <div class="panel form"><h3>Ficha das contratantes</h3>
@@ -2042,7 +2250,7 @@ function vAjustes(){
     </div>
   </section>`;
 }
-function backupDados(){ return {sistema:"GAAP Gestão de Serviços", versao:2, exportadoEm:new Date().toISOString(), config:state.cfg, apontamentos:state.ap, orcamentos:state.orc, recebimentos:state.rec, fechamentos:state.fech, despesas:state.desp, perfis:state.perfis||[]}; }
+function backupDados(){ return {sistema:"GAAP Gestão de Serviços", versao:2, exportadoEm:new Date().toISOString(), config:state.cfg, apontamentos:state.ap, orcamentos:state.orc, recebimentos:state.rec, fechamentos:state.fech, despesas:state.desp, pagamentos:state.pag, equipamentos:state.eq, documentos:state.docs, perfis:state.perfis||[]}; }
 function backupIdade(){
   const b = state.cfg.backupBaixadoEm; if(!b) return `<span class="pill warn">Você ainda não baixou nenhuma cópia completa.</span>`;
   const dias = Math.floor((Date.now() - new Date(b).getTime())/86400000);
@@ -2168,7 +2376,7 @@ const A = {
   newDesp(){ state.dpId = null; openModal(despForm({})); },
   editDesp(b){ const x = state.desp.find(d=>d.id===b.dataset.id); if(x){ state.dpId = null; openModal(despForm(x)); } },
   async delDesp(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const lk = state.fech.find(f=>(f.despIds||[]).includes(b.dataset.id)); if(lk){ toast(`Essa despesa está no fechamento ${lk.numero}.`); return; } const x = state.desp.find(d=>d.id===b.dataset.id); try{ await removeDoc("despesas", b.dataset.id); closeModal(); toastAcao("Despesa excluída.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("despesas", y); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
-  irFechar(b){ state.view = "relatorios"; state.rep = {...state.rep, modo:"periodo", de:b.dataset.de, ate:ymd(addDays(parseYmd(today()),-1))}; state.rendered = null; render(); setTimeout(()=>{ openModal(fechFormHtml()); updateFech(); }, 30); },
+  irFechar(b){ state.view = "relatorios"; state.rep = {...state.rep, modo:"periodo", de:b.dataset.de, ate:b.dataset.ate || ymd(addDays(parseYmd(today()),-1))}; state.rendered = null; render(); setTimeout(()=>{ openModal(fechFormHtml()); updateFech(); }, 30); },
   async fechCobrar(b){
     const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return;
     const F = ficha(f.empresa||state.cfg.contratante||""), d = diasEntre(fechVenc(f), today()), w = (F.whats||"").replace(/\D/g,"");
@@ -2230,6 +2438,90 @@ const A = {
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("recebimentos", y); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   recarregar(){ location.reload(); },
+  async fechAprov(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return;
+    if(f.aprovacao){ const a = f.aprovacao, linhas = (f.snap?.aps||[]);
+      openModal(`<header><h2>Aprovação · ${esc(f.numero)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+        <p>${a.aprovado?'<span class="pill good">Aprovado</span>':'<span class="pill bad">Contestado</span>'} por <b>${esc(a.nome||"")}</b>${a.cargo?` (${esc(a.cargo)})`:""} em ${new Date(a.em).toLocaleString("pt-BR")}</p>
+        ${a.obs?`<p>${esc(a.obs)}</p>`:""}
+        ${(a.contestadas||[]).length?`<div class="list">${a.contestadas.map(c=>{ const e = linhas.find(x=>x.id===c.id)||{}; return `<div class="item" style="cursor:default"><span class="mono">${fdate(e.data||"")}</span><span><b>OS ${esc(e.os||"s/n")}</b> ${esc(e.inicio||"")}–${esc(e.fim||"")} · ${esc(e.profissional||"")}<br><small>${esc(c.motivo||"sem motivo")}</small></span><span></span></div>`; }).join("")}</div>`:""}
+        <footer><span></span><button class="btn" data-act="closeModal">Fechar</button></footer>`); return; }
+    b.disabled = true;
+    try{ const {data:token, error} = await sb.rpc("criar_aprovacao", {p_fech:f.id}); if(error) throw dbErr(error);
+      const F = ficha(f.empresa||state.cfg.contratante||""), w = (F.whats||"").replace(/\D/g,""), link = `${location.origin}/aprovar#t=${token}`;
+      const msg = `Olá${F.aprovador?" "+F.aprovador.split(" ")[0]:""}! Segue a medição *${f.numero}* (${fdate(f.de)} a ${fdate(f.ate)}) da ${state.cfg.empresa.nome} para conferência e aprovação. Pelo link você vê cada OS e pode aprovar ou contestar alguma:\n${link}\nObrigado!`;
+      await save("fechamentos", {...f, aprovPedida:today()});
+      window.open(`https://wa.me/${w?(w.length<=11?"55"+w:w):""}?text=${encodeURIComponent(msg)}`, "_blank");
+      toast("Link de aprovação criado. Ele vale por 30 dias.");
+    }catch(err){ toast(writeErr(err)); } finally { b.disabled = false; } },
+  reajuste(b){ const emp = b.dataset.emp, T = rateFor(emp);
+    openModal(`<header><h2>Reajuste · ${esc(emp)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+    <form class="form" id="reajForm" data-emp="${esc(emp)}">
+      <p class="muted" style="margin:0">Valor atual: <b>${brl(T.valorHora)}</b> por hora. Os lançamentos com data anterior à vigência continuam com o valor antigo.</p>
+      <p id="rj-ipca" class="muted" style="margin:0">Buscando o IPCA dos últimos 12 meses…</p>
+      <div class="grid2"><label class="field"><span>Novo valor da hora (R$)</span><input id="rj-valor" inputmode="decimal" required></label>
+      <label class="field"><span>Vale a partir de</span><input type="date" id="rj-desde" value="${today()}" required></label></div>
+      <footer><button type="button" class="btn" data-act="cartaReajuste">Carta de reajuste (PDF)</button><button class="btn primary" type="submit">Aplicar reajuste</button></footer>
+    </form>`);
+    fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.13522/dados/ultimos/1?formato=json").then(r=>r.json()).then(j=>{ const v = parseFloat(String(j?.[0]?.valor||"").replace(",",".")); if(!isFinite(v)) throw 0;
+      state.ipca = {v, ref:j[0].data}; const sug = Math.round(T.valorHora*(1+v/100)*100)/100;
+      const el = $("#rj-ipca"); if(el) el.innerHTML = `IPCA acumulado em 12 meses (até ${esc(j[0].data.slice(3))}): <b>${String(v).replace(".",",")}%</b> → sugerido <b>${brl(sug)}</b>`;
+      const iv = $("#rj-valor"); if(iv && !iv.value) iv.value = String(sug).replace(".",","); })
+      .catch(()=>{ const el = $("#rj-ipca"); if(el) el.textContent = "Não consegui buscar o IPCA agora. Informe o novo valor."; }); },
+  cartaReajuste(){ const emp = $("#reajForm").dataset.emp, novo = numIn($("#rj-valor").value), desde = $("#rj-desde").value, T = rateFor(emp);
+    if(!(novo>0) || !desde){ toast("Informe o novo valor e a data."); return; }
+    const doc = pdfDoc(); if(!doc) return; const F = ficha(emp), E = state.cfg.empresa;
+    let y = pdfHeader(doc, "COMUNICADO DE REAJUSTE", [`Emitido em ${fdate(today())}`]) + 6;
+    doc.setFontSize(10.5); doc.setTextColor(...INK); doc.setFont("helvetica","normal");
+    const pct = (novo/T.valorHora - 1)*100;
+    const txt = [`À ${F.razao||emp}${F.cnpj?` - CNPJ ${F.cnpj}`:""}`, F.aprovador?`A/C: ${F.aprovador}${F.cargo?` - ${F.cargo}`:""}`:"", "",
+      `Prezados,`, "",
+      `Comunicamos o reajuste do valor da hora técnica dos serviços de manutenção mecânica industrial prestados pela ${E.nome}, conforme abaixo:`, "",
+      `• Valor atual da hora: ${brl(T.valorHora)}`, `• Novo valor da hora: ${brl(novo)} (${pct>=0?"+":""}${pct.toFixed(2).replace(".",",")}%)`,
+      `• Adicionais mantidos: ${T.extraPct}% para horas extras e ${T.feriadoPct}% para domingos e feriados`, `• Vigência: serviços executados a partir de ${fdate(desde)}`,
+      state.ipca ? `• Referência: IPCA acumulado em 12 meses de ${String(state.ipca.v).replace(".",",")}% (Banco Central, ${state.ipca.ref.slice(3)})` : "", "",
+      `Seguimos à disposição para quaisquer esclarecimentos e agradecemos a parceria.`].filter(x=>x!==null);
+    txt.forEach(l=>{ doc.splitTextToSize(l, 182).forEach(t=>{ y = ensure(doc, y, 6); doc.text(t, 14, y); y += 5.6; }); });
+    signature(doc, y+6, `${E.nome}${E.responsavel?" - "+E.responsavel:""}`, `${F.razao||emp} (ciente)`); pdfFooter(doc);
+    offerFile(`reajuste-${slug(emp)}-${desde}.pdf`, doc.output("blob")); },
+  pacoteContador(){ const m = ym(today()), ant = shiftYm(m,-1);
+    openModal(`<header><h2>Pacote do contador</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+    <form class="form" id="contForm"><p class="muted" style="margin:0">Gera um .zip com uma planilha (notas e fechamentos, recebimentos com retenções, despesas e um resumo) e as fotos dos comprovantes. Envie direto pelo WhatsApp ou e-mail.</p>
+      <label class="field"><span>Mês</span><input type="month" id="ct-mes" value="${ant}"></label>
+      <footer><span></span><button class="btn primary" type="submit">Gerar pacote</button></footer></form>`); },
+  eqPreset(b){ const q = state.eqp, t = parseYmd(today()), y = t.getFullYear(), m = t.getMonth();
+    if(b.dataset.p==="sem"){ const ini = addDays(t, -((t.getDay()+6)%7)); q.de = ymd(ini); q.ate = ymd(addDays(ini, 6)); }
+    else if(b.dataset.p==="q1"){ q.de = ymd(new Date(y,m,1)); q.ate = ymd(new Date(y,m,15)); }
+    else if(b.dataset.p==="q2"){ q.de = ymd(new Date(y,m,16)); q.ate = ymd(new Date(y,m+1,0)); }
+    else if(b.dataset.p==="mes"){ q.de = ymd(new Date(y,m,1)); q.ate = ymd(new Date(y,m+1,0)); }
+    else { q.de = ymd(new Date(y,m-1,1)); q.ate = ymd(new Date(y,m,0)); }
+    state.rendered = null; render(); },
+  pagNovo(b){ const d = b.dataset||{}; openModal(pagForm({profissional:d.p||profs()[0], tipo:d.t||"vale", valor:d.v?+d.v:undefined, ref: d.t==="pagamento" ? {...state.eqp} : undefined})); },
+  pagEditar(b){ const x = state.pag.find(y=>y.id===b.dataset.id); if(x) openModal(pagForm(x)); },
+  async pagExcluir(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const x = state.pag.find(y=>y.id===b.dataset.id); try{ await removeDoc("pagamentos", b.dataset.id); closeModal(); render(); toastAcao("Lançamento excluído.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("pagamentos", y); render(); }); }catch(err){ toast(writeErr(err)); } },
+  reciboPdf(b){ const nome = b.dataset.p, q = state.eqp, a = acertoDe(nome, q.de, q.ate), doc = pdfDoc(); if(!doc) return;
+    let y = pdfHeader(doc, "RECIBO / EXTRATO DE SERVIÇOS", [`${fdate(q.de)} a ${fdate(q.ate)}`, `Emitido em ${fdate(today())}`]);
+    doc.setFontSize(10); doc.setTextColor(...INK); doc.text(`Funcionário: ${nome}`, 14, y); y += 6;
+    doc.autoTable({startY:y, theme:"grid", margin:{left:14,right:14}, head:[["Data","OS","Início","Fim","Horas","50%","100%"]],
+      body: a.aps.sort((x,z)=>(x.data+x.inicio).localeCompare(z.data+z.inicio)).map(e=>{ const c = calc(e); return [fdate(e.data), e.os||"-", e.inicio, e.fim, fdec(c.total), c.e50?fdec(c.e50):"", c.e100?fdec(c.e100):""]; }),
+      foot:[["TOTAL","","","",fdec(a.c.total),fdec(a.c.e50),fdec(a.c.e100)]], styles:{fontSize:8.5,cellPadding:1.4,textColor:INK}, headStyles:{fillColor:GREEN,textColor:255}, footStyles:{fillColor:[255,240,150],textColor:INK}});
+    y = doc.lastAutoTable.finalY + 6;
+    doc.autoTable({startY:y, theme:"grid", margin:{left:14,right:100}, body:[["Valor dos serviços", brl(a.cu)], ...(a.bonus?[["Bônus", brl(a.bonus)]]:[]), ...(a.desconto?[["Descontos", "− "+brl(a.desconto)]]:[]), ["Vales / adiantamentos", "− "+brl(a.vale)], ["Pago neste período", "− "+brl(a.pago)], [{content:"Saldo a pagar",styles:{fontStyle:"bold"}}, {content:brl(a.saldo),styles:{fontStyle:"bold"}}]],
+      styles:{fontSize:10,cellPadding:1.8,textColor:INK}, columnStyles:{1:{halign:"right"}}});
+    y = doc.lastAutoTable.finalY + 8;
+    doc.setFontSize(9.5); doc.splitTextToSize(`Declaro ter recebido de ${state.cfg.empresa.nome} os valores acima referentes aos serviços prestados no período de ${fdate(q.de)} a ${fdate(q.ate)}.`, 182).forEach(l=>{ doc.text(l,14,y); y+=5; });
+    signature(doc, y+4, state.cfg.empresa.nome, nome); pdfFooter(doc);
+    offerFile(`recibo-${slug(nome)}-${q.de}_a_${q.ate}.pdf`, doc.output("blob")); },
+  docNovo(){ state.docArq = null; openModal(docForm({})); },
+  docEditar(b){ const x = state.docs.find(y=>y.id===b.dataset.id); if(x){ state.docArq = null; openModal(docForm(x)); } },
+  async docVer(b){ const {data, error} = await sb.storage.from("documentos").createSignedUrl(b.dataset.path, 600); if(error || !data){ toast("Não consegui abrir o arquivo."); return; } window.open(data.signedUrl, "_blank"); },
+  async docExcluir(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } try{ await removeDoc("documentos", b.dataset.id); closeModal(); render(); toast("Documento excluído (fica na lixeira)."); }catch(err){ toast(writeErr(err)); } },
+  eqNovo(){ openModal(eqForm({})); renderEqPlano(); },
+  eqEditar(b){ const q = state.eq.find(x=>x.id===b.dataset.id); if(q){ openModal(eqForm(q)); renderEqPlano(); } },
+  eqVer(b){ const q = state.eq.find(x=>x.id===b.dataset.id); if(q) openModal(eqDetalhe(q), "wide"); },
+  eqPlanoAdd(){ lerEqPlano(); state.eqPlano.push({id:uid(), atividade:"", cadaDias:30, horasPrev:""}); renderEqPlano(); },
+  eqPlanoDel(b){ lerEqPlano(); state.eqPlano.splice(+b.dataset.i,1); renderEqPlano(); },
+  async eqExcluir(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } try{ await removeDoc("equipamentos", b.dataset.id); closeModal(); render(); toast("Equipamento excluído (fica na lixeira)."); }catch(err){ toast(writeErr(err)); } },
+  eqLancar(b){ const q = eqDe(b.dataset.id); if(!q) return; closeModal(); A.newAp(); setTimeout(()=>{ const s = $("#f-eq"); if(s){ s.value = `${q.id}|${b.dataset.p||""}`; } const u = $("#f-cli"); if(u && !u.value) u.value = q.unidade||""; const em = $("#f-emp"); if(em && q.empresa) em.value = q.empresa; }, 30); },
   dayDescartar(b){ const d = state.day, temDados = d && d.rows.some(r=>r.os||r.desc||r.fim);
     if(temDados && !b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar descarte"; setTimeout(()=>{ if(b.isConnected){ delete b.dataset.armed; b.textContent="Descartar"; } }, 4000); return; }
     const copia = d ? clone(d) : null; rascunho.limpar(); closeModal();
