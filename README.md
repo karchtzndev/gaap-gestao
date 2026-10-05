@@ -18,7 +18,8 @@ orçamentos, fechamentos e valores a receber.
 | `vercel.json` | Cabeçalhos de segurança e cache |
 | `supabase/migrations/` | Estrutura completa do banco, regras de acesso e funções (rodar em ordem) |
 | `supabase/functions/lembretes/` | Função do servidor que envia os lembretes no celular |
-| `sw.js` | Recebe as notificações no celular |
+| `sw.js` | Recebe as notificações no celular e guarda o app para abrir sem internet |
+| `aprovar.html`, `aprovar.js` | Página pública onde o cliente confere e aprova (ou contesta) uma medição pelo link |
 | `.github/workflows/manter-ativo.yml` | Chama o banco todo dia para o plano gratuito não pausar |
 
 ## Como funciona o acesso
@@ -59,12 +60,33 @@ e cole o conteúdo de cada arquivo no modelo correspondente:
 | Confirm signup | `Confirme seu e-mail – GAAP Gestão` | `confirmar-cadastro.html` |
 | Reset password | `Redefinir sua senha – GAAP Gestão` | `recuperar-senha.html` |
 
+## Funções principais
+
+- **Horas e OS:** lançamento do dia em lote ou avulso, cronômetro, fotos antes/durante/depois com carimbo, equipamento e preventiva por OS.
+- **Sem internet:** o app abre com os dados guardados no aparelho; lançamentos, cronômetro e fotos ficam numa fila e são enviados sozinhos quando a conexão volta (aviso "a enviar" no topo).
+- **Financeiro:** fechamentos congelados, NF, vencimentos, retenções, glosas, recebimentos e o pacote do contador (.zip com planilha e comprovantes).
+- **Aprovação da medição:** link pelo WhatsApp para o cliente aprovar ou contestar OS por OS (vale 30 dias).
+- **Reajuste:** novo valor da hora com data de vigência (sugestão pelo IPCA do Banco Central) e carta de reajuste em PDF; lançamentos antigos mantêm o valor antigo.
+- **Mais → Equipe:** acerto por período com vales e pagamentos e recibo em PDF; documentos (ASO, NRs, certidões) com aviso 30 dias antes de vencer.
+- **Mais → Equipamentos:** cadastro por TAG, plano de preventivas e histórico de OS por equipamento.
+
+## Migrações do banco
+
+| Arquivo | O que faz |
+|---|---|
+| `008_seguranca.sql` | Validação de ids e campos, fotos só da própria pasta, período fechado sem diferenciar maiúsculas |
+| `009_versao_e_restauracao.sql` | Controle de versão entre aparelhos (CONFLITO), restauração e importação seguras |
+| `010_desempenho.sql` | Regras de acesso mais rápidas, uso do armazenamento, backup incremental de fotos |
+| `011_ideias.sql` | Pagamentos da equipe, equipamentos, documentos (bucket `documentos`) e aprovação da medição pelo cliente |
+| `012_vigencia_taxa.sql` | Valor da hora pela data do serviço (reajuste com vigência) também nos lançamentos dos funcionários |
+
 ## Rotinas automáticas
 
 | O quê | Quando | Onde |
 |---|---|---|
 | Cópia dos dados no servidor (guarda 30 dias) | Todo dia às 03:00 | pg_cron `gaap-backup-diario` |
 | Lembretes no celular (fim do expediente + 20 min) | Seg a sáb | pg_cron `gaap-lembretes` → função `lembretes` |
+| "Para fazer hoje" para o responsável (início do expediente + 30 min): medições vencidas, NF a emitir, documentos vencendo, preventivas atrasadas | Seg a sáb | mesma função `lembretes` |
 | Manter o banco ativo | Todo dia às 08:17 | GitHub Actions (se reativa sozinho) |
 | Manter o banco ativo (reserva) | Todo dia às 11:23 | Vercel Cron → `/api/ping` |
 

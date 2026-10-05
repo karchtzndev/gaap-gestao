@@ -258,20 +258,26 @@ async function recarregarDoc(col, id){
   const k = KEY[col];
   if(!data || (col==="apontamentos" && data.data?.excluido)) setList(k, state[k].filter(x=>x.id!==id)); else upsertLocal(k, doRow(data));
 }
-const setList = (k, list) => { state[k] = list; if(k==="ap") mmCache.ref = null; };
+const setList = (k, list) => { state[k] = list; if(k==="ap") mmCache.ref = null; try{ snap.agendar(); }catch(e){} };
 function upsertLocal(k, row){ setList(k, [...state[k].filter(x=>x.id!==row.id), row]); }
 async function save(col, obj){
-  const id = obj.id || uid(), versao = obj._v || null; const data = semV(obj);
+  const id = obj.id || uid(), versao = obj._v || null; const data = semV(obj); delete data._pend;
   data.atualizadoEm = new Date().toISOString(); state.gen = (state.gen||0) + 1;
+  if(precisaFila(col, id, data)) return filaSalvar(col, id, data, versao);
+  try{ return await saveNet(col, id, data, versao); }
+  catch(e){ if(e && e.rede) return filaSalvar(col, id, data, versao); throw e; }
+}
+// envio de um registro ao servidor; erro de conexão vem marcado com {rede:true}
+async function saveNet(col, id, data, versao){
   if(state.worker){
     const {data:ret, error} = await sb.rpc("func_salvar_os", {p_id:id, p_data:{...data, ...(versao?{_v:versao}:{})}});
-    if(error){ const e = dbErr(error); if(e.conflito) await recarregarDoc(col, id).catch(()=>{}); throw e; }
+    if(error){ if(ehRede(error)) throw {rede:true}; const e = dbErr(error); if(e.conflito) await recarregarDoc(col, id).catch(()=>{}); throw e; }
     const [newId, v] = String(ret||id).split("|");
     const row = {...data, id:newId||id, profissional:state.me, lancadoPor:"funcionario", tipo:"auto", ...(v?{_v:v}:{})}; delete row.valorHora; delete row.extraPct; delete row.feriadoPct;
     upsertLocal("ap", row); scheduleRender(); return row.id;
   }
   const {data:v, error} = await sb.rpc("salvar_doc", {p_tabela:col, p_id:id, p_data:data, p_versao:versao});
-  if(error){ const e = dbErr(error); if(e.conflito) await recarregarDoc(col, id).catch(()=>{}); throw e; }
+  if(error){ if(ehRede(error)) throw {rede:true}; const e = dbErr(error); if(e.conflito) await recarregarDoc(col, id).catch(()=>{}); throw e; }
   upsertLocal(KEY[col], {id, ...data, _v:v}); scheduleRender();
   return id;
 }
@@ -283,16 +289,116 @@ async function saveMany(col, lista){ // registros novos em lote (importação)
 }
 async function removeDoc(col, id){
   state.gen = (state.gen||0) + 1;
-  if(state.worker){ const {error} = await sb.rpc("func_excluir_os", {p_id:id}); if(error) throw dbErr(error); }
-  else { const {error} = await sb.from(col).delete().eq("id", id); if(error) throw dbErr(error); }
+  if(outbox.tem(col, id) || state.offline){ await outbox.por({op:"del", col, id}); }
+  else try{ await removeNet(col, id); }catch(e){ if(e && e.rede) await outbox.por({op:"del", col, id}); else throw e; }
   setList(KEY[col], state[KEY[col]].filter(x=>x.id!==id)); scheduleRender();
 }
+async function removeNet(col, id){
+  const {error} = state.worker ? await sb.rpc("func_excluir_os", {p_id:id}) : await sb.from(col).delete().eq("id", id);
+  if(error){ if(ehRede(error)) throw {rede:true}; throw dbErr(error); }
+}
+/* ---------- sem internet: fila de envio, fotos guardadas e cópia dos dados no aparelho ---------- */
+const ehRede = err => !navigator.onLine || /failed to fetch|fetch failed|networkerror|network request|load failed|internet|timed? ?out|ERR_/i.test(String(err?.message || err?.error || err || ""));
+const idb = (()=>{ let con;
+  const abrir = () => con ||= new Promise((res, rej)=>{ try{ const r = indexedDB.open("gaap-offline", 1); r.onupgradeneeded = ()=>r.result.createObjectStore("kv"); r.onsuccess = ()=>res(r.result); r.onerror = ()=>rej(r.error); }catch(e){ rej(e); } });
+  const tx = async (modo, fn) => { const db = await abrir(); return new Promise((res, rej)=>{ const t = db.transaction("kv", modo), r = fn(t.objectStore("kv")); t.oncomplete = ()=>res(r ? r.result : undefined); t.onerror = ()=>rej(t.error); t.onabort = ()=>rej(t.error); }); };
+  return { get:k=>tx("readonly", s=>s.get(k)), set:(k,v)=>tx("readwrite", s=>s.put(v,k)), del:k=>tx("readwrite", s=>s.delete(k)) };
+})();
+const fotosPend = new Set();
+const outbox = {
+  lista: [], dono: "",
+  chave(){ return "fila:" + (session?.user?.id || ""); },
+  tem(col, id){ return this.lista.some(x=>x.col===col && x.id===id); },
+  async carregar(){ this.dono = session?.user?.id || "";
+    try{ this.lista = (await idb.get(this.chave())) || []; (await idb.get("fotos:" + this.dono) || []).forEach(p=>fotosPend.add(p)); }catch(e){ this.lista = []; }
+    for(const p of fotosPend){ if(assetUrls[p]) continue; try{ const b = await idb.get("foto:" + p); if(b) assetUrls[p] = URL.createObjectURL(b); }catch(e){} }
+    syncTag(); },
+  async gravar(){ try{ await idb.set(this.chave(), this.lista); await idb.set("fotos:" + this.dono, [...fotosPend]); }catch(e){} syncTag(); },
+  async por(item){
+    const i = this.lista.findIndex(x=>x.col===item.col && x.id===item.id);
+    if(i>=0 && this.lista[i]===this.enviando){ this.lista.push(item); return this.gravar(); } // já está indo para o servidor: entra depois
+    if(i>=0){ const ant = this.lista[i];
+      if(item.op==="del" && ant.op==="save" && !ant.versao && ant.novo){ this.lista.splice(i,1); return this.gravar(); } // criado e apagado sem internet
+      item.versao = ant.versao; if(ant.novo) item.novo = true; this.lista.splice(i,1); }
+    this.lista.push(item); return this.gravar(); }
+};
+function precisaFila(col, id, data){
+  if(state.offline || outbox.tem(col, id)) return true;
+  return fotosPend.size > 0 && (data.fotos||[]).some(f=>fotosPend.has(f));
+}
+function filaSalvar(col, id, data, versao){
+  const novo = !versao && !state[KEY[col]].some(x=>x.id===id && x._v);
+  outbox.por({op:"save", col, id, data, versao, worker:state.worker, ...(novo?{novo:true}:{})});
+  const row = {...data, id, _pend:true, ...(versao?{_v:versao}:{})};
+  if(state.worker){ row.profissional = state.me; row.lancadoPor = "funcionario"; row.tipo = "auto"; }
+  upsertLocal(KEY[col], row); scheduleRender(); syncTag(); agendarSync(4000);
+  return id;
+}
+let syncT = 0; const agendarSync = ms => { clearTimeout(syncT); syncT = setTimeout(sincronizar, ms); };
+async function sincronizar(){
+  if(outbox.rodando || !session || !perfil || (!outbox.lista.length && !fotosPend.size)) return;
+  if(!navigator.onLine){ state.offline = true; syncTag(); return; }
+  if(state.sessaoLocal && !(await reconectar())) return;
+  outbox.rodando = true; syncTag(); let enviados = 0; const avisos = [], ant = state.offline; state.offline = false;
+  try{
+    for(const p of [...fotosPend]){
+      const b = await idb.get("foto:" + p).catch(()=>null);
+      if(b){ const {error} = await sb.storage.from("fotos").upload(p, b, {contentType:b.type || "image/jpeg", upsert:false});
+        if(error && !/exist|duplicate/i.test(error.message||"")){ if(ehRede(error)) throw {rede:true}; avisos.push("Uma foto não pôde ser enviada: " + photoErr(error)); } }
+      fotosPend.delete(p); await idb.del("foto:" + p).catch(()=>{}); await outbox.gravar();
+    }
+    while(outbox.lista.length){
+      const it = outbox.lista[0]; outbox.enviando = it;
+      try{ if(it.op==="del") await removeNet(it.col, it.id); else await saveNet(it.col, it.id, it.data, it.versao); enviados++;
+        // editado de novo enquanto enviava: a próxima versão parte da que acabou de ser gravada
+        const prox = outbox.lista.find(x=>x!==it && x.col===it.col && x.id===it.id);
+        if(prox){ const r = state[KEY[it.col]].find(x=>x.id===it.id); prox.versao = r?._v || prox.versao; delete prox.novo; reaplicarFila(); } }
+      catch(e){ if(e && e.rede) throw e;
+        const o = it.data ? ` (OS ${it.data.os||"s/n"} de ${fdate(it.data.data||"")})` : "";
+        avisos.push((e && e.conflito ? "Alterado em outro aparelho; sua alteração feita sem internet não foi aplicada" : (e && e.message) || "Não foi aceito pelo servidor") + o);
+        if(it.op==="save" && !(e && e.conflito)) setList(KEY[it.col], state[KEY[it.col]].filter(x=>!(x.id===it.id && x._pend))); }
+      const i = outbox.lista.indexOf(it); if(i>=0) outbox.lista.splice(i,1); await outbox.gravar();
+    }
+  }catch(e){ state.offline = !!(e && e.rede) || ant; }
+  finally{ outbox.rodando = false; outbox.enviando = null; syncTag(); }
+  if(avisos.length){ state.avisosSync = avisos; toastAcao(`${avisos.length} item(ns) feitos sem internet precisam de atenção.`, "Ver", ()=>openModal(`<header><h2>Itens não enviados</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header><div class="list">${avisos.map(a=>`<div class="item" style="cursor:default"><span>⚠️</span><span>${esc(a)}</span><span></span></div>`).join("")}</div><footer><span></span><button class="btn" data-act="closeModal">Fechar</button></footer>`)); }
+  else if(enviados) toast(`${enviados} lançamento(s) feito(s) sem internet foram enviados.`);
+  if(enviados || avisos.length){ snap.agendar(); scheduleRender(); }
+}
+function syncTag(){
+  let t = $("#synctag");
+  if(!t){ const sp = document.querySelector(".topbar .spacer"); if(!sp) return; t = document.createElement("button"); t.type = "button"; t.id = "synctag"; t.dataset.act = "sincronizar"; t.hidden = true; sp.after(t); } const n = outbox.lista.length + fotosPend.size;
+  t.hidden = !n && !state.offline;
+  t.className = "synctag" + (state.offline ? " off" : "");
+  t.textContent = state.offline ? (n ? `Sem internet · ${n} a enviar` : "Sem internet") : outbox.rodando ? `Enviando ${n}…` : `${n} a enviar ⟳`;
+}
+const snap = {
+  t: 0, chave: id => "dados:" + id,
+  agendar(){ clearTimeout(this.t); this.t = setTimeout(()=>this.gravar(), 1500); },
+  async gravar(){ if(!session || !perfil || !state.ready) return;
+    try{ await idb.set(this.chave(session.user.id), {em:Date.now(), perfil, cfg:state.cfg, cfgV:state.cfgV, pub:state.pub, perfis:state.perfis, lido:state.lido, listas:Object.fromEntries(COLS.map(c=>[KEY[c], state[KEY[c]]]))}); }catch(e){} },
+  async ler(id){ try{ return await idb.get(this.chave(id)); }catch(e){ return null; } },
+  aplicar(s){ perfil = s.perfil; state.worker = perfil.papel==="funcionario"; state.me = state.worker ? (perfil.nome||"") : "";
+    if(state.worker) state.view = "worker"; else if(state.view==="worker") state.view = "painel";
+    state.cfg = deepMerge(DEFAULT_CFG, s.cfg || {}); state.cfgV = s.cfgV || null; state.pub = s.pub || null; state.perfis = s.perfis || []; state.lido = s.lido || "";
+    holCache = {}; calcCache = new WeakMap(); Object.entries(s.listas || {}).forEach(([k, v])=>setList(k, v || [])); }
+};
+// sessão guardada pelo Supabase no aparelho (para abrir sem internet mesmo com o token vencido)
+function sessaoGuardada(){ try{ for(let i=0; i<localStorage.length; i++){ const k = localStorage.key(i); if(/^sb-.*-auth-token$/.test(k)){ const v = JSON.parse(localStorage.getItem(k)); const u = v?.user || v?.currentSession?.user; if(u?.id) return {user:u}; } } }catch(e){} return null; }
+async function reconectar(){
+  try{ const {data} = await sb.auth.getSession(); if(!data.session) return false; session = data.session; state.sessaoLocal = false; return true; }catch(e){ return false; }
+}
+window.addEventListener("online", async ()=>{ if(!session) return; if(state.sessaoLocal && !(await reconectar())) return; await sincronizar(); if(!state.offline){ state.offline = false; syncTag(); atualizar(); } });
+window.addEventListener("offline", ()=>{ state.offline = true; syncTag(); });
+window.addEventListener("pagehide", ()=>{ clearTimeout(snap.t); snap.gravar(); });
+document.addEventListener("visibilitychange", ()=>{ if(document.hidden){ clearTimeout(snap.t); snap.gravar(); } });
+setInterval(()=>{ if(outbox.lista.length || fotosPend.size) sincronizar(); }, 60000);
 const removeAp = e => removeDoc("apontamentos", e.id);
 async function saveCfg(cfg){
   holCache = {}; calcCache = new WeakMap(); const d = clone(cfg); delete d._v;
   const {data:v, error} = await sb.rpc("salvar_doc", {p_tabela:"config", p_id:"main", p_data:d, p_versao:state.cfgV||null});
   if(error){ const e = dbErr(error); if(e.conflito){ await recarregarDoc("config").catch(()=>{}); e.message = "A configuração foi alterada em outro aparelho. Recarreguei a versão mais nova: refaça sua alteração."; } throw e; }
-  state.cfgV = v;
+  state.cfgV = v; snap.agendar();
 }
 async function loadOwner(){
   const g = state.gen;
@@ -317,6 +423,7 @@ async function loadOwnerInc(){
   COLS.forEach((c,i)=>{ if(!rows[i].length) return; const k = KEY[c], novos = rows[i].map(doRow), ids = new Set(novos.map(x=>x.id));
     setList(k, [...state[k].filter(x=>!ids.has(x.id)), ...novos.filter(x=>!(c==="apontamentos" && x.excluido))]); });
   (exc.data||[]).forEach(x=>{ const k = KEY[x.tabela]; if(k) setList(k, state[k].filter(y=>y.id!==x.registro_id)); });
+  if(outbox.lista.length) reaplicarFila();
   return true;
 }
 async function loadWorker(){
@@ -326,27 +433,39 @@ async function loadWorker(){
   if(g!==state.gen) return false;
   state.pub = pc.data || {}; state.cfg = deepMerge(DEFAULT_CFG, state.pub.cfg || {}); holCache = {}; calcCache = new WeakMap();
   setList("ap", (os.data||[]).map(r=>({id:r.id, ...r.data})));
+  if(outbox.lista.length) reaplicarFila();
   return true;
 }
 async function carregar(){
   if(!session || !perfil) return;
   if(perfil.papel==="funcionario") await loadWorker(); else if(perfil.papel==="dono") await loadOwner();
+  if(outbox.lista.length) reaplicarFila();
 }
 async function boot(){
   state.ready = false; render();
+  await outbox.carregar();
   try{
+    if(state.sessaoLocal) throw {rede:true};
     const {data, error} = await sb.from("perfis").select("*").eq("user_id", session.user.id).maybeSingle();
     if(error) throw error;
     perfil = data;
     state.worker = perfil?.papel==="funcionario"; state.me = state.worker ? (perfil.nome||"") : "";
     if(state.worker) state.view = "worker"; else if(state.view==="worker") state.view = "painel";
-    await carregar();
-    await pushEstado();
-  }catch(err){ toast("Não consegui carregar os dados. Verifique a conexão e recarregue a página."); }
-  state.ready = true; render();
+    if(outbox.lista.length || fotosPend.size) await sincronizar();
+    await carregar(); state.offline = false;
+    pushEstado().catch(()=>{});
+  }catch(err){
+    const s = (err && err.rede) || ehRede(err) ? await snap.ler(session.user.id) : null;
+    if(s && s.perfil){ snap.aplicar(s); state.offline = true; reaplicarFila(); toast("Sem internet: mostrando os dados salvos neste aparelho. O que você lançar será enviado quando a conexão voltar."); }
+    else toast("Não consegui carregar os dados. Verifique a conexão e recarregue a página.");
+  }
+  state.ready = true; render(); syncTag(); snap.agendar();
 }
+// itens ainda na fila aparecem na tela mesmo depois de recarregar os dados
+function reaplicarFila(){ outbox.lista.forEach(it=>{ const k = KEY[it.col]; if(!k) return; if(it.op==="del") setList(k, state[k].filter(x=>x.id!==it.id)); else upsertLocal(k, {...it.data, id:it.id, _pend:true, ...(it.versao?{_v:it.versao}:{})}); }); }
 async function initStore(){
-  const {data} = await sb.auth.getSession(); session = data.session;
+  let r = null; try{ r = await sb.auth.getSession(); }catch(e){} session = r?.data?.session || null;
+  if(!session && !navigator.onLine){ const s = sessaoGuardada(); if(s){ session = s; state.sessaoLocal = true; } }
   sb.auth.onAuthStateChange((ev, s)=>{
     const tinha = !!session; session = s;
     if(ev==="PASSWORD_RECOVERY"){ state.auth = "nova-senha"; state.ready = true; render(); return; }
@@ -361,7 +480,8 @@ let recarregando = false;
 async function atualizar(){
   if(document.hidden || recarregando || !session || !perfil || !state.ready || !$("#modal").hidden || ["orcEdit","ajustes"].includes(state.view)) return;
   recarregando = true;
-  try{ const ok = perfil.papel==="dono" ? await loadOwnerInc() : perfil.papel==="funcionario" ? await loadWorker() : false; if(ok) scheduleRender(); else if(ok===false) setTimeout(atualizar, 3000); }
+  if(outbox.lista.length || fotosPend.size){ await sincronizar(); if(state.offline || outbox.lista.length){ recarregando = false; return; } }
+  try{ const ok = perfil.papel==="dono" ? await loadOwnerInc() : perfil.papel==="funcionario" ? await loadWorker() : false; if(ok){ if(state.offline){ state.offline = false; syncTag(); } scheduleRender(); } else if(ok===false) setTimeout(atualizar, 3000); }
   catch(e){} finally{ recarregando = false; }
 }
 document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) atualizar(); });
@@ -370,7 +490,11 @@ setInterval(atualizar, 300000);
 const assets = {
   async upload(blob, {type}){
     const path = `${session.user.id}/${uid()}.${type==="image/png"?"png":type==="image/webp"?"webp":type==="image/gif"?"gif":"jpg"}`;
-    const {error} = await sb.storage.from("fotos").upload(path, blob, {contentType:type, upsert:false});
+    let error = null;
+    if(state.offline || !navigator.onLine) error = {message:"offline"}; else try{ ({error} = await sb.storage.from("fotos").upload(path, blob, {contentType:type, upsert:false})); }catch(e){ error = e; }
+    if(error && (state.offline || ehRede(error) || error.message==="offline")){ // guarda no aparelho e envia depois
+      await idb.set("foto:" + path, blob); fotosPend.add(path); await outbox.gravar(); assetUrls[path] = URL.createObjectURL(blob); agendarSync(5000);
+      return {id:path, url:assetUrls[path]}; }
     if(error) throw {code:/size/i.test(error.message)?"too_large":/mime|type/i.test(error.message)?"unsupported_type":"upstream_error", message:error.message};
     await assinarFotos([path]);
     return {id:path, url:assetUrls[path]};
@@ -550,7 +674,7 @@ function apItem(e, showDate, bad){
   const c = calc(e), lk = lockedE(e), nf = (e.fotos||[]).length;
   return `<button class="item" data-act="editAp" data-id="${esc(e.id)}">
     <span class="t">${showDate?`${fdate(e.data).slice(0,5)}<br>`:""}${esc(e.inicio)}–${e.andamento?"…":esc(e.fim)}</span>
-    <span class="main"><b>${e.os?`OS ${esc(e.os)}`:"Sem nº de OS"}${e.andamento?' <span class="pill info">Em andamento</span>':""}${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.exemplo?' <span class="pill">Exemplo</span>':""}</b>
+    <span class="main"><b>${e.os?`OS ${esc(e.os)}`:"Sem nº de OS"}${e.andamento?' <span class="pill info">Em andamento</span>':""}${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.exemplo?' <span class="pill">Exemplo</span>':""}${e._pend?' <span class="pill warn" title="Será enviado quando a internet voltar">⏳ a enviar</span>':""}</b>
       <span class="sub">${esc(e.descricao||"")}</span>
       <span class="sub" style="display:block">${[empOf(e), e.cliente].filter(Boolean).map(esc).join(" · ")}</span>
       ${e.profissional && !state.worker?`<span class="sub" style="display:block"><b style="display:inline;font-weight:600;color:var(--fg)">${esc(e.profissional)}</b></span>`:""}
@@ -2422,10 +2546,12 @@ const A = {
     state.perfis = state.perfis.map(p=>p.user_id===b.dataset.uid ? {...p, papel:"bloqueado"} : p); toast("Acesso bloqueado."); state.rendered=null; render(); $("#acessos")?.scrollIntoView(); },
   async reverificar(){ if(session) await boot(); },
   async sair(b){
+    const pend = outbox.lista.length + fotosPend.size;
+    if(pend){ toast(`Há ${pend} item(ns) feitos sem internet ainda não enviados. Conecte-se e espere o envio antes de sair.`); sincronizar(); return; }
     if(b && !b.dataset.armed){ b.dataset.armed="1"; b.title="Toque de novo para sair"; toast("Toque de novo em Sair para confirmar."); setTimeout(()=>{ if(b) delete b.dataset.armed; }, 4000); return; }
     closeModal();
     try{ if(pushSuportado()){ const reg = await navigator.serviceWorker.getRegistration("/sw.js"); const sub = await reg?.pushManager.getSubscription(); if(sub){ await sb.from("push_inscricoes").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); } } }catch(err){}
-    state.pushOn = false; rascunho.limpar(); await sb.auth.signOut(); },
+    state.pushOn = false; rascunho.limpar(); try{ await idb.del(snap.chave(session.user.id)); }catch(e){} await sb.auth.signOut(); },
   newOrc(){ state.orcDraft = newOrcDraft(); state.orcDirty=false; state.view="orcEdit"; state.rendered=null; render(); window.scrollTo(0,0); },
   editOrc(b){ const o = state.orc.find(x=>x.id===b.dataset.id); if(!o) return; state.orcDraft = deepMerge(newOrcDraft(), clone(o)); state.orcDraft.itens = clone(o.itens||[]); state.orcDirty=false; state.view="orcEdit"; state.rendered=null; render(); window.scrollTo(0,0); },
   addItem(b){ const t=b.dataset.t; const o=state.orcDraft; o.itens.push(t==="mo"?{tipo:"mo",desc:"Mão de obra",un:"h",qtd:"",valor:String(state.cfg.valorHora)}:t==="mat"?{tipo:"mat",desc:"",un:"pç",qtd:"1",valor:""}:{tipo:"srv",desc:"",un:"vb",qtd:"1",valor:""}); $("#items").innerHTML=itemsHtml(o); $("#orcTotals").innerHTML=totalsHtml(o); state.orcDirty=true; const ins=$("#items").querySelectorAll('[data-f="desc"]'); ins[ins.length-1]?.focus(); },
@@ -2438,6 +2564,7 @@ const A = {
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("recebimentos", y); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   recarregar(){ location.reload(); },
+  sincronizar(){ if(!navigator.onLine){ toast("Sem internet. Os itens serão enviados sozinhos quando a conexão voltar."); return; } sincronizar(); },
   async fechAprov(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return;
     if(f.aprovacao){ const a = f.aprovacao, linhas = (f.snap?.aps||[]);
       openModal(`<header><h2>Aprovação · ${esc(f.numero)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
@@ -2626,4 +2753,5 @@ const A = {
 document.addEventListener("click", e=>{ const b = e.target.closest("[data-act]"); if(!b) return; const f = A[b.dataset.act]; if(f){ if(b.tagName==="BUTTON" && b.type!=="submit") e.preventDefault(); f(b,e); } });
 
 renderNav();
+if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
 initStore();

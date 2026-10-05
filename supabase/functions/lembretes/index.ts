@@ -3,6 +3,8 @@
 // Envia ~20 min depois do fim da jornada do dia:
 //   - funcionário: "Você ainda não lançou as OS de hoje" / OS com cronômetro aberto
 //   - responsável: quem ficou sem lançar hoje, cronômetros abertos e cadastros aguardando liberação
+// E ~30 min depois do início da jornada, só para o responsável ("Para fazer hoje"):
+//   medições vencidas ou vencendo, nota fiscal a emitir, documentos vencendo e preventivas atrasadas
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 import webpush from "npm:web-push@3.6.7";
@@ -39,6 +41,50 @@ function ehFeriado(dia: string, fer: any = {}) {
   return false;
 }
 const JORNADA_PADRAO: Record<string, { ini: string; fim: string }> = { "1": { ini: "07:00", fim: "16:00" }, "2": { ini: "07:00", fim: "16:00" }, "3": { ini: "07:00", fim: "16:00" }, "4": { ini: "07:00", fim: "16:00" }, "5": { ini: "07:00", fim: "16:00" }, "6": { ini: "07:00", fim: "11:00" } };
+
+const num = (v: unknown) => { if (typeof v === "number") return isFinite(v) ? v : 0; const t = String(v ?? ""); const n = parseFloat(t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t); return isFinite(n) ? n : 0; };
+const somaDias = (d: string, n: number) => ymd(new Date(Date.parse(d.slice(0, 10) + "T12:00:00Z") + n * 864e5));
+const dif = (a: string, b: string) => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a.slice(0, 10) + "T12:00:00Z")) / 864e5);
+const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+async function alertasManha(sb: any, cfg: any, dia: string): Promise<string[]> {
+  const out: string[] = [];
+  const [{ data: fechs }, { data: recs }, { data: docs }, { data: eqs }] = await Promise.all([
+    sb.from("fechamentos").select("id, data"), sb.from("recebimentos").select("data"),
+    sb.from("documentos").select("data"), sb.from("equipamentos").select("id, data"),
+  ]);
+  const rec = (recs ?? []).map((r: any) => r.data);
+  for (const { id, data: f } of fechs ?? []) {
+    const recebido = rec.filter((r: any) => r.origem === "fech" && r.fechId === id).reduce((s: number, r: any) => s + num(r.valor) + ["iss", "inss", "ir", "outras"].reduce((t, k) => t + num(r.ret?.[k]), 0), 0);
+    const glosa = (f.glosas ?? []).reduce((s: number, g: any) => s + num(g.valor), 0);
+    const saldo = Math.round(((+f.valor || 0) + (+f.reemb || 0) - glosa - recebido) * 100) / 100;
+    if (saldo > 0.005) {
+      const pz = (cfg.contratantes ?? {})[f.empresa || cfg.contratante || ""]?.prazo;
+      const venc = f.vencimento || somaDias(f.enviadoEm || f.ate || dia, pz == null || pz === "" ? 30 : +pz);
+      const d = dif(venc, dia);
+      if (d > 0) out.push(`${f.numero} vencido há ${d} dia(s): ${brl(saldo)}`);
+      else if (d >= -3) out.push(`${f.numero} vence ${d === 0 ? "hoje" : `em ${-d} dia(s)`}: ${brl(saldo)}`);
+      if ((!f.nf || !f.nf.numero || f.nf.status === "emitir") && dif(f.enviadoEm || f.ate || dia, dia) >= 2) out.push(`${f.numero}: emitir nota fiscal`);
+    }
+  }
+  for (const { data: x } of docs ?? []) {
+    if (!x.validade) continue; const d = dif(dia, x.validade);
+    if (d < 0) out.push(`${x.tipo} de ${x.titular || "Empresa"} vencido`); else if (d <= 30 && (d % 7 === 0 || d <= 3)) out.push(`${x.tipo} de ${x.titular || "Empresa"} vence em ${d} dia(s)`);
+  }
+  if ((eqs ?? []).length) {
+    const ids = (eqs ?? []).map((q: any) => q.id);
+    const { data: aps } = await sb.from("apontamentos").select("dia, data->>equipId, data->>prevId").in("data->>equipId", ids);
+    for (const { id, data: q } of eqs ?? []) {
+      if (q.inativo) continue;
+      for (const pl of q.plano ?? []) {
+        const ult = (aps ?? []).filter((a: any) => a.equipId === id && a.prevId === pl.id).map((a: any) => a.dia).sort().pop();
+        if (!ult) continue;
+        const d = dif(somaDias(ult, +pl.cadaDias || 30), dia);
+        if (d > 0) out.push(`Preventiva ${q.tag} (${pl.atividade}) atrasada ${d} dia(s)`);
+      }
+    }
+  }
+  return out;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -78,6 +124,23 @@ Deno.serve(async (req) => {
   const fim = hm(jor.fim), ini = hm(jor.ini);
   const resultado: any = { dia, min, fim, acao: "nada" };
   if (dow === 0 || ehFeriado(dia, cfg.feriados) || fim == null || ini == null) { resultado.acao = "dia sem jornada"; return json(resultado); }
+  const manha = body?.manha || (!body?.forcar && min >= ini + 30 && min < ini + 45);
+  if (manha) {
+    const R = await alertasManha(sb, cfg, dia);
+    resultado.alertas = R;
+    if (!R.length) { resultado.acao = "manha: nada"; return json(resultado); }
+    const { data: perfis } = await sb.from("perfis").select("user_id, papel").eq("papel", "dono");
+    const { data: ja } = await sb.from("lembretes_enviados").select("user_id").eq("dia", dia).eq("tipo", "manha");
+    const corpo = R.length === 1 ? R[0] : `${R.slice(0, 3).join(" · ")}${R.length > 3 ? ` (+${R.length - 3})` : ""}`;
+    if (body?.simular) { resultado.acao = "manha: simulado"; resultado.body = corpo; return json(resultado); }
+    let enviados = 0;
+    for (const d of perfis ?? []) {
+      if ((ja ?? []).some((x: any) => x.user_id === d.user_id)) continue;
+      enviados += await enviar([d.user_id], { title: `Para fazer hoje (${R.length})`, body: corpo, url: "/" });
+      await sb.from("lembretes_enviados").upsert({ dia, user_id: d.user_id, tipo: "manha" });
+    }
+    resultado.acao = "manha: enviado"; resultado.enviados = enviados; return json(resultado);
+  }
   const hora = body?.forcar || (min >= fim + 20 && min < fim + 35);
   if (!hora) return json(resultado);
 
