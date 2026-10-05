@@ -9,6 +9,7 @@ const DEFAULT_CFG = {
   feriados:{carnaval:false,corpus:false,extras:"31/07 Aniversário de Anápolis"},
   tolerancia:5, profissionais:"", unidades:"", empresas:"Brejeiro", custos:{}, taxas:{}, carimbo:true
 };
+const pct50 = () => state.worker ? "" : state.cfg.extraPct+"%", pct100 = () => state.worker ? "" : state.cfg.feriadoPct+"%";
 const WD = ["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"];
 const WDS = ["dom","seg","ter","qua","qui","sex","sáb"];
 const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
@@ -27,7 +28,7 @@ const parseYmd = s => { const [y,m,d] = s.split("-").map(Number); return new Dat
 const addDays = (d,n) => new Date(d.getFullYear(), d.getMonth(), d.getDate()+n);
 const today = () => ymd(new Date());
 const nowHM = () => { const d=new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
-const hm = s => { if(!s) return null; const [h,m]=s.split(":").map(Number); return h*60+m; };
+const hm = s => { if(!s) return null; const m = String(s).match(/^(\d{1,2}):(\d{2})$/); return m ? (+m[1])*60 + (+m[2]) : null; };
 const fh = m => `${Math.floor(m/60)}h${pad(Math.round(m%60))}`;
 const fdec = m => (m/60).toFixed(2).replace(".",",");
 const lines = s => String(s||"").split("\n").map(x=>x.trim()).filter(Boolean);
@@ -200,7 +201,7 @@ const state = {
 };
 const sb = window.supabase.createClient(window.GAAP_CONFIG.supabaseUrl, window.GAAP_CONFIG.supabaseKey, {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:true}});
 let session = null, perfil = null;
-const MSG_DB = {SEM_PERMISSAO:"Seu acesso ainda não foi liberado para lançar OS. Fale com o responsável.", NAO_E_SEU:"Esse lançamento não é seu.", DATA_INVALIDA:"Data inválida.", OS_OBRIGATORIA:"Essa contratante exige o nº da OS.", NOME_VAZIO:"Digite o novo nome."};
+const MSG_DB = {SEM_PERMISSAO:"Seu acesso ainda não foi liberado para lançar OS. Fale com o responsável.", NAO_E_SEU:"Esse lançamento não é seu.", DATA_INVALIDA:"Data inválida.", HORA_INVALIDA:"Horário inválido. Use HH:MM.", ID_INVALIDO:"Código de registro inválido.", DADOS_INVALIDOS:"Dados inválidos.", OS_OBRIGATORIA:"Essa contratante exige o nº da OS.", NOME_VAZIO:"Digite o novo nome."};
 function dbErr(error){
   const m = String(error?.message||"");
   if(m.startsWith("PERIODO_FECHADO:")) return {code:"db", message:`Esse período já foi fechado (${m.split(":")[1]}). Fale com o responsável.`};
@@ -364,7 +365,8 @@ function render(){
   if(!sessOk()){ document.body.classList.add("locked"); v.innerHTML = vLogin(); state.rendered = "login"; const f = $("#lg-email") || $("#lg-senha"); if(f && window.innerWidth>700) f.focus(); return; }
   document.body.classList.remove("locked");
   const fn = state.worker ? vWorker : ({painel:vPainel, horas:vHoras, relatorios:vRelatorios, orcamentos:vOrcamentos, orcEdit:vOrcEdit, financeiro:vFinanceiro, ajustes:vAjustes}[state.view] || vPainel);
-  v.innerHTML = cronoBar() + fn();
+  try{ v.innerHTML = cronoBar() + fn(); }
+  catch(err){ console.error(err); v.innerHTML = `<div class="empty"><b>Não consegui mostrar esta tela.</b>Algum registro está com dado inválido. Toque em Atualizar; se continuar, me avise.<div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" data-act="recarregar">Atualizar</button></div></div>`; }
   state.rendered = state.view;
   if(state.view==="painel") drawChart();
   if(state.view==="relatorios") renderReport();
@@ -382,8 +384,8 @@ function exampleBanner(){
 function monthNav(){ return `<div class="monthnav"><button data-act="month" data-d="-1" aria-label="Mês anterior">‹</button><span>${ymLabel(state.month)}</span><button data-act="month" data-d="1" aria-label="Próximo mês">›</button></div>`; }
 function bucketChips(c){
   const out=[]; if(c.n) out.push(`<span class="pill"><i class="dot d-n"></i>${fh(c.n)} normal</span>`);
-  if(c.e50) out.push(`<span class="pill"><i class="dot d-50"></i>${fh(c.e50)} extra ${state.cfg.extraPct}%</span>`);
-  if(c.e100) out.push(`<span class="pill"><i class="dot d-100"></i>${fh(c.e100)} extra ${state.cfg.feriadoPct}%</span>`);
+  if(c.e50) out.push(`<span class="pill"><i class="dot d-50"></i>${fh(c.e50)} extra ${pct50()}</span>`);
+  if(c.e100) out.push(`<span class="pill"><i class="dot d-100"></i>${fh(c.e100)} extra ${pct100()}</span>`);
   return out.join("");
 }
 /* ---------- fechamentos, fotos e orçamentos ligados ---------- */
@@ -453,7 +455,7 @@ document.addEventListener("change", async e=>{
 });
 function apItem(e, showDate, bad){
   const c = calc(e), lk = lockedE(e), nf = (e.fotos||[]).length;
-  return `<button class="item" data-act="editAp" data-id="${e.id}">
+  return `<button class="item" data-act="editAp" data-id="${esc(e.id)}">
     <span class="t">${showDate?`${fdate(e.data).slice(0,5)}<br>`:""}${esc(e.inicio)}–${e.andamento?"…":esc(e.fim)}</span>
     <span class="main"><b>${e.os?`OS ${esc(e.os)}`:"Sem nº de OS"}${e.andamento?' <span class="pill info">Em andamento</span>':""}${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.exemplo?' <span class="pill">Exemplo</span>':""}</b>
       <span class="sub">${esc(e.descricao||"")}</span>
@@ -490,7 +492,7 @@ function dimTable(list, k, opt={}){
   const t = sumCalc(list), lu = opt.lucro && temCustos();
   const pc = (v,c) => v>0 ? Math.round(100*(v-c)/v)+"%" : "-";
   const cells = (rows, c) => { const cu = lu ? custoSum(rows.filter(e=>!e.orcId)) : 0; return `<td class="r mono">${rows.length}</td><td class="r mono">${fdec(c.total)}</td><td class="r mono">${fdec(c.e50)}</td><td class="r mono">${fdec(c.e100)}</td><td class="r mono">${brl(c.valor)}</td>${lu?`<td class="r mono">${brl(cu)}</td><td class="r mono"><b>${brl(c.valor-cu)}</b></td><td class="r mono">${pc(c.valor,cu)}</td>`:""}`; };
-  return `<div class="tablewrap"><table><thead><tr><th>${DIMS[k].label}</th><th class="r">OS</th><th class="r">Horas</th><th class="r">Extra ${state.cfg.extraPct}%</th><th class="r">Extra ${state.cfg.feriadoPct}%</th><th class="r">Faturado</th>${lu?'<th class="r">Custo equipe</th><th class="r">Lucro</th><th class="r">Margem</th>':""}</tr></thead>
+  return `<div class="tablewrap"><table><thead><tr><th>${DIMS[k].label}</th><th class="r">OS</th><th class="r">Horas</th><th class="r">Extra ${pct50()}</th><th class="r">Extra ${pct100()}</th><th class="r">Faturado</th>${lu?'<th class="r">Custo equipe</th><th class="r">Lucro</th><th class="r">Margem</th>':""}</tr></thead>
   <tbody>${groups.map(g=>`<tr><td>${esc(g.label)}</td>${cells(g.rows, sumCalc(g.rows))}</tr>`).join("")}</tbody>
   ${groups.length>1?`<tfoot><tr><td>Total</td>${cells(list, t)}</tr></tfoot>`:""}</table></div>`;
 }
@@ -549,7 +551,7 @@ function vWorker(){
   return `<div class="pagehead"><div><span class="eyebrow">Olá, ${esc(me)}</span><h1>Minhas OS</h1><p class="muted">Lance cada OS com o horário de início e de término.</p></div>
     <div class="row">${monthNav()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button><button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
   ${confHtml(conferencia(ymd(addDays(parseYmd(today()),-7)), today(), me), "Faltou lançar?", 5)}
-  <div class="summary"><span><b>${list.length}</b> OS</span><span><i class="dot d-n"></i>Normal <b>${fdec(c.n)} h</b></span><span><i class="dot d-50"></i>Extra ${state.cfg.extraPct}% <b>${fdec(c.e50)} h</b></span><span><i class="dot d-100"></i>Extra ${state.cfg.feriadoPct}% <b>${fdec(c.e100)} h</b></span><span>Total <b>${fdec(c.total)} h</b></span></div>
+  <div class="summary"><span><b>${list.length}</b> OS</span><span><i class="dot d-n"></i>Normal <b>${fdec(c.n)} h</b></span><span><i class="dot d-50"></i>Extra ${pct50()} <b>${fdec(c.e50)} h</b></span><span><i class="dot d-100"></i>Extra ${pct100()} <b>${fdec(c.e100)} h</b></span><span>Total <b>${fdec(c.total)} h</b></span></div>
   ${list.length ? `<div class="list">${Object.keys(byDay).sort().reverse().map(d=>`<div class="dayhead"><span>${WD[parseYmd(d).getDay()]}, ${fdate(d)}</span><span class="mono">${fdec(sumCalc(byDay[d]).total)} h</span></div>${byDay[d].sort((a,b)=>a.inicio.localeCompare(b.inicio)).map(e=>apItem(e,false,overlaps(byDay[d]))).join("")}`).join("")}</div>`
     : `<div class="empty"><b>Nenhuma OS em ${ymLabel(state.month)}</b>Toque em “Lançar OS do dia” para registrar suas ordens de serviço.</div>`}
   <div style="margin-top:16px">${lembretesHtml()}</div>
@@ -591,7 +593,7 @@ function vPainel(){
     <div class="kpi"><span class="eyebrow">Orçamentos enviados</span><span class="v">${abertos.length}</span><span class="s">${brl(abertosV)} aguardando${taxa!=null?` · ${taxa}% aprovados`:""}</span></div>
   </div>
   <section class="section"><header><h2>Valor por dia em ${ymLabel(state.month)}</h2>
-    <div class="legend"><span><i class="dot d-n"></i>Normal</span><span><i class="dot d-50"></i>Extra ${state.cfg.extraPct}%</span><span><i class="dot d-100"></i>Domingo/feriado ${state.cfg.feriadoPct}%</span></div></header>
+    <div class="legend"><span><i class="dot d-n"></i>Normal</span><span><i class="dot d-50"></i>Extra ${pct50()}</span><span><i class="dot d-100"></i>Domingo/feriado ${pct100()}</span></div></header>
     <div class="panel"><div class="chartwrap" id="chart"></div></div></section>
   ${confHtml(conferencia(ymd(addDays(parseYmd(today()),-14)), today()), "Conferência dos últimos 14 dias")}
   ${painelDims(mAp)}
@@ -647,8 +649,8 @@ function drawChart(){
     const d = days[+h.dataset.i]; const hol = holidayName(d.ds);
     tip.innerHTML = `<div class="h">${WD[parseYmd(d.ds).getDay()]}, ${fdate(d.ds)}</div>${hol?`<div class="muted">${esc(hol)}</div>`:""}
       <div><span><i class="dot d-n"></i> Normal ${fh(d.c.n)}</span><span class="mono">${brl(d.c.vn)}</span></div>
-      <div><span><i class="dot d-50"></i> Extra ${state.cfg.extraPct}% ${fh(d.c.e50)}</span><span class="mono">${brl(d.c.v50)}</span></div>
-      <div><span><i class="dot d-100"></i> Extra ${state.cfg.feriadoPct}% ${fh(d.c.e100)}</span><span class="mono">${brl(d.c.v100)}</span></div>
+      <div><span><i class="dot d-50"></i> Extra ${pct50()} ${fh(d.c.e50)}</span><span class="mono">${brl(d.c.v50)}</span></div>
+      <div><span><i class="dot d-100"></i> Extra ${pct100()} ${fh(d.c.e100)}</span><span class="mono">${brl(d.c.v100)}</span></div>
       <div style="border-top:1px solid var(--line);margin-top:4px;padding-top:4px"><b>${d.n} OS · ${fh(d.c.total)}</b><b class="mono">${brl(d.c.valor)}</b></div>`;
     tip.hidden = false;
     const r = box.getBoundingClientRect(); let x = ev.clientX - r.left + 12; if(x+190 > r.width) x = ev.clientX - r.left - 200; tip.style.left = Math.max(0,x)+"px"; tip.style.top = "6px";
@@ -673,7 +675,7 @@ function vHoras(){
     <div class="row">${monthNav()}<button class="btn" data-act="newAp">+ Uma OS</button><button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
   ${hmodeChips()}
   <div class="panel filtergrid" style="margin-bottom:12px">${filterBar("h", H.f, H.by)}</div>
-  <div class="summary"><span><b>${list.length}</b> apontamentos</span><span><i class="dot d-n"></i>Normal <b>${fh(c.n)}</b></span><span><i class="dot d-50"></i>Extra ${state.cfg.extraPct}% <b>${fh(c.e50)}</b></span><span><i class="dot d-100"></i>Extra ${state.cfg.feriadoPct}% <b>${fh(c.e100)}</b></span><span>Total <b>${fh(c.total)}</b></span><span>Valor <b>${brl(c.valor)}</b></span></div>
+  <div class="summary"><span><b>${list.length}</b> apontamentos</span><span><i class="dot d-n"></i>Normal <b>${fh(c.n)}</b></span><span><i class="dot d-50"></i>Extra ${pct50()} <b>${fh(c.e50)}</b></span><span><i class="dot d-100"></i>Extra ${pct100()} <b>${fh(c.e100)}</b></span><span>Total <b>${fh(c.total)}</b></span><span>Valor <b>${brl(c.valor)}</b></span></div>
   ${!list.length ? `<div class="empty"><b>Nenhum apontamento em ${ymLabel(state.month)}${all.length?" com esses filtros":""}</b>Use “Lançar OS do dia” para registrar as OS com o horário de cada uma.</div>`
    : H.by ? `${dimTable(list, H.by)}${groups.map(g=>{ const gc=sumCalc(g.rows); return `<section class="section"><header><h2>${esc(g.label)}</h2><span class="mono muted">${g.rows.length} OS · ${fdec(gc.total)} h · ${brl(gc.valor)}</span></header><div class="list">${dayList(g.rows)}</div></section>`; }).join("")}`
    : `<div class="list">${dayList(list)}</div>`}`;
@@ -752,7 +754,7 @@ function apForm(e){
       <input type="file" id="f-foto-antes" data-tipo="antes" accept="image/*" multiple hidden><input type="file" id="f-foto" data-tipo="durante" accept="image/*" multiple hidden><input type="file" id="f-foto-depois" data-tipo="depois" accept="image/*" multiple hidden></div></div>`:""}
     <div id="f-prev" class="preview"></div>
     ${!isNew && !state.worker?`<details class="fichabox" id="f-hist" data-id="${esc(e.id)}"><summary>Histórico de alterações</summary><div class="muted" id="f-hist-box">Carregando…</div></details>`:""}
-    <footer>${isNew?"<span></span>":`<button type="button" class="btn danger" data-act="delAp" data-id="${e.id}">Excluir</button>`}
+    <footer>${isNew?"<span></span>":`<button type="button" class="btn danger" data-act="delAp" data-id="${esc(e.id)}">Excluir</button>`}
       <span class="row">${isNew?"":`<button type="button" class="btn" data-act="dupAp">Duplicar</button>`}<button class="btn primary" type="submit">${isNew?"Salvar apontamento":"Salvar alterações"}</button></span></footer>
   </form>`;
 }
@@ -795,10 +797,10 @@ function updateApPreview(){
   const who = $("#f-prof1") ? [e.profissional] : (selProfs().length ? selProfs() : [""]);
   const ov = who.some(pr=>overlaps([...sameDay.filter(x=>(x.profissional||"")===pr), {...e, profissional:pr, id:"__new"}]).has("__new"));
   p.innerHTML = `${hm(e.fim)<=hm(e.inicio)?`<div class="muted">Término no dia seguinte (virada de meia-noite).</div>`:""}
-    ${wd===0||hol?`<div class="muted">${hol?esc(hol):"Domingo"}: horas contam como extra ${state.cfg.feriadoPct}%.</div>`:""}
+    ${wd===0||hol?`<div class="muted">${hol?esc(hol):"Domingo"}: horas contam como extra ${pct100()}.</div>`:""}
     ${c.n?`<div class="line"><span><i class="dot d-n"></i> Normal ${fh(c.n)}</span><span class="mono">${money(c.vn)}</span></div>`:""}
-    ${c.e50?`<div class="line"><span><i class="dot d-50"></i> Extra ${state.cfg.extraPct}% ${fh(c.e50)}</span><span class="mono">${money(c.v50)}</span></div>`:""}
-    ${c.e100?`<div class="line"><span><i class="dot d-100"></i> Extra ${state.cfg.feriadoPct}% ${fh(c.e100)}</span><span class="mono">${money(c.v100)}</span></div>`:""}
+    ${c.e50?`<div class="line"><span><i class="dot d-50"></i> Extra ${pct50()} ${fh(c.e50)}</span><span class="mono">${money(c.v50)}</span></div>`:""}
+    ${c.e100?`<div class="line"><span><i class="dot d-100"></i> Extra ${pct100()} ${fh(c.e100)}</span><span class="mono">${money(c.v100)}</span></div>`:""}
     <div class="line tot"><span>Total ${fh(c.total)}</span><span class="mono">${c.orc && !state.worker ? "serviço de orçamento" : money(c.valor)}</span></div>
     ${lockOf(e.data, empOf(e))?`<div class="warnbox">${esc(lockMsg(lockOf(e.data, empOf(e))))}</div>`:""}
     ${ov?`<div class="warnbox">Esse horário se sobrepõe a outro apontamento do mesmo profissional nesse dia.</div>`:""}`;
@@ -915,7 +917,7 @@ function updateDay(){
   });
   const nWho = Math.max(1, who.length);
   $("#d-tot").innerHTML = rows.length ? `<div class="line"><span>${rows.length} OS no dia${who.length>1?` · por profissional`:""}</span><span class="mono">${fdec(tot.total)} h</span></div>
-    <div class="line"><span class="muted">Normal ${fdec(tot.n)} h · Extra ${state.cfg.extraPct}% ${fdec(tot.e50)} h${tot.e100?` · Extra ${state.cfg.feriadoPct}% ${fdec(tot.e100)} h`:""}</span><span class="mono">${d.orcId||state.worker ? "" : brl(tot.valor)}</span></div>
+    <div class="line"><span class="muted">Normal ${fdec(tot.n)} h · Extra ${pct50()} ${fdec(tot.e50)} h${tot.e100?` · Extra ${pct100()} ${fdec(tot.e100)} h`:""}</span><span class="mono">${d.orcId||state.worker ? "" : brl(tot.valor)}</span></div>
     ${who.length>1 && !d.orcId?`<div class="line tot"><span>${who.length} profissionais</span><span class="mono">${brl(tot.valor*nWho)}</span></div>`:""}
     ${d.orcId?`<div class="muted">Serviço de orçamento: as horas contam para acompanhar a obra, não para cobrança por hora.</div>`:""}` : `<span class="muted">Para cada OS, informe o número, o horário de início e o de término.</span>`;
   const n = rows.length * nWho;
@@ -1128,7 +1130,7 @@ function repText(){
     repDays(rows).filter(d=>d.rows.length).forEach(d=>{
       const hol = holidayName(d.data);
       L.push("", `*${WDL[parseYmd(d.data).getDay()]}, ${fdate(d.data)}${hol?` - Feriado: ${hol}`:""}*`);
-      d.rows.forEach(e=>{ const c=calc(e); const x = [c.e50?`${repH(c.e50)} a ${state.cfg.extraPct}%`:"", c.e100?`${repH(c.e100)} a ${state.cfg.feriadoPct}%`:""].filter(Boolean).join(", ");
+      d.rows.forEach(e=>{ const c=calc(e); const x = [c.e50?`${repH(c.e50)} a ${pct50()}`:"", c.e100?`${repH(c.e100)} a ${pct100()}`:""].filter(Boolean).join(", ");
         L.push(`• OS ${e.os||"s/n"} | ${e.inicio} às ${e.fim} | ${repH(c.total)} h${x?` (extra: ${x})`:""}${repExtra(e,C).filter(Boolean).map(z=>" | "+z).join("")}${descRep(e)?"\n   "+descRep(e):""}`); });
     });
     L.push("", "*RESUMO DE HORAS*");
@@ -1174,7 +1176,8 @@ function repFileTag(){
   const r = state.rep, f = Object.keys(DIMS).filter(k=>r.f[k]!==ALL).map(k=>slug(r.f[k]));
   return [...f, r.by?`por-${slug(DIMS[r.by].label)}`:"", r.modo==="dia"?r.dia:`${r.de}_a_${r.ate}`].filter(Boolean).join("-");
 }
-function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement("script"); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
+const SRI = {"https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js": "sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw", "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js": "sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG", "https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/lite.umd.js": "sha384-KRanV2NRwHPanp7iM6nlLQC5jPCTscSYMko30dLJHzNXJaUNtcucWv+SOi3jV3PE"};
+function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement("script"); s.src=src; if(SRI[src]){ s.integrity = SRI[src]; s.crossOrigin = "anonymous"; } s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
 function xlsxSheet(X, rows){
   const days = repDays(rows), cfg = state.cfg, C = repCols(rows), t = sumCalc(rows);
   const head = repHead(C), nc = head.length, H = m => Math.round(m/60*10000)/10000;
@@ -1215,7 +1218,7 @@ async function repXlsx(){
   const sheetName = s => { let n = String(s||"Controle").replace(/[\\/?*[\]:]/g,"").slice(0,31) || "Controle", k = 2; while(used.has(n)) n = n.slice(0,28)+" "+(k++); used.add(n); return n; };
   if(groups.length>1){
     const H = m => Math.round(m/60*10000)/10000, by = state.rep.by;
-    const aoa = [[`Resumo por ${DIMS[by].label.toLowerCase()} - ${repTitle()}`], [DIMS[by].label.toUpperCase(),"OS","HORAS",`EXTRA ${state.cfg.extraPct}%`,`EXTRA ${state.cfg.feriadoPct}%`,...(v?["VALOR"]:[])]];
+    const aoa = [[`Resumo por ${DIMS[by].label.toLowerCase()} - ${repTitle()}`], [DIMS[by].label.toUpperCase(),"OS","HORAS",`EXTRA ${pct50()}`,`EXTRA ${pct100()}`,...(v?["VALOR"]:[])]];
     groups.forEach(g=>{ const t=sumCalc(g.rows); aoa.push([g.label, g.rows.length, H(t.total), H(t.e50), H(t.e100), ...(v?[t.valor]:[])]); });
     const t = sumCalc(all); aoa.push(["TOTAL", all.length, H(t.total), H(t.e50), H(t.e100), ...(v?[t.valor]:[])]);
     const ws = X.utils.aoa_to_sheet(aoa);
@@ -1255,8 +1258,8 @@ const emAndamento = () => state.ap.filter(e=>e.andamento && (!state.worker || e.
 function decorrido(e){ const ini = parseYmd(e.data); ini.setHours(0, hm(e.inicio)); return Math.max(0, Math.floor((Date.now()-ini.getTime())/60000)); }
 function cronoBar(){
   const ls = emAndamento(); if(!ls.length) return "";
-  return `<div class="cronobar">${ls.map(e=>`<div class="crono"><span class="crono-dot"></span><span class="crono-txt"><b>OS ${esc(e.os||"s/n")}</b>${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.profissional&&!state.worker?` · ${esc(e.profissional)}`:""}<br><small>desde ${esc(e.inicio)}${e.data!==today()?` de ${fdate(e.data).slice(0,5)}`:""} · <span class="crono-t mono" data-id="${e.id}">${fh(decorrido(e))}</span></small></span>
-    <span class="row" style="flex-wrap:nowrap"><button class="btn sm" data-act="cronoTrocar" data-id="${e.id}">Trocar de OS</button><button class="btn sm primary" data-act="cronoEncerrar" data-id="${e.id}">Encerrar</button></span></div>`).join("")}</div>`;
+  return `<div class="cronobar">${ls.map(e=>`<div class="crono"><span class="crono-dot"></span><span class="crono-txt"><b>OS ${esc(e.os||"s/n")}</b>${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.profissional&&!state.worker?` · ${esc(e.profissional)}`:""}<br><small>desde ${esc(e.inicio)}${e.data!==today()?` de ${fdate(e.data).slice(0,5)}`:""} · <span class="crono-t mono" data-id="${esc(e.id)}">${fh(decorrido(e))}</span></small></span>
+    <span class="row" style="flex-wrap:nowrap"><button class="btn sm" data-act="cronoTrocar" data-id="${esc(e.id)}">Trocar de OS</button><button class="btn sm primary" data-act="cronoEncerrar" data-id="${esc(e.id)}">Encerrar</button></span></div>`).join("")}</div>`;
 }
 setInterval(()=>{ document.querySelectorAll(".crono-t").forEach(el=>{ const e = state.ap.find(x=>x.id===el.dataset.id); if(e) el.textContent = fh(decorrido(e)); }); }, 30000);
 function cronoForm(pre={}){
@@ -1493,7 +1496,7 @@ async function repPdf(){
     let y = pdfHeader(doc, `RESUMO POR ${DIMS[by].label.toUpperCase()}`, repPdfSub());
     const t = sumCalc(all);
     doc.autoTable({startY:y+2, theme:"grid", margin:{left:14,right:14},
-      head:[[DIMS[by].label.toUpperCase(),"OS","HORAS",`EXTRA ${state.cfg.extraPct}%`,`EXTRA ${state.cfg.feriadoPct}%`,...(v?["VALOR"]:[])]],
+      head:[[DIMS[by].label.toUpperCase(),"OS","HORAS",`EXTRA ${pct50()}`,`EXTRA ${pct100()}`,...(v?["VALOR"]:[])]],
       body: groups.map(g=>{ const c=sumCalc(g.rows); return [g.label, String(g.rows.length), fdec(c.total), fdec(c.e50), fdec(c.e100), ...(v?[brl(c.valor)]:[])]; }),
       foot:[["TOTAL", String(all.length), fdec(t.total), fdec(t.e50), fdec(t.e100), ...(v?[brl(t.valor)]:[])]],
       styles:{fontSize:9.5,cellPadding:2,textColor:INK,lineColor:[205,212,201],lineWidth:0.2}, headStyles:{fillColor:GREEN,textColor:255}, footStyles:{fillColor:[255,240,150],textColor:INK},
@@ -1561,7 +1564,7 @@ function orcCard(o){
   const T = orcTotals(o), st = ST[o.status]||ST.rascunho, val = orcValidade(o);
   const vencido = o.status==="enviado" && val && val < today();
   const rec = orcAberto(o) ? orcRecebido(o.id) : 0;
-  return `<button class="orccard" data-act="editOrc" data-id="${o.id}">
+  return `<button class="orccard" data-act="editOrc" data-id="${esc(o.id)}">
     <span style="min-width:0"><b>${esc(o.cliente?.nome||"Sem cliente")}</b><br><span class="muted">${esc(o.titulo||"Sem título")}</span></span>
     <span class="val">${brl(T.total)}</span>
     <span class="meta"><span class="mono">Nº ${esc(o.numero||"-")}</span> · ${fdate(o.data)} <span class="pill ${st[1]}">${st[0]}</span>${vencido?'<span class="pill warn">Validade vencida</span>':""}${orcAberto(o)?(rec>=T.total-0.005?'<span class="pill good">Recebido</span>':`<span class="pill info">A receber ${brl(T.total-rec)}</span>`):""}${orcAberto(o)?(()=>{ const a=orcAndamento(o); return a.ents.length||a.prev ? `<span class="pill ${a.pct>100?"bad":""}">${fdec(a.h*60)} de ${fdec(a.prev*60)} h</span>` : ""; })():""}${o.exemplo?'<span class="pill">Exemplo</span>':""}</span></button>`;
@@ -1668,14 +1671,14 @@ const TIPOS_DESP = ["Km rodado","Combustível","Pedágio","Alimentação","Hospe
 function despSection(){
   const m = state.month, ls = state.desp.filter(x=>ym(x.data)===m).sort((a,b)=>b.data.localeCompare(a.data)), tot = ls.reduce((s,x)=>s+despValor(x),0), re = ls.filter(x=>x.reembolsavel).reduce((s,x)=>s+despValor(x),0);
   return `<section class="section"><header><h2>Despesas de ${ymLabel(m)}</h2><span class="row">${monthNav()}<button class="btn sm primary" data-act="newDesp">+ Despesa</button></span></header>
-  ${ls.length?`<p class="muted" style="margin:0 0 8px">Total ${brl(tot)} · reembolsável ${brl(re)} · por sua conta ${brl(tot-re)}</p><div class="list">${ls.map(x=>`<button class="item" data-act="editDesp" data-id="${x.id}"><span class="mono">${fdate(x.data)}</span><span><b>${esc(x.tipo||"")}</b>${x.os?` · OS ${esc(x.os)}`:""}${x.unidade?` · ${esc(x.unidade)}`:""}<br><small class="muted">${x.tipo==="Km rodado"?`${numIn(x.km)} km × ${brl(numIn(x.valorKm))} `:""}${esc(x.obs||"")}</small></span><span class="r"><b class="mono">${brl(despValor(x))}</b><br>${x.reembolsavel?'<span class="pill info">Reembolsável</span>':'<span class="pill">Custo</span>'}${(x.fotos||[]).length?' <span class="pill">📎</span>':""}</span></button>`).join("")}</div>`
+  ${ls.length?`<p class="muted" style="margin:0 0 8px">Total ${brl(tot)} · reembolsável ${brl(re)} · por sua conta ${brl(tot-re)}</p><div class="list">${ls.map(x=>`<button class="item" data-act="editDesp" data-id="${esc(x.id)}"><span class="mono">${fdate(x.data)}</span><span><b>${esc(x.tipo||"")}</b>${x.os?` · OS ${esc(x.os)}`:""}${x.unidade?` · ${esc(x.unidade)}`:""}<br><small class="muted">${x.tipo==="Km rodado"?`${numIn(x.km)} km × ${brl(numIn(x.valorKm))} `:""}${esc(x.obs||"")}</small></span><span class="r"><b class="mono">${brl(despValor(x))}</b><br>${x.reembolsavel?'<span class="pill info">Reembolsável</span>':'<span class="pill">Custo</span>'}${(x.fotos||[]).length?' <span class="pill">📎</span>':""}</span></button>`).join("")}</div>`
   :`<div class="empty"><b>Nenhuma despesa em ${ymLabel(m)}</b>Lance combustível, km, pedágio, alimentação e material. As reembolsáveis entram no fechamento da empresa.</div>`}</section>`;
 }
 function despForm(x){
   state.dpFotos = [...(x.fotos||[])]; const km = x.tipo==="Km rodado" || !x.id;
   let vk = ""; try{ vk = localStorage.getItem("gaap-valor-km")||""; }catch(err){}
   return `<header><h2>${x.id?"Editar":"Lançar"} despesa</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
-  <form class="form" id="despForm" data-id="${x.id||""}">
+  <form class="form" id="despForm" data-id="${esc(x.id||"")}">
     <div class="grid2"><label class="field"><span>Data</span><input type="date" id="dp-data" value="${esc(x.data||today())}" required></label>
     <label class="field"><span>Tipo</span><select id="dp-tipo">${TIPOS_DESP.map(t=>`<option ${(x.tipo||"Km rodado")===t?"selected":""}>${t}</option>`).join("")}</select></label></div>
     <div class="grid2" id="dp-km-w" ${km?"":"hidden"}><label class="field"><span>Km rodados</span><input id="dp-km" inputmode="decimal" value="${esc(x.km??"")}"></label><label class="field"><span>Valor por km (R$)</span><input id="dp-vkm" inputmode="decimal" value="${esc(x.valorKm??vk)}" placeholder="Ex.: 1,20"></label></div>
@@ -1686,7 +1689,7 @@ function despForm(x){
     <label class="check"><input type="checkbox" id="dp-reemb" ${x.reembolsavel?"checked":""}> Reembolsável (cobrar da empresa no fechamento)</label>
     <label class="field"><span>Observação</span><input id="dp-obs" value="${esc(x.obs||"")}" placeholder="Ex.: ida e volta Uruaçu"></label>
     <div class="field"><span>Comprovante</span><div class="thumbs" id="dp-thumbs">${thumbs(state.dpFotos, false)}</div><div><label class="btn sm" for="dp-foto">+ Foto do comprovante</label><input type="file" id="dp-foto" accept="image/*" multiple hidden></div></div>
-    <footer>${x.id?`<button type="button" class="btn danger" data-act="delDesp" data-id="${x.id}">Excluir</button>`:"<span></span>"}<button class="btn primary" type="submit">Salvar despesa</button></footer>
+    <footer>${x.id?`<button type="button" class="btn danger" data-act="delDesp" data-id="${esc(x.id)}">Excluir</button>`:"<span></span>"}<button class="btn primary" type="submit">Salvar despesa</button></footer>
   </form>`;
 }
 async function submitDesp(){
@@ -1712,10 +1715,10 @@ function fechCard(f){
     </div>
     ${fechAlterado(f)?`<div class="warnbox">Há OS deste período alteradas depois do fechamento. O PDF continua igual ao que foi enviado; use “PDF atual” para ver como ficaria hoje.</div>`:""}
     ${ult?`<p class="muted" style="margin:0;font-size:.85rem">Última cobrança em ${fdate(ult)}${(f.cobrancas||[]).length>1?` (${f.cobrancas.length} no total)`:""}.</p>`:""}
-    <div class="row fc-acts"><button class="btn sm" data-act="fechPdfBtn" data-id="${f.id}">PDF enviado</button>${fechAlterado(f)?`<button class="btn sm" data-act="fechPdfBtn" data-id="${f.id}" data-atual="1">PDF atual</button>`:""}
-      ${sd>0.005?`<button class="btn sm primary" data-act="newRec" data-o="fech" data-id="${f.id}" data-v="${sd}">Receber</button><button class="btn sm" data-act="fechCobrar" data-id="${f.id}">Cobrar</button>`:""}
-      <button class="btn sm" data-act="fechNF" data-id="${f.id}">Nota fiscal / vencimento</button>${sd>0.005?`<button class="btn sm" data-act="fechGlosa" data-id="${f.id}">Glosa</button>`:""}
-      <button class="btn sm danger" data-act="fechReabrir" data-id="${f.id}">Reabrir</button></div>
+    <div class="row fc-acts"><button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}">PDF enviado</button>${fechAlterado(f)?`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}" data-atual="1">PDF atual</button>`:""}
+      ${sd>0.005?`<button class="btn sm primary" data-act="newRec" data-o="fech" data-id="${esc(f.id)}" data-v="${sd}">Receber</button><button class="btn sm" data-act="fechCobrar" data-id="${esc(f.id)}">Cobrar</button>`:""}
+      <button class="btn sm" data-act="fechNF" data-id="${esc(f.id)}">Nota fiscal / vencimento</button>${sd>0.005?`<button class="btn sm" data-act="fechGlosa" data-id="${esc(f.id)}">Glosa</button>`:""}
+      <button class="btn sm danger" data-act="fechReabrir" data-id="${esc(f.id)}">Reabrir</button></div>
   </div>`;
 }
 function agingHtml(fechs){
@@ -1762,21 +1765,21 @@ function vFinanceiro(){
   ${false?`<div class="tablewrap"><table><thead><tr><th>Nº</th><th>Período</th><th>Empresa</th><th class="r">OS</th><th class="r">Horas</th><th class="r">Valor</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
   <tbody>${fechs.map(f=>{ const rc = fechRecebido(f), sd = fechSaldo(f); return `<tr><td class="mono"><b>${esc(f.numero)}</b></td><td class="mono">${fdate(f.de)} a ${fdate(f.ate)}</td><td>${esc(f.empresa||"Todas")}</td><td class="r mono">${f.os||0}</td><td class="r mono">${fdec(+f.horas||0)}</td><td class="r mono">${brl(+f.valor||0)}</td><td class="r mono">${brl(rc)}</td><td class="r mono">${brl(sd)}</td>
     <td>${sd<=0.005?'<span class="pill good">Recebido</span>':rc>0?'<span class="pill warn">Parcial</span>':'<span class="pill info">Enviado, aguardando</span>'}</td>
-    <td><span class="row" style="flex-wrap:nowrap"><button class="btn sm" data-act="fechPdfBtn" data-id="${f.id}">PDF</button>${sd>0.005?`<button class="btn sm" data-act="newRec" data-o="fech" data-id="${f.id}" data-v="${sd}">Receber</button>`:""}<button class="btn sm danger" data-act="fechReabrir" data-id="${f.id}">Reabrir</button></span></td></tr>`; }).join("")}</tbody></table></div>`
+    <td><span class="row" style="flex-wrap:nowrap"><button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}">PDF</button>${sd>0.005?`<button class="btn sm" data-act="newRec" data-o="fech" data-id="${esc(f.id)}" data-v="${sd}">Receber</button>`:""}<button class="btn sm danger" data-act="fechReabrir" data-id="${esc(f.id)}">Reabrir</button></span></td></tr>`; }).join("")}</tbody></table></div>`
   :fechs.length?"":`<div class="empty"><b>Nenhum período fechado</b>Em Relatórios, escolha “Período / fechamento” e toque em “Fechar período…” quando mandar o relatório para a empresa.</div>`}</section>
   ${byEmp.length?`<section class="section"><header><h2>Horas a receber por empresa</h2></header><div class="tablewrap"><table><thead><tr><th>Empresa</th><th class="r">Produzido</th><th class="r">Recebido</th><th class="r">A receber</th></tr></thead><tbody>${byEmp.map(r=>`<tr><td>${esc(r.emp||"(sem empresa)")}</td><td class="r mono">${brl(r.v)}</td><td class="r mono">${brl(r.rc)}</td><td class="r mono"><b>${brl(r.saldo)}</b></td></tr>`).join("")}</tbody></table></div></section>`:""}
   <section class="section"><header><h2>Horas por mês${multiEmp?" e empresa":""}</h2></header>
-  ${mrows.length?`<div class="tablewrap"><table><thead><tr><th>Competência</th>${multiEmp?"<th>Empresa</th>":""}<th class="r">Normal</th><th class="r">Extra ${state.cfg.extraPct}%</th><th class="r">Extra ${state.cfg.feriadoPct}%</th><th class="r">Valor</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
+  ${mrows.length?`<div class="tablewrap"><table><thead><tr><th>Competência</th>${multiEmp?"<th>Empresa</th>":""}<th class="r">Normal</th><th class="r">Extra ${pct50()}</th><th class="r">Extra ${pct100()}</th><th class="r">Valor</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
   <tbody>${mrows.map(r=>`<tr><td style="text-transform:capitalize">${ymLabel(r.m)}</td>${multiEmp?`<td>${esc(r.emp||"(sem empresa)")}</td>`:""}<td class="r mono">${fh(r.c.n)}</td><td class="r mono">${fh(r.c.e50)}</td><td class="r mono">${fh(r.c.e100)}</td><td class="r mono">${brl(r.c.valor)}</td><td class="r mono">${brl(r.rec)}</td><td class="r mono">${brl(Math.max(0,r.saldo))}</td><td>${stPill(r.saldo,r.rec)}</td><td>${r.saldo>0.005?`<button class="btn sm" data-act="newRec" data-o="horas" data-m="${r.m}" data-e="${esc(r.emp||"")}" data-v="${r.saldo}">Receber</button>`:""}</td></tr>`).join("")}</tbody></table></div>`
   :`<div class="empty"><b>Sem horas registradas</b>Os meses aparecem aqui conforme você aponta as OS.</div>`}</section>
   <section class="section"><header><h2>Orçamentos aprovados</h2></header>
   ${orcs.length?`<div class="tablewrap"><table><thead><tr><th>Nº</th><th>Cliente</th><th class="r">Total</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
-  <tbody>${orcs.map(o=>{const T=orcTotals(o).total, rec=orcRecebido(o.id), s=Math.round((T-rec)*100)/100; return `<tr><td class="mono">${esc(o.numero)}</td><td>${esc(o.cliente?.nome)}<br><span class="muted">${esc(o.titulo||"")}</span></td><td class="r mono">${brl(T)}</td><td class="r mono">${brl(rec)}</td><td class="r mono">${brl(Math.max(0,s))}</td><td>${stPill(s,rec)}</td><td>${s>0.005?`<button class="btn sm" data-act="newRec" data-o="orc" data-id="${o.id}" data-v="${s}">Receber</button>`:""}</td></tr>`;}).join("")}</tbody></table></div>`
+  <tbody>${orcs.map(o=>{const T=orcTotals(o).total, rec=orcRecebido(o.id), s=Math.round((T-rec)*100)/100; return `<tr><td class="mono">${esc(o.numero)}</td><td>${esc(o.cliente?.nome)}<br><span class="muted">${esc(o.titulo||"")}</span></td><td class="r mono">${brl(T)}</td><td class="r mono">${brl(rec)}</td><td class="r mono">${brl(Math.max(0,s))}</td><td>${stPill(s,rec)}</td><td>${s>0.005?`<button class="btn sm" data-act="newRec" data-o="orc" data-id="${esc(o.id)}" data-v="${s}">Receber</button>`:""}</td></tr>`;}).join("")}</tbody></table></div>`
   :`<div class="empty"><b>Nenhum orçamento aprovado</b>Quando você marcar um orçamento como Aprovado, ele entra aqui como valor a receber.</div>`}</section>
   ${despSection()}
   <section class="section"><header><h2>Recebimentos registrados</h2><span class="muted">${brl(state.rec.filter(r=>ym(r.data||"")===ym(today())).reduce((s,r)=>s+numIn(r.valor),0))} recebido em ${ymLabel(ym(today()))}</span></header>
   ${recs.length?`<div class="tablewrap"><table><thead><tr><th>Data</th><th>Origem</th><th>Observação</th><th class="r">Valor</th><th></th></tr></thead>
-  <tbody>${recs.map(r=>`<tr><td class="mono">${fdate(r.data)}</td><td>${r.origem==="fech"?`Fechamento ${esc(state.fech.find(f=>f.id===r.fechId)?.numero||"(reaberto)")}${r.empresa?` · ${esc(r.empresa)}`:""}`:r.origem==="horas"?`Horas · <span style="text-transform:capitalize">${ymLabel(r.competencia||"2000-01")}</span>${multiEmp?` · ${esc(recEmp(r))}`:""}`:`Orçamento ${esc(state.orc.find(o=>o.id===r.orcId)?.numero||"(excluído)")}`}${r.exemplo?' <span class="pill">Exemplo</span>':""}</td><td>${esc(r.obs||"")}</td><td class="r mono">${brl(numIn(r.valor))}</td><td><button class="btn sm danger" data-act="delRec" data-id="${r.id}">Excluir</button></td></tr>`).join("")}</tbody></table></div>`
+  <tbody>${recs.map(r=>`<tr><td class="mono">${fdate(r.data)}</td><td>${r.origem==="fech"?`Fechamento ${esc(state.fech.find(f=>f.id===r.fechId)?.numero||"(reaberto)")}${r.empresa?` · ${esc(r.empresa)}`:""}`:r.origem==="horas"?`Horas · <span style="text-transform:capitalize">${ymLabel(r.competencia||"2000-01")}</span>${multiEmp?` · ${esc(recEmp(r))}`:""}`:`Orçamento ${esc(state.orc.find(o=>o.id===r.orcId)?.numero||"(excluído)")}`}${r.exemplo?' <span class="pill">Exemplo</span>':""}</td><td>${esc(r.obs||"")}</td><td class="r mono">${brl(numIn(r.valor))}</td><td><button class="btn sm danger" data-act="delRec" data-id="${esc(r.id)}">Excluir</button></td></tr>`).join("")}</tbody></table></div>`
   :`<div class="empty"><b>Nenhum recebimento registrado</b>Use “Registrar recebimento” quando a empresa ou o cliente pagar.</div>`}</section>`;
 }
 function recForm(o){
@@ -1786,10 +1789,10 @@ function recForm(o){
     <div class="grid2"><label class="field"><span>Data do pagamento</span><input type="date" id="r-data" value="${today()}" required></label>
     <label class="field"><span>Valor recebido (R$)</span><input id="r-valor" inputmode="decimal" value="${o.v?String(o.v).replace(".",","):""}" required></label></div>
     <label class="field"><span>Referente a</span><select id="r-origem"><option value="fech" ${o.o==="fech"?"selected":""} ${fs.length?"":"disabled"}>Fechamento enviado</option><option value="horas" ${!o.o||o.o==="horas"?"selected":""}>Horas trabalhadas (por mês)</option><option value="orc" ${o.o==="orc"?"selected":""} ${orcs.length?"":"disabled"}>Orçamento aprovado</option></select></label>
-    <label class="field" id="r-fech-w" ${o.o==="fech"?"":"hidden"}><span>Fechamento</span><select id="r-fech">${fs.map(f=>`<option value="${f.id}" ${f.id===o.id?"selected":""}>${esc(f.numero)} · ${fdate(f.de)} a ${fdate(f.ate)} · saldo ${brl(fechSaldo(f))}</option>`).join("")}</select></label>
+    <label class="field" id="r-fech-w" ${o.o==="fech"?"":"hidden"}><span>Fechamento</span><select id="r-fech">${fs.map(f=>`<option value="${esc(f.id)}" ${f.id===o.id?"selected":""}>${esc(f.numero)} · ${fdate(f.de)} a ${fdate(f.ate)} · saldo ${brl(fechSaldo(f))}</option>`).join("")}</select></label>
     <div class="grid2" id="r-comp-w" ${o.o==="orc"||o.o==="fech"?"hidden":""}><label class="field"><span>Mês de competência</span><input type="month" id="r-comp" value="${o.m||ym(today())}"></label>
     <label class="field"><span>Empresa que pagou</span><select id="r-emp">${dimVals("emp").map(v=>`<option ${v===(o.e||state.cfg.contratante)?"selected":""}>${esc(v)}</option>`).join("")||'<option value="">(sem empresa)</option>'}</select></label></div>
-    <label class="field" id="r-orc-w" ${o.o==="orc"?"":"hidden"}><span>Orçamento</span><select id="r-orc">${orcs.map(x=>`<option value="${x.id}" ${x.id===o.id?"selected":""}>${esc(x.numero)} · ${esc(x.cliente?.nome)} · ${brl(orcTotals(x).total)}</option>`).join("")}</select></label>
+    <label class="field" id="r-orc-w" ${o.o==="orc"?"":"hidden"}><span>Orçamento</span><select id="r-orc">${orcs.map(x=>`<option value="${esc(x.id)}" ${x.id===o.id?"selected":""}>${esc(x.numero)} · ${esc(x.cliente?.nome)} · ${brl(orcTotals(x).total)}</option>`).join("")}</select></label>
     <details class="fichabox"><summary>Houve retenção de impostos? (ISS, INSS, IR)</summary>
       <p class="muted" style="margin:6px 0">O valor recebido é o que caiu na conta. As retenções também baixam o saldo e ficam anotadas para o contador.</p>
       <div class="grid2">${RETS.map(([k,l])=>`<label class="field"><span>${l} retido (R$)</span><input id="r-ret-${k}" inputmode="decimal" placeholder="0,00"></label>`).join("")}</div>
@@ -2062,7 +2065,7 @@ const A = {
   },
   fechNF(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; const nf = f.nf||{};
     openModal(`<header><h2>Nota fiscal · ${esc(f.numero)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
-    <form class="form" id="nfForm" data-id="${f.id}">
+    <form class="form" id="nfForm" data-id="${esc(f.id)}">
       <div class="grid2"><label class="field"><span>Nº da NF</span><input id="nf-num" value="${esc(nf.numero||"")}" inputmode="numeric"></label>
       <label class="field"><span>Data de emissão</span><input type="date" id="nf-data" value="${esc(nf.data||"")}"></label>
       <label class="field"><span>Situação</span><select id="nf-st">${[["emitir","A emitir"],["emitida","Emitida"],["cancelada","Cancelada"]].map(([k,l])=>`<option value="${k}" ${(nf.status||(nf.numero?"emitida":"emitir"))===k?"selected":""}>${l}</option>`).join("")}</select></label>
@@ -2073,13 +2076,13 @@ const A = {
   nfCopiar(){ copyText($("#nf-txt").value); },
   fechGlosa(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; const aps = (f.snap?.aps)||fechRows(f.de,f.ate,f.empresa||"");
     openModal(`<header><h2>Registrar glosa · ${esc(f.numero)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
-    <form class="form" id="glosaForm" data-id="${f.id}">
+    <form class="form" id="glosaForm" data-id="${esc(f.id)}">
       <p class="muted" style="margin:0">Use quando a empresa não aceitar parte do fechamento (OS recusada, horário contestado, acordo). O valor glosado sai do saldo a receber.</p>
       <label class="field"><span>OS glosada (opcional)</span><select id="gl-os"><option value="">— valor livre —</option>${aps.map(e=>`<option value="${esc(e.id)}" data-v="${calc(e).valor}">OS ${esc(e.os||"s/n")} · ${fdate(e.data)} ${esc(e.inicio)}–${esc(e.fim)} · ${brl(calc(e).valor)}</option>`).join("")}</select></label>
       <div class="grid2"><label class="field"><span>Valor glosado (R$)</span><input id="gl-v" inputmode="decimal" required></label>
       <label class="field"><span>Motivo</span><select id="gl-mot"><option>Sem nº de OS</option><option>Horário não reconhecido</option><option>OS duplicada</option><option>Fora do contrato</option><option>Acordo / desconto</option><option>Outro</option></select></label></div>
       <label class="field"><span>Observação</span><input id="gl-obs"></label>
-      ${(f.glosas||[]).length?`<div class="list">${f.glosas.map((g,i)=>`<div class="item" style="cursor:default"><span>${fdate(g.data)}</span><span>${esc(g.motivo)}${g.os?` · OS ${esc(g.os)}`:""}${g.obs?`<br><small class="muted">${esc(g.obs)}</small>`:""}</span><span><b class="mono">${brl(numIn(g.valor))}</b> <button type="button" class="btn sm danger" data-act="glosaDel" data-id="${f.id}" data-i="${i}">✕</button></span></div>`).join("")}</div>`:""}
+      ${(f.glosas||[]).length?`<div class="list">${f.glosas.map((g,i)=>`<div class="item" style="cursor:default"><span>${fdate(g.data)}</span><span>${esc(g.motivo)}${g.os?` · OS ${esc(g.os)}`:""}${g.obs?`<br><small class="muted">${esc(g.obs)}</small>`:""}</span><span><b class="mono">${brl(numIn(g.valor))}</b> <button type="button" class="btn sm danger" data-act="glosaDel" data-id="${esc(f.id)}" data-i="${i}">✕</button></span></div>`).join("")}</div>`:""}
       <footer><span></span><button class="btn primary" type="submit">Registrar glosa</button></footer>
     </form>`); },
   async glosaDel(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; const g = [...(f.glosas||[])]; g.splice(+b.dataset.i,1); try{ await save("fechamentos", {...f, glosas:g}); closeModal(); toast("Glosa removida"); }catch(err){ toast(writeErr(err)); } },
@@ -2109,6 +2112,7 @@ const A = {
   newRec(b){ openModal(recForm({o:b.dataset.o, m:b.dataset.m, e:b.dataset.e, v:b.dataset.v?Math.round(+b.dataset.v*100)/100:"", id:b.dataset.id})); },
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ await save("recebimentos", {...x}); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
+  recarregar(){ location.reload(); },
   dayDescartar(){ rascunho.limpar(); closeModal(); },
   async pushAtivar(b){
     b.disabled = true;
