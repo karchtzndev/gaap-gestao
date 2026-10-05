@@ -78,13 +78,14 @@ function calc(e){
     const dn = Math.floor(t/1440), mod = t%1440;
     let info = days[dn];
     if(!info){ const dt=addDays(base,dn), wd=dt.getDay(), j=cfg.jornada[wd]||{}; info = days[dn] = {special: wd===0 || !!holidayName(ymd(dt)), ji:hm(j.ini), jf:hm(j.fim)}; }
+    const almoco = cfg.almoco.ativo && aIni!=null && aFim!=null && mod>=aIni && mod<aFim;
+    if(almoco && !e.noAlmoco) continue;
     let b;
     if(e.tipo==="normal") b="n"; else if(e.tipo==="e50") b="e50"; else if(e.tipo==="e100") b="e100";
     else if(info.special) b="e100";
-    else if(info.ji!=null && info.jf!=null && mod>=info.ji && mod<info.jf){
-      if(cfg.almoco.ativo && aIni!=null && aFim!=null && mod>=aIni && mod<aFim){ if(!e.noAlmoco) continue; b="e50"; }
-      else b="n";
-    } else { b="e50"; if(info.ji!=null && info.jf!=null){ if(mod<info.ji) early++; else late++; } }
+    else if(almoco) b="e50";
+    else if(info.ji!=null && info.jf!=null && mod>=info.ji && mod<info.jf) b="n";
+    else { b="e50"; if(info.ji!=null && info.jf!=null){ if(mod<info.ji) early++; else late++; } }
     r[b]++;
   }
   const tol = +cfg.tolerancia || 0;
@@ -391,7 +392,8 @@ function bucketChips(c){
 /* ---------- fechamentos, fotos e orçamentos ligados ---------- */
 const money = v => state.worker ? "" : brl(v);
 function fechList(){ return state.worker ? (state.pub?.fechados||[]) : state.fech; }
-function lockOf(data, emp){ return fechList().find(f=>data>=f.de && data<=f.ate && (!f.empresa || f.empresa===emp)); }
+const chaveEmp = x => String(x||"").trim().toLowerCase();
+function lockOf(data, emp){ return fechList().find(f=>data>=f.de && data<=f.ate && (!f.empresa || chaveEmp(f.empresa)===chaveEmp(emp))); }
 const lockedE = e => lockOf(e.data, empOf(e));
 const lockMsg = f => state.worker ? `Esse período já foi fechado (${f.numero||""}). Fale com o responsável para alterar.` : `Período fechado (${f.numero||""}). Para alterar, reabra o fechamento no Financeiro.`;
 function orcOpts(){ return state.worker ? (state.pub?.orcs||[]) : state.orc.filter(orcAberto).map(o=>({id:o.id, numero:o.numero||"", titulo:o.titulo||"", cliente:o.cliente?.nome||""})); }
@@ -449,6 +451,7 @@ function thumbs(ids, removable){ return (ids||[]).map(id=>`<span class="thumb">$
 document.addEventListener("change", async e=>{
   const t = e.target;
   if(t.id==="dp-foto" && t.files.length){ const ids = await uploadPhotos([...t.files]); state.dpFotos = [...(state.dpFotos||[]), ...ids]; const box=$("#dp-thumbs"); if(box) box.innerHTML = thumbs(state.dpFotos, false); t.value=""; }
+  if(t.id==="dp-orc" && t.value){ const o = state.orc.find(x=>x.id===t.value); if(o?.cliente?.nome && $("#dp-emp")) $("#dp-emp").value = o.cliente.nome; }
   if(t.id==="dp-tipo"){ const k = t.value==="Km rodado"; $("#dp-km-w").hidden = !k; $("#dp-v-w").hidden = k; }
   if(/^f-foto/.test(t.id) && t.files.length){ const ids = await uploadPhotos([...t.files], {tipo:t.dataset.tipo||"durante", os:$("#f-os")?.value.trim(), unid:$("#f-cli")?.value.trim()}); state.apFotos = [...(state.apFotos||[]), ...ids]; const box=$("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); t.value=""; }
   if(t.dataset && t.dataset.fotoRow!=null && t.files.length){ const i=+t.dataset.fotoRow, r=state.day.rows[i]; const ids = await uploadPhotos([...t.files], {tipo:"durante", os:r.os, unid:r.cli||state.day.unid}); r.fotoMeta = {...(r.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; r.fotos = [...(r.fotos||[]), ...ids]; const lb=document.querySelector(`label[for="d-foto-${i}"]`); if(lb) lb.textContent = `Fotos (${r.fotos.length})`; t.value=""; }
@@ -559,7 +562,7 @@ function vWorker(){
 }
 /* ---------- PAINEL ---------- */
 function totalsReceber(){
-  const prod = sumCalc(state.ap).valor;
+  const prod = Math.round((state.fech.reduce((s,f)=>s+(+f.valor||0),0) + sumCalc(state.ap.filter(e=>!e.andamento && !lockedE(e))).valor)*100)/100;
   const recH = state.rec.filter(r=>r.origem==="horas" || r.origem==="fech").reduce((s,r)=>s+recBruto(r),0);
   const glosas = state.fech.reduce((s,f)=>s+fechGlosa(f),0), reemb = state.fech.reduce((s,f)=>s+(+f.reemb||0),0);
   const orcs = state.orc.filter(orcAberto);
@@ -587,7 +590,7 @@ function vPainel(){
   <div class="kpis">
     <div class="kpi"><span class="eyebrow">Hoje</span><span class="v">${fh(tc.total)}</span><span class="s">${tdAp.length} OS · ${brl(tc.valor)}</span></div>
     <div class="kpi"><span class="eyebrow">Em ${MESES[+state.month.slice(5)-1]}</span><span class="v">${fh(mc.total)}</span><span class="s">${brl(mc.valor)} em ${new Set(mAp.map(e=>e.data)).size} dias</span></div>
-    ${(()=>{ const ct = mAp.filter(e=>!e.orcId), fat = sumCalc(ct).valor, cu = custoSum(ct) + state.desp.filter(x=>ym(x.data)===state.month && !x.reembolsavel).reduce((s,x)=>s+despValor(x),0);
+    ${(()=>{ const ct = mAp.filter(e=>!e.orcId), fat = sumCalc(ct).valor, cu = custoSum(ct) + state.desp.filter(x=>ym(x.data)===state.month && !x.reembolsavel && !x.orcId).reduce((s,x)=>s+despValor(x),0);
       return temCustos() ? `<div class="kpi"><span class="eyebrow">Lucro em ${MESES[+state.month.slice(5)-1]}</span><span class="v" style="color:${fat-cu>=0?"var(--good)":"var(--bad)"}">${brl(fat-cu)}</span><span class="s">${brl(fat)} faturado − ${brl(cu)} de equipe e despesas${fat>0?` · margem ${Math.round(100*(fat-cu)/fat)}%`:""}</span></div>`
         : `<div class="kpi"><span class="eyebrow">Lucro do mês</span><span class="v">—</span><span class="s">Informe o custo de cada funcionário em <button class="btn sm" data-act="nav" data-view="ajustes" style="padding:1px 6px">Ajustes</button></span></div>`; })()}
     <div class="kpi"><span class="eyebrow">Orçamentos enviados</span><span class="v">${abertos.length}</span><span class="s">${brl(abertosV)} aguardando${taxa!=null?` · ${taxa}% aprovados`:""}</span></div>
@@ -907,7 +910,7 @@ function updateDay(){
   d.rows.forEach((r,i)=>{
     const el = $("#d-info-"+i); if(!el) return;
     if(!r.ini || !r.fim){ el.innerHTML = r.os||r.desc ? `<span class="pill warn">Falta ${!r.ini?"início":"fim"}</span>` : ""; return; }
-    const c = calc({data:d.data, inicio:r.ini, fim:r.fim});
+    const c = calc({data:d.data, inicio:r.ini, fim:r.fim, noAlmoco:!!r.noAlm, empresa:d.emp, ...(d.orcId?{orcId:d.orcId}:{}), ...(state.worker?{}:rateFor(d.emp||state.cfg.contratante||""))});
     ["n","e50","e100","total","valor"].forEach(k=>tot[k]+=c[k]);
     const others = [...ex, ...d.rows.filter((x,k)=>k!==i && x.ini && x.fim).map((x,k)=>({id:"r"+k, data:d.data, inicio:x.ini, fim:x.fim}))];
     const ov = overlaps([...others.map(o=>({...o, profissional:""})), {id:"__me", data:d.data, inicio:r.ini, fim:r.fim, profissional:""}]).has("__me");
@@ -980,7 +983,7 @@ document.addEventListener("change", e=>{ if(e.target.closest("#apForm")) updateA
 document.addEventListener("submit", async e=>{
   if(e.target.id==="apForm"){
     e.preventDefault();
-    const d = readApForm();
+    const d = readApForm(); delete d.andamento;
     if(!d.data || !d.inicio || !d.fim){ toast("Preencha data, início e término."); return; }
     if(d.inicio===d.fim){ toast("Início e término iguais. Confira os horários."); return; }
     if(!d.os && osObrigatoria(empOf(d))){ toast(`A ${empOf(d)} exige o nº da OS.`); return; }
@@ -1282,6 +1285,8 @@ function cronoForm(pre={}){
   </form>`;
 }
 async function encerrarOS(e, quando){
+  const lk = lockOf(e.data, empOf(e)); if(lk) throw {code:"db", message:`A OS ${e.os||"s/n"} está num período já fechado (${lk.numero}). Peça ao responsável para ajustar.`};
+  if(e.data!==today()) throw {code:"db", message:`A OS ${e.os||"s/n"} ficou aberta desde ${fdate(e.data).slice(0,5)} às ${e.inicio}. Toque em Encerrar na faixa e informe a hora real de término.`};
   let f = quando || nowHM();
   if(e.data===today() && hm(f)<=hm(e.inicio)){
     if(quando){ await removeAp(e); return null; } // trocou no mesmo minuto: nada foi trabalhado nela
@@ -1299,6 +1304,8 @@ async function submitCrono(){
   const base = {...(state.worker ? {} : rateFor(emp)), data, inicio:agora, fim:"", andamento:true, tipo:"auto", os, descricao:$("#cr-desc").value.trim(), cliente:$("#cr-unid").value.trim(), empresa:emp, emergencia:em, criadoEm:new Date().toISOString(),
     ...(em?{acion:{por:$("#cr-ac-por").value.trim(), as:agora, meio:$("#cr-ac-meio").value, motivo:$("#cr-ac-mot").value.trim()}}:{})};
   try{
+    const velhos = state.ap.filter(x=>x.andamento && x.data!==data && quem.includes(x.profissional||""));
+    if(velhos.length){ const v = velhos[0]; toast(`A OS ${v.os||"s/n"} ficou aberta desde ${fdate(v.data).slice(0,5)} às ${v.inicio}. Encerre ela primeiro (faixa do topo) informando a hora real de término.`); return; }
     for(const pr of quem){ for(const r of state.ap.filter(x=>x.andamento && x.profissional===pr)) await encerrarOS(r, agora);
       await save("apontamentos", {...base, id: (state.crIds ||= {})[pr||"_"] ||= uid(), profissional:pr}); }
     state.crIds = null; try{ if(quem[0]) localStorage.setItem("gaap-last-prof", JSON.stringify(quem)); }catch(err){}
@@ -1318,7 +1325,8 @@ function fechSituacao(f){
   if(d>0) return ["bad", `Vencido há ${d} dia${d>1?"s":""}${rc>0?" · parcial":""}`];
   return [rc>0?"warn":"info", d===0?"Vence hoje":`Vence em ${-d} dia${d<-1?"s":""}${rc>0?" · parcial":""}`];
 }
-function despReemb(de, ate, emp){ return state.desp.filter(x=>x.reembolsavel && x.data>=de && x.data<=ate && (!emp || (x.empresa||state.cfg.contratante||"")===emp)); }
+const despCobrada = x => state.fech.some(f=>(f.despIds||[]).includes(x.id));
+function despReemb(de, ate, emp){ return state.desp.filter(x=>x.reembolsavel && !x.orcId && x.data<=ate && !despCobrada(x) && (!emp || chaveEmp(x.empresa||state.cfg.contratante||"")===chaveEmp(emp))); }
 const despValor = x => Math.round((x.tipo==="Km rodado" ? numIn(x.km)*numIn(x.valorKm) : numIn(x.valor))*100)/100;
 function fechAlterado(f){ if(!f.snap) return false; const cur = fechRows(f.de, f.ate, f.empresa||""); return cur.length!==f.snap.aps.length || Math.abs(sumCalc(cur).valor - (+f.valor||0)) > 0.01; }
 function fechConflict(de, ate, emp){ return state.fech.find(f=>f.de<=ate && f.ate>=de && (!f.empresa || !emp || f.empresa===emp)); }
@@ -1344,7 +1352,9 @@ function updateFech(){
     ${cf?`<div class="warnbox">Esse período já tem o fechamento ${esc(cf.numero)} (${fdate(cf.de)} a ${fdate(cf.ate)}). Escolha outras datas.</div>`:""}
     ${!rows.length?`<div class="warnbox">Não há OS nesse período.</div>`:""}
     ${fechPendencias(de, ate, emp, rows)}`;
-  $("#fx-ok").disabled = !!cf || !rows.length;
+  const abertas = state.ap.filter(e=>e.andamento && e.data>=de && e.data<=ate && (!emp || chaveEmp(empOf(e))===chaveEmp(emp)));
+  if(abertas.length) $("#fx-prev").insertAdjacentHTML("beforeend", `<div class="warnbox">Não dá para fechar com cronômetro aberto no período: ${abertas.map(e=>`OS ${esc(e.os||"s/n")} (${esc(e.profissional||"")}, ${fdate(e.data).slice(0,5)})`).join(", ")}. Encerre antes.</div>`);
+  $("#fx-ok").disabled = !!cf || !rows.length || abertas.length>0;
 }
 document.addEventListener("change", e=>{ if(e.target.closest && e.target.closest("#fechForm")) updateFech(); });
 function fechPendencias(de, ate, emp, rows){
@@ -1354,7 +1364,8 @@ function fechPendencias(de, ate, emp, rows){
   if(sobre.size) itens.push(`${sobre.size} OS com horário sobreposto.`);
   if(semOS.length) itens.push(`${semOS.length} lançamento(s) sem nº de OS.`);
   if(forc.length) itens.push(`${forc.length} lançamento(s) com cálculo forçado (normal/50%/100%).`);
-  const and = state.ap.filter(e=>e.andamento && e.data>=de && e.data<=ate && (!emp || empOf(e)===emp)); if(and.length) itens.push(`${and.length} OS ainda em andamento (cronômetro aberto) — encerre antes de fechar, senão ficam de fora.`);
+  const longas = rows.filter(e=>calc(e).total>12*60); if(longas.length) itens.push(`${longas.length} lançamento(s) com mais de 12 h — confira se não é cronômetro esquecido aberto.`);
+  const and = state.ap.filter(e=>e.andamento && e.data>=de && e.data<=ate && (!emp || chaveEmp(empOf(e))===chaveEmp(emp))); if(and.length) itens.push(`${and.length} OS ainda em andamento (cronômetro aberto) — encerre antes de fechar, senão ficam de fora.`);
   return itens.length ? `<div class="warnbox"><b>Antes de fechar, confira:</b><br>${itens.map(esc).join("<br>")}</div>` : `<div class="line"><span class="muted">Conferência: nenhuma pendência encontrada.</span></div>`;
 }
 async function submitFech(){
@@ -1506,7 +1517,7 @@ async function repPdf(){
   if(state.rep.fotos) toast("Gerando PDF com fotos…");
   for(const [i,g] of groups.entries()){ if(groups.length>1 || i>0) doc.addPage(); await pdfGroup(doc, g.rows); }
   const rr = state.rep;
-  if(rr.modo==="periodo" && v){ const emp = rr.f.emp!==ALL ? rr.f.emp : ""; const ds = rr.reembIds ? state.desp.filter(x=>rr.reembIds.includes(x.id)) : despReemb(rr.de, rr.ate, emp); if(ds.length) pdfDespesas(doc, ds, sumCalc(all).valor); }
+  if(rr.modo==="periodo" && v){ const emp = rr.f.emp!==ALL ? rr.f.emp : ""; const ds = rr.reembIds ? state.desp.filter(x=>rr.reembIds.includes(x.id)) : rr.os ? state.desp.filter(x=>x.reembolsavel && (x.os||"")===rr.os) : (rr.f.prof!==ALL || rr.f.unid!==ALL) ? [] : despReemb(rr.de, rr.ate, emp).filter(x=>x.data>=rr.de); if(ds.length) pdfDespesas(doc, ds, sumCalc(all).valor); }
   pdfFooter(doc);
   offerFile(`controle-ordens-${repFileTag()}.pdf`, doc.output("blob"));
 }
@@ -1699,7 +1710,8 @@ async function submitDesp(){
   else { x.valor = numIn($("#dp-valor").value); delete x.km; delete x.valorKm; }
   if(!x.data || !(x.valor>0)){ toast("Informe a data e o valor (ou os km e o valor por km)."); return; }
   const lk = x.reembolsavel && state.fech.find(f=>(f.despIds||[]).includes(x.id)); if(lk){ toast(`Essa despesa já foi cobrada no fechamento ${lk.numero}.`); return; }
-  try{ x.id = id || (state.dpId ||= uid()); await save("despesas", x); state.dpId = null; state.modalDirty = false; closeModal(); toast(`Despesa de ${brl(x.valor)} salva`); }
+  const lkd = x.reembolsavel && !x.orcId && lockOf(x.data, x.empresa||state.cfg.contratante||"");
+  try{ x.id = id || (state.dpId ||= uid()); await save("despesas", x); state.dpId = null; state.modalDirty = false; closeModal(); toast(lkd ? `Despesa salva. O período ${lkd.numero} já foi fechado: ela entra no próximo fechamento da ${x.empresa||state.cfg.contratante}.` : `Despesa de ${brl(x.valor)} salva`); }
   catch(err){ toast(writeErr(err)); }
 }
 function fechCard(f){
@@ -1728,8 +1740,9 @@ function agingHtml(fechs){
 }
 function naoFechadoHtml(){
   const ate = ymd(addDays(parseYmd(today()),-1)), ls = state.ap.filter(e=>!e.orcId && !e.andamento && e.data<=ate && !lockOf(e.data, empOf(e)));
-  if(!ls.length) return ""; const t = sumCalc(ls), first = ls.reduce((m,e)=>e.data<m?e.data:m, ls[0].data), d = diasEntre(first, today());
-  return `<div class="banner ${d>35?"warn":""}"><span><b>${brl(t.valor)}</b> trabalhado e ainda não fechado (${ls.length} OS desde ${fdate(first)}${d>35?` — há ${d} dias`:""}).</span><button class="btn sm" data-act="irFechar" data-de="${first}">Fechar período</button></div>`;
+  const dp = state.desp.filter(x=>x.reembolsavel && !x.orcId && !despCobrada(x)), vdp = dp.reduce((s,x)=>s+despValor(x),0);
+  if(!ls.length && !dp.length) return ""; const t = sumCalc(ls), datas = [...ls.map(e=>e.data), ...dp.map(x=>x.data)], first = datas.reduce((m,x)=>x<m?x:m, datas[0]), d = diasEntre(first, today());
+  return `<div class="banner ${d>35?"warn":""}"><span><b>${brl(t.valor+vdp)}</b> ainda não fechado (${ls.length} OS${dp.length?` e ${dp.length} despesa(s) reembolsável(eis) de ${brl(vdp)}`:""} desde ${fdate(first)}${d>35?` — há ${d} dias`:""}).</span><button class="btn sm" data-act="irFechar" data-de="${first}">Fechar período</button></div>`;
 }
 function vFinanceiro(){
   const t = totalsReceber();
@@ -1739,7 +1752,8 @@ function vFinanceiro(){
   const keys = [...new Set([...apH.map(e=>ym(e.data)+"|"+(multiEmp?empOf(e):"")), ...recH.map(r=>(r.competencia||"")+"|"+(multiEmp?recEmp(r):""))])].filter(k=>!k.startsWith("|")).sort((a,b)=>b.localeCompare(a));
   const fechRecs = state.rec.filter(r=>r.origem==="fech"), shareCache = {};
   const share = (f, m, emp) => { const key = f.id+"|"+m+"|"+emp; if(key in shareCache) return shareCache[key]; const rows = fechRows(f.de, f.ate, f.empresa||""), tot = sumCalc(rows).valor; return shareCache[key] = tot ? sumCalc(rows.filter(e=>ym(e.data)===m && (!multiEmp || empOf(e)===emp))).valor/tot : 0; };
-  const mrows = keys.map(k=>{ const [m,emp] = k.split("|"); const c=sumCalc(apH.filter(e=>ym(e.data)===m && (!multiEmp || empOf(e)===emp)));
+  const mrows = keys.map(k=>{ const [m,emp] = k.split("|"); const doMes = apH.filter(e=>ym(e.data)===m && (!multiEmp || empOf(e)===emp)), c = sumCalc(doMes);
+    c.valor = Math.round((sumCalc(doMes.filter(e=>!lockedE(e))).valor + state.fech.reduce((s,f)=>s + (+f.valor||0)*share(f, m, emp), 0))*100)/100;
     const rec = recH.filter(r=>r.competencia===m && (!multiEmp || recEmp(r)===emp)).reduce((s,r)=>s+recBruto(r),0)
       + fechRecs.reduce((s,r)=>{ const f = state.fech.find(x=>x.id===r.fechId); return s + (f ? recBruto(r)*share(f, m, emp) : 0); }, 0)
       + state.fech.reduce((s,f)=>s + fechGlosa(f)*share(f, m, emp), 0);
@@ -1784,6 +1798,8 @@ function vFinanceiro(){
 }
 function recForm(o){
   const orcs = state.orc.filter(orcAberto), fs = state.fech.filter(f=>fechSaldo(f)>0.005 || f.id===o.id);
+  if(!o.o && fs.length){ o = {...o, o:"fech", id:fs[0].id}; }
+  if(o.o==="horas" && o.m){ const f = fs.find(f=>f.de.slice(0,7)<=o.m && f.ate.slice(0,7)>=o.m && (!f.empresa || !o.e || chaveEmp(f.empresa)===chaveEmp(o.e))); if(f) o = {...o, o:"fech", id:f.id, v:fechSaldo(f)}; }
   return `<header><h2>Registrar recebimento</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
   <form class="form" id="recForm">
     <div class="grid2"><label class="field"><span>Data do pagamento</span><input type="date" id="r-data" value="${today()}" required></label>
@@ -1804,13 +1820,15 @@ function recForm(o){
 }
 document.addEventListener("change", e=>{ if(e.target.id==="r-origem"){ const v=e.target.value; $("#r-comp-w").hidden=v!=="horas"; $("#r-orc-w").hidden=v!=="orc"; $("#r-fech-w").hidden=v!=="fech"; } });
 function nfTexto(f){
-  const aps = (f.snap?.aps) || fechRows(f.de, f.ate, f.empresa||""), cfg = f.snap?.cfg || state.cfg, T = rateFor(f.empresa||state.cfg.contratante||"");
+  const aps = (f.snap?.aps) || fechRows(f.de, f.ate, f.empresa||""), cfg = f.snap?.cfg || state.cfg;
+  const taxas = [...new Map(aps.map(e=>{ const t = {...rateFor(empOf(e)), ...(e.valorHora!=null?{valorHora:+e.valorHora}:{}), ...(e.extraPct!=null?{extraPct:+e.extraPct}:{}), ...(e.feriadoPct!=null?{feriadoPct:+e.feriadoPct}:{})}; return [JSON.stringify(t), t]; })).values()];
+  const T = taxas[0] || rateFor(f.empresa||state.cfg.contratante||"");
   const c = (()=>{ const ap = state.ap, cf = state.cfg; state.ap = aps; state.cfg = {...cf, ...cfg}; holCache = {}; try{ return sumCalc(aps); } finally { state.ap = ap; state.cfg = cf; holCache = {}; } })();
   const F = ficha(f.empresa||state.cfg.contratante||""), oss = [...new Set(aps.map(e=>e.os).filter(Boolean))];
   return `Prestação de serviços de manutenção mecânica industrial${F.razao||f.empresa?` para ${F.razao||f.empresa}`:""}, conforme fechamento ${f.numero}, período de ${fdate(f.de)} a ${fdate(f.ate)}.
 Ordens de serviço: ${oss.length?oss.join(", "):"-"}.
 Horas normais: ${fdec(c.n)} h; horas extras ${T.extraPct}%: ${fdec(c.e50)} h; horas extras ${T.feriadoPct}% (domingos e feriados): ${fdec(c.e100)} h. Total: ${fdec(c.total)} h.
-Valor da hora: ${brl(T.valorHora)}. Valor dos serviços: ${brl(+f.valor||0)}.${+f.reemb?`
+${taxas.length>1 ? `Valores da hora: ${taxas.map(t=>brl(t.valorHora)).join(", ")}.` : `Valor da hora: ${brl(T.valorHora)}.`} Valor dos serviços: ${brl(+f.valor||0)}.${+f.reemb?`
 Despesas reembolsáveis: ${brl(+f.reemb)}. Total: ${brl((+f.valor||0)+(+f.reemb))}.`:""}`;
 }
 document.addEventListener("submit", async e=>{
@@ -1830,7 +1848,9 @@ document.addEventListener("change", e=>{ if(e.target.id==="gl-os"){ const op = e
 async function submitRec(){
   const r = {data:$("#r-data").value, valor:numIn($("#r-valor").value), origem:$("#r-origem").value, obs:$("#r-obs").value.trim(), forma:$("#r-forma").value, ret:{}};
   RETS.forEach(([k])=>{ const v = numIn($("#r-ret-"+k).value); if(v>0) r.ret[k] = v; });
-  if(r.origem==="horas"){ r.competencia = $("#r-comp").value; r.empresa = $("#r-emp").value; }
+  if(r.origem==="horas"){ r.competencia = $("#r-comp").value; r.empresa = $("#r-emp").value;
+    const f = state.fech.find(f=>fechSaldo(f)>0.005 && f.de.slice(0,7)<=r.competencia && f.ate.slice(0,7)>=r.competencia && (!f.empresa || chaveEmp(f.empresa)===chaveEmp(r.empresa)));
+    if(f){ r.origem = "fech"; r.fechId = f.id; delete r.competencia; r.empresa = f.empresa||""; toast(`Esse mês está no fechamento ${f.numero}: o recebimento foi ligado a ele.`); } }
   else if(r.origem==="fech"){ r.fechId = $("#r-fech").value; const f = state.fech.find(x=>x.id===r.fechId); if(!f){ toast("Escolha o fechamento."); return; } r.empresa = f.empresa||""; }
   else r.orcId = $("#r-orc").value;
   if(!r.data || !(r.valor>0)){ toast("Informe a data e um valor maior que zero."); return; }
@@ -2131,8 +2151,14 @@ const A = {
   async pushTestar(b){ b.disabled = true; const {data, error} = await sb.functions.invoke("lembretes", {body:{teste:true}}); b.disabled = false; toast(error ? "Não consegui enviar o teste." : data?.enviados ? "Teste enviado. Deve chegar em instantes." : "Nenhum aparelho ativo encontrado. Toque em Desativar e ative de novo."); },
   async pushDesativar(){ try{ const reg = await navigator.serviceWorker.getRegistration("/sw.js") || await navigator.serviceWorker.ready; const sub = await reg?.pushManager.getSubscription(); if(sub){ await sb.from("push_inscricoes").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); } }catch(err){} state.pushOn = false; state.rendered = null; render(); toast("Lembretes desativados neste aparelho."); },
   cronoNovo(){ state.crIds = null; openModal(cronoForm()); setTimeout(()=>$("#cr-os")?.focus(), 50); },
-  async cronoEncerrar(b){ const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; b.disabled = true;
-    try{ const n = await encerrarOS(e); render(); toastAcao(`OS ${n.os||"s/n"} encerrada: ${n.inicio}–${n.fim} (${fh(calc(n).total)}).`, "Revisar", ()=>{ const x = state.ap.find(y=>y.id===n.id); if(x){ openModal(apForm(x)); updateApPreview(); } }); }
+  async cronoEncerrar(b){ const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return;
+    if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; setTimeout(()=>{ if(b.isConnected){ delete b.dataset.armed; b.textContent="Encerrar"; } }, 4000); return; }
+    const lk = lockOf(e.data, empOf(e)); if(lk){ toast(`Essa OS está num período já fechado (${lk.numero}). ${state.worker?"Peça ao responsável para ajustar.":"Reabra o fechamento para ajustar."}`); return; }
+    if(e.data!==today()){ const j = state.cfg.jornada[parseYmd(e.data).getDay()]||{}; const fj = j.fim && hm(j.fim)>hm(e.inicio) ? j.fim : "";
+      openModal(apForm({...e, fim:fj})); updateApPreview(); toast(`Cronômetro de ${fdate(e.data).slice(0,5)}: confira a hora real de término e salve.`); return; }
+    b.disabled = true;
+    try{ const n = await encerrarOS(e); render();
+      toastAcao(`OS ${n.os||"s/n"} encerrada: ${n.inicio}–${n.fim} (${fh(calc(n).total)}).`, "Desfazer", async ()=>{ const x = state.ap.find(y=>y.id===n.id); if(x){ await save("apontamentos", {...x, fim:"", andamento:true}); render(); toast("Cronômetro voltou a contar."); } }); }
     catch(err){ b.disabled = false; toast(writeErr(err)); } },
   cronoTrocar(b){ const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return; const quem = state.ap.filter(x=>x.andamento && x.os===e.os && x.inicio===e.inicio && x.data===e.data).map(x=>x.profissional).filter(Boolean);
     state.crIds = null; openModal(cronoForm({troca:true, profs: quem.length?quem:(e.profissional?[e.profissional]:[]), unid:e.cliente, emp:e.empresa})); setTimeout(()=>$("#cr-os")?.focus(), 50); },
