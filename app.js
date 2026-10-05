@@ -520,14 +520,34 @@ let tt;
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.hidden=false; clearTimeout(tt); tt=setTimeout(()=>t.hidden=true, 3200); }
 function toastAcao(msg, label, fn){ const t=$("#toast"); t.innerHTML = `<span>${esc(msg)}</span> <button type="button" class="btn sm" id="toast-acao">${esc(label)}</button>`; t.hidden=false; clearTimeout(tt);
   $("#toast-acao").onclick = async ()=>{ t.hidden = true; try{ await fn(); }catch(err){ toast(writeErr(err)); } }; tt=setTimeout(()=>t.hidden=true, 8000); }
-function openModal(html, cls){ state.modalDirty = false; state.closeArmed = 0; const m=$("#modal"); m.innerHTML=`<div class="sheet ${cls||""}" role="dialog" aria-modal="true">${html}</div>`; m.hidden=false; const f=m.querySelector("input,select,textarea"); if(f && window.innerWidth>700) f.focus(); }
-function closeModal(){ const m=$("#modal"); m.hidden=true; m.innerHTML=""; state.apIds = null; state.modalDirty = false; if(state.renderPend){ state.renderPend = false; scheduleRender(); } }
+function openModal(html, cls){ state.modalDirty = false; state.closeArmed = 0; const m=$("#modal"); voltar.empilhar("modal"); m.innerHTML=`<div class="sheet ${cls||""}" role="dialog" aria-modal="true">${html}</div>`; m.hidden=false; const f=m.querySelector("input,select,textarea"); if(f && window.innerWidth>700) f.focus(); }
+function closeModal(){ const m=$("#modal"); const estava = !m.hidden; m.hidden=true; m.innerHTML=""; if(estava) voltar.desempilhar("modal"); state.apIds = null; state.modalDirty = false; if(state.renderPend){ state.renderPend = false; scheduleRender(); } }
 function tryCloseModal(){
   if(state.modalDirty && Date.now() - (state.closeArmed||0) > 4000){ state.closeArmed = Date.now(); toast("Há dados não salvos. Toque fora de novo para descartar."); return; }
   if($("#dayForm")) rascunho.limpar();
   closeModal();
 }
 $("#modal").addEventListener("click", e=>{ if(e.target.id==="modal") tryCloseModal(); });
+/* botão Voltar do Android (e gesto de voltar): fecha a foto, depois a janela, depois volta ao Painel; só então sai do app */
+const voltar = {
+  ignorar: 0,
+  empilhar(tipo){ if(history.state?.gaap!==tipo){ try{ history.pushState({gaap:tipo}, ""); }catch(e){} } },
+  desempilhar(tipo){ if(history.state?.gaap===tipo){ this.ignorar++; history.back(); } },
+  ajustar(){ // depois de um "voltar" nosso, garante a entrada certa para o que ficou aberto
+    const foto = $("#fotoview") && !$("#fotoview").hidden;
+    if(foto) this.empilhar("foto"); else if(!$("#modal").hidden) this.empilhar("modal"); else if(!["painel","worker"].includes(state.view)) this.empilhar("tela"); }
+};
+window.addEventListener("popstate", ()=>{
+  if(voltar.ignorar){ voltar.ignorar--; voltar.ajustar(); return; }
+  const fv = $("#fotoview");
+  if(fv && !fv.hidden){ fv.hidden = true; fv.innerHTML = ""; voltar.ajustar(); return; }
+  if(!$("#modal").hidden){ tryCloseModal(); if(!$("#modal").hidden) voltar.empilhar("modal"); else voltar.ajustar(); return; }
+  if(state.ready && !state.worker && state.view!=="painel"){
+    if(state.view==="ajustes" && state.cfgDirty){ toast("Há alterações não salvas em Ajustes. Toque em Salvar ajustes, ou volte de novo para sair sem salvar."); state.cfgDirty = false; voltar.empilhar("tela"); return; }
+    if(state.view==="orcEdit" && state.orcDirty){ toast("Há alterações não salvas no orçamento. Volte de novo para sair sem salvar."); state.orcDirty = false; voltar.empilhar("tela"); return; }
+    state.view = "painel"; state.rendered = null; render(); window.scrollTo(0,0);
+  }
+});
 document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("#modal").hidden) tryCloseModal(); });
 document.addEventListener("input", e=>{ if(e.target.closest("#apForm,#dayForm,#fechForm,#recForm,#despForm")) state.modalDirty = true;
   if(e.target.closest("#cfgForm")){ state.cfgDirty = true; const a = $("#cfg-aviso"); if(a) a.hidden = false; } });
@@ -771,13 +791,14 @@ function vWorker(){
   <div class="summary"><span><b>${list.length}</b> OS</span><span><i class="dot d-n"></i>Normal <b>${fdec(c.n)} h</b></span><span><i class="dot d-50"></i>Extra ${pct50()} <b>${fdec(c.e50)} h</b></span><span><i class="dot d-100"></i>Extra ${pct100()} <b>${fdec(c.e100)} h</b></span><span>Total <b>${fdec(c.total)} h</b></span></div>
   ${list.length ? `<div class="list">${Object.keys(byDay).sort().reverse().map(d=>`<div class="dayhead"><span>${WD[parseYmd(d).getDay()]}, ${fdate(d)}</span><span class="mono">${fdec(sumCalc(byDay[d]).total)} h</span></div>${byDay[d].sort((a,b)=>a.inicio.localeCompare(b.inicio)).map(e=>apItem(e,false,overlaps(byDay[d]))).join("")}`).join("")}</div>`
     : `<div class="empty"><b>Nenhuma OS em ${ymLabel(state.month)}</b>Toque em “Lançar OS do dia” para registrar suas ordens de serviço.</div>`}
-  <div style="margin-top:16px">${lembretesHtml()}</div>
+  <div style="margin-top:16px">${instalarHtml()}${lembretesHtml()}</div>
   <p class="muted" style="margin-top:16px">Você está lançando como <b>${esc(me)}</b>. <button class="btn sm" data-act="sair">Sair</button></p>`;
 }
 /* ---------- MAIS ---------- */
 function vMais(){
   const card = (view, t, d, act) => `<button class="maiscard" data-act="${act||"nav"}" ${view?`data-view="${view}"`:""}><b>${t}</b><span class="muted">${d}</span></button>`;
   return `<div class="pagehead"><div><span class="eyebrow">Mais</span><h1>Ferramentas</h1></div></div>
+  ${instalarHtml()}
   <div class="maisgrid">
     ${card("equipe","Equipe: acerto e pagamentos","Quanto pagar a cada técnico, vales, recibos")}
     ${card("equipe","Documentos e validades","ASO, NR-10, NR-35, integração, certidões")}
@@ -1579,6 +1600,16 @@ async function repXlsx(){
 function fechRows(de, ate, emp){ return state.ap.filter(e=>e.data>=de && e.data<=ate && !e.orcId && !e.andamento && (!emp || empOf(e)===emp)); }
 /* ---------- lembretes (notificações no celular) ---------- */
 const ehIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
+let pedidoInstalar = null;
+window.addEventListener("beforeinstallprompt", e=>{ e.preventDefault(); pedidoInstalar = e; scheduleRender(); });
+window.addEventListener("appinstalled", ()=>{ pedidoInstalar = null; toast("App instalado. Abra o GAAP pelo ícone na tela inicial."); scheduleRender(); });
+const ehAndroid = () => /android/i.test(navigator.userAgent);
+function instalarHtml(){
+  if(instalado()) return "";
+  if(pedidoInstalar) return `<div class="banner"><span>Instale o GAAP no celular: abre pelo ícone, em tela cheia, e funciona sem internet.</span><button class="btn sm primary" data-act="instalarApp">Instalar app</button></div>`;
+  if(ehAndroid()) return `<div class="banner"><span>Para instalar no Android: no Chrome, toque nos ⋮ (três pontos) → <b>Instalar app</b> ou <b>Adicionar à tela inicial</b>.</span></div>`;
+  return "";
+}
 const instalado = () => window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
 const pushSuportado = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 function b64u(s){ const p = "=".repeat((4 - s.length % 4) % 4), b = atob((s + p).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from(b, c=>c.charCodeAt(0)); }
@@ -1592,7 +1623,7 @@ function lembretesHtml(){
   if(!pushSuportado()) corpo = ehIOS() && !instalado()
     ? `<p style="margin:0">No iPhone os lembretes só funcionam com o app instalado:</p><ol style="margin:4px 0 0 18px;padding:0"><li>Abra este endereço no <b>Safari</b>.</li><li>Toque em <b>Compartilhar</b> (quadrado com seta) → <b>Adicionar à Tela de Início</b>.</li><li>Abra o GAAP pelo ícone novo e volte aqui para ativar.</li></ol>`
     : `<p class="muted" style="margin:0">Este navegador não aceita notificações. No iPhone, instale o app pela Tela de Início (Safari → Compartilhar → Adicionar à Tela de Início).</p>`;
-  else if(Notification.permission==="denied") corpo = `<p style="margin:0">As notificações estão bloqueadas para este app. Libere em Ajustes do celular → Notificações → GAAP e toque em Ativar de novo.</p><div class="row"><button class="btn" data-act="pushAtivar">Ativar de novo</button></div>`;
+  else if(Notification.permission==="denied") corpo = `<p style="margin:0">As notificações estão bloqueadas para este app. ${ehAndroid() ? (instalado() ? "Segure o ícone do GAAP → <b>Informações do app</b> → <b>Notificações</b> → permitir" : "No Chrome, toque no ícone ao lado do endereço → <b>Permissões</b> → <b>Notificações</b> → permitir") : "Libere em Ajustes do celular → Notificações → GAAP"} e toque em Ativar de novo.</p><div class="row"><button class="btn" data-act="pushAtivar">Ativar de novo</button></div>`;
   else if(state.pushOn) corpo = `<p style="margin:0"><span class="pill good">Ativado neste aparelho</span></p><div class="row"><button class="btn" data-act="pushTestar">Enviar um teste</button><button class="btn" data-act="pushDesativar">Desativar</button></div>`;
   else corpo = `<div class="row"><button class="btn primary" data-act="pushAtivar">Ativar lembretes neste aparelho</button></div>`;
   return `<div class="panel form" id="lembretes"><h3>Lembretes no celular</h3>
@@ -2459,7 +2490,7 @@ document.addEventListener("change", async e=>{
 /* ---------- actions ---------- */
 const A = {
   nav(b){ if(state.view==="ajustes" && state.cfgDirty && b.dataset.view!=="ajustes"){ if(!b.dataset.armed){ b.dataset.armed="1"; toast("Há alterações não salvas em Ajustes. Toque em Salvar ajustes, ou toque de novo para sair sem salvar."); setTimeout(()=>delete b.dataset.armed,4000); return; } state.cfgDirty=false; }
-    if(state.view==="orcEdit" && state.orcDirty && b.dataset.view!=="orcEdit"){ if(!b.dataset.armed){ b.dataset.armed="1"; toast("Há alterações não salvas no orçamento. Toque de novo para sair sem salvar."); setTimeout(()=>delete b.dataset.armed,4000); return; } } state.orcDirty=false; state.view=b.dataset.view; state.rendered=null; render(); window.scrollTo(0,0); },
+    if(state.view==="orcEdit" && state.orcDirty && b.dataset.view!=="orcEdit"){ if(!b.dataset.armed){ b.dataset.armed="1"; toast("Há alterações não salvas no orçamento. Toque de novo para sair sem salvar."); setTimeout(()=>delete b.dataset.armed,4000); return; } } state.orcDirty=false; state.view=b.dataset.view; state.rendered=null; render(); window.scrollTo(0,0); if(state.view!=="painel") voltar.empilhar("tela"); else voltar.desempilhar("tela"); },
   month(b){ state.month = shiftYm(state.month, +b.dataset.d); render(); },
   newDay(){ dayOpen(state.view==="horas" && ym(today())!==state.month ? state.month+"-01" : today()); },
   dayAdd(){ const d=state.day, last=d.rows[d.rows.length-1]; const r=blankRow(); r.ini = last&&last.fim ? nextStart(last.fim) : ""; d.rows.push(r); renderDayRows(); updateDay(); const os=document.querySelectorAll('#d-rows [data-f="os"]'); os[os.length-1]?.focus(); },
@@ -2482,8 +2513,8 @@ const A = {
   fotoDel(b){ state.apFotos = (state.apFotos||[]).filter(x=>x!==b.dataset.id); const box=$("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); },
   async fotoVer(b){ await assinarFotos([b.dataset.id]); const src = blobSrc(b.dataset.id);
     let v = $("#fotoview"); if(!v){ v = document.createElement("div"); v.id = "fotoview"; v.className = "modal fotoview"; document.body.appendChild(v); }
-    v.innerHTML = `<div class="sheet wide" role="dialog" aria-modal="true"><header><h2>Foto${fotoTipo(b.dataset.id)?` · ${fotoTipo(b.dataset.id)}`:""}</h2><button class="iconbtn" data-act="fotoVoltar" aria-label="Fechar">✕</button></header><img src="${esc(src)}" alt="Foto do serviço" style="width:100%;border-radius:8px"></div>`; v.hidden = false; },
-  fotoVoltar(){ const v = $("#fotoview"); if(v){ v.hidden = true; v.innerHTML = ""; } },
+    voltar.empilhar("foto"); v.innerHTML = `<div class="sheet wide" role="dialog" aria-modal="true"><header><h2>Foto${fotoTipo(b.dataset.id)?` · ${fotoTipo(b.dataset.id)}`:""}</h2><button class="iconbtn" data-act="fotoVoltar" aria-label="Fechar">✕</button></header><img src="${esc(src)}" alt="Foto do serviço" style="width:100%;border-radius:8px"></div>`; v.hidden = false; },
+  fotoVoltar(){ const v = $("#fotoview"); if(v && !v.hidden){ v.hidden = true; v.innerHTML = ""; voltar.desempilhar("foto"); } },
   now(b){ $("#"+b.dataset.t).value = nowHM(); updateApPreview(); },
   closeModal(){ tryCloseModal(); },
   repModo(b){ state.rep.modo = b.dataset.m; render(); },
@@ -2564,6 +2595,7 @@ const A = {
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("recebimentos", y); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   recarregar(){ location.reload(); },
+  async instalarApp(){ if(!pedidoInstalar) return; const p = pedidoInstalar; pedidoInstalar = null; try{ await p.prompt(); await p.userChoice; }catch(e){} state.rendered = null; render(); },
   sincronizar(){ if(!navigator.onLine){ toast("Sem internet. Os itens serão enviados sozinhos quando a conexão voltar."); return; } sincronizar(); },
   async fechAprov(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return;
     if(f.aprovacao){ const a = f.aprovacao, linhas = (f.snap?.aps||[]);

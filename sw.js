@@ -2,8 +2,8 @@
 // - arquivos do app: tenta a rede primeiro e guarda uma cópia; sem internet usa a cópia
 // - bibliotecas (CDN, fontes): usa a cópia guardada (versões fixas)
 // - dados (Supabase) não passam por aqui: o app guarda os dados e a fila de envio no IndexedDB
-const CACHE = "gaap-app-v1";
-const SHELL = ["/", "/app.js", "/style.css", "/config.js", "/logo.js", "/logo.jpg", "/icon-192.png", "/manifest.webmanifest",
+const CACHE = "gaap-app-v2";
+const SHELL = ["/", "/app.js", "/style.css", "/config.js", "/logo.js", "/logo.jpg", "/icon-192.png", "/badge-96.png", "/manifest.webmanifest",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"];
@@ -37,7 +37,7 @@ self.addEventListener("fetch", e => {
 self.addEventListener("push", e => {
   let d = {}; try { d = e.data ? e.data.json() : {}; } catch (err) { d = { body: e.data && e.data.text() }; }
   e.waitUntil(self.registration.showNotification(d.title || "GAAP Gestão", {
-    body: d.body || "", icon: "/icon-192.png", badge: "/icon-192.png", data: { url: d.url || "/" }, tag: d.tag || "gaap-lembrete"
+    body: d.body || "", icon: "/icon-192.png", badge: "/badge-96.png", data: { url: d.url || "/" }, tag: d.tag || "gaap-lembrete"
   }));
 });
 self.addEventListener("notificationclick", e => {

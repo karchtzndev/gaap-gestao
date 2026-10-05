@@ -348,3 +348,5 @@ input,select,textarea{font-size:16px}
 /* sem internet */
 .synctag{font:inherit;font-size:.74rem;font-weight:700;padding:4px 10px;border-radius:99px;border:1px solid var(--line);background:var(--warn-bg,#fff4d6);color:var(--warn,#8a5a00);cursor:pointer;white-space:nowrap;min-height:32px}
 .synctag.off{background:#eceff3;color:#3b4552}
+/* Android: puxar a tela para baixo dentro de uma janela não recarrega a página */
+.modal,.sheet{overscroll-behavior:contain}
