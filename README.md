@@ -79,6 +79,7 @@ e cole o conteúdo de cada arquivo no modelo correspondente:
 | `010_desempenho.sql` | Regras de acesso mais rápidas, uso do armazenamento, backup incremental de fotos |
 | `011_ideias.sql` | Pagamentos da equipe, equipamentos, documentos (bucket `documentos`) e aprovação da medição pelo cliente |
 | `012_vigencia_taxa.sql` | Valor da hora pela data do serviço (reajuste com vigência) também nos lançamentos dos funcionários |
+| `013_ajustes_seguranca.sql` | Tira do acesso anônimo a criação de link de aprovação; índice para os lembretes |
 
 ## Rotinas automáticas
 
