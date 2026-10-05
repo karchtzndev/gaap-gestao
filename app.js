@@ -369,14 +369,14 @@ new MutationObserver(()=>{ clearTimeout(fotoT); fotoT = setTimeout(async ()=>{
   imgs.forEach(i=>{ const u = assetUrls[i.dataset.fid]; if(u){ i.src = u; i.dataset.ok = "1"; } });
 }, 60); }).observe(document.body, {childList:true, subtree:true});
 let rq = 0;
-function scheduleRender(){ cancelAnimationFrame(rq); rq = requestAnimationFrame(()=>{ if(!state.ready) return; if(["orcEdit","ajustes"].includes(state.view) && state.rendered===state.view) return; if(state.rendered==="login" && $("#loginForm")) return; render(); }); }
+function scheduleRender(){ if(!$("#modal").hidden){ state.renderPend = true; return; } cancelAnimationFrame(rq); rq = requestAnimationFrame(()=>{ if(!state.ready) return; if(["orcEdit","ajustes"].includes(state.view) && state.rendered===state.view) return; if(state.rendered==="login" && $("#loginForm")) return; render(); }); }
 /* ---------- toast & modal ---------- */
 let tt;
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.hidden=false; clearTimeout(tt); tt=setTimeout(()=>t.hidden=true, 3200); }
 function toastAcao(msg, label, fn){ const t=$("#toast"); t.innerHTML = `<span>${esc(msg)}</span> <button type="button" class="btn sm" id="toast-acao">${esc(label)}</button>`; t.hidden=false; clearTimeout(tt);
   $("#toast-acao").onclick = async ()=>{ t.hidden = true; try{ await fn(); }catch(err){ toast(writeErr(err)); } }; tt=setTimeout(()=>t.hidden=true, 8000); }
 function openModal(html, cls){ state.modalDirty = false; state.closeArmed = 0; const m=$("#modal"); m.innerHTML=`<div class="sheet ${cls||""}" role="dialog" aria-modal="true">${html}</div>`; m.hidden=false; const f=m.querySelector("input,select,textarea"); if(f && window.innerWidth>700) f.focus(); }
-function closeModal(){ const m=$("#modal"); m.hidden=true; m.innerHTML=""; state.apIds = null; state.modalDirty = false; }
+function closeModal(){ const m=$("#modal"); m.hidden=true; m.innerHTML=""; state.apIds = null; state.modalDirty = false; if(state.renderPend){ state.renderPend = false; scheduleRender(); } }
 function tryCloseModal(){
   if(state.modalDirty && Date.now() - (state.closeArmed||0) > 4000){ state.closeArmed = Date.now(); toast("Há dados não salvos. Toque fora de novo para descartar."); return; }
   if($("#dayForm")) rascunho.limpar();
@@ -384,7 +384,8 @@ function tryCloseModal(){
 }
 $("#modal").addEventListener("click", e=>{ if(e.target.id==="modal") tryCloseModal(); });
 document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("#modal").hidden) tryCloseModal(); });
-document.addEventListener("input", e=>{ if(e.target.closest("#apForm,#dayForm,#fechForm,#recForm,#despForm")) state.modalDirty = true; });
+document.addEventListener("input", e=>{ if(e.target.closest("#apForm,#dayForm,#fechForm,#recForm,#despForm")) state.modalDirty = true;
+  if(e.target.closest("#cfgForm")){ state.cfgDirty = true; const a = $("#cfg-aviso"); if(a) a.hidden = false; } });
 const rascunho = {
   key(){ return "gaap-rascunho-dia-" + (session?.user?.id || ""); },
   salvar(){ try{ const d = state.day; if($("#dayForm") && d && d.rows.some(r=>r.os||r.desc||r.fim)) localStorage.setItem(this.key(), JSON.stringify(d)); }catch(err){} },
@@ -466,7 +467,7 @@ async function compressImage(file, stamp){
   try{
     const url = URL.createObjectURL(file);
     const img = await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url; });
-    const k = Math.min(1, 1600/Math.max(img.naturalWidth, img.naturalHeight));
+    const k = Math.min(1, 1280/Math.max(img.naturalWidth, img.naturalHeight));
     const c = document.createElement("canvas"); c.width = Math.round(img.naturalWidth*k); c.height = Math.round(img.naturalHeight*k);
     const g = c.getContext("2d"); g.drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
     if(stamp){ const fs = Math.max(10, Math.round(c.width/42)), mg = Math.round(fs*0.6), maxW = c.width - mg*2;
@@ -477,11 +478,11 @@ async function compressImage(file, stamp){
       g.fillStyle = "rgba(0,0,0,.55)"; g.fillRect(0, c.height-h, c.width, h);
       g.fillStyle = "#fff"; g.textBaseline = "top";
       linhas.forEach((l,i)=>{ let t = l; while(g.measureText(t).width > maxW && t.length > 4) t = t.slice(0,-2); g.fillText(t===l?t:t+"…", mg, c.height - h + mg + i*lh); }); }
-    const b = await new Promise(res=>c.toBlob(res, "image/jpeg", 0.8));
+    const b = await new Promise(res=>c.toBlob(res, "image/jpeg", 0.7));
     return b || file;
   }catch(e){ return file; }
 }
-function photoErr(err){ const c = err && err.code; return c==="quota_or_state" ? "Espaço para fotos esgotado. Apague fotos antigas." : c==="too_large" ? "Foto muito grande." : c==="unsupported_type" ? "Formato de imagem não aceito. Use JPG ou PNG." : c==="rate_limited" ? "Muitas fotos de uma vez. Espere um pouco e tente de novo." : "Não consegui enviar a foto. Verifique a conexão."; }
+function photoErr(err){ const c = err && err.code; if(/quota|exceed|limit|storage/i.test(err?.message||"") && c!=="too_large") return "Espaço para fotos do plano gratuito esgotado. Baixe um backup completo e fale com o responsável."; return c==="quota_or_state" ? "Espaço para fotos esgotado. Apague fotos antigas." : c==="too_large" ? "Foto muito grande." : c==="unsupported_type" ? "Formato de imagem não aceito. Use JPG ou PNG." : c==="rate_limited" ? "Muitas fotos de uma vez. Espere um pouco e tente de novo." : "Não consegui enviar a foto. Verifique a conexão."; }
 function enviandoFotos(delta){
   state.enviando = Math.max(0, (state.enviando||0) + delta);
   document.querySelectorAll("#d-save,#apForm [type=submit],#despForm [type=submit]").forEach(b=>{ if(state.enviando){ b.dataset.txt ||= b.textContent; b.disabled = true; b.textContent = "Enviando fotos…"; } else if(b.dataset.txt){ b.disabled = false; b.textContent = b.dataset.txt; delete b.dataset.txt; } });
@@ -512,7 +513,7 @@ document.addEventListener("change", async e=>{
   if(t.id==="dp-orc" && t.value){ const o = state.orc.find(x=>x.id===t.value); if(o?.cliente?.nome && $("#dp-emp")) $("#dp-emp").value = o.cliente.nome; }
   if(t.id==="dp-tipo"){ const k = t.value==="Km rodado"; $("#dp-km-w").hidden = !k; $("#dp-v-w").hidden = k; }
   if(/^f-foto/.test(t.id) && t.files.length){ const ids = await uploadPhotos([...t.files], {tipo:t.dataset.tipo||"durante", os:$("#f-os")?.value.trim(), unid:$("#f-cli")?.value.trim()}); state.apFotos = [...(state.apFotos||[]), ...ids]; const box=$("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); t.value=""; }
-  if(t.dataset && t.dataset.fotoRow!=null && t.files.length){ const i=+t.dataset.fotoRow, r=state.day.rows[i]; const ids = await uploadPhotos([...t.files], {tipo:"durante", os:r.os, unid:r.cli||state.day.unid}); r.fotoMeta = {...(r.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; r.fotos = [...(r.fotos||[]), ...ids]; const lb=document.querySelector(`label[for="d-foto-${i}"]`); if(lb) lb.textContent = `Fotos (${r.fotos.length})`; t.value=""; }
+  if(t.dataset && t.dataset.fotoRow!=null && t.files.length){ const i=+t.dataset.fotoRow, r=state.day.rows[i]; const ids = await uploadPhotos([...t.files], {tipo:t.dataset.tipo||"durante", os:r.os, unid:r.cli||state.day.unid}); r.fotoMeta = {...(r.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; r.fotos = [...(r.fotos||[]), ...ids]; renderDayRows(); updateDay(); const lb=document.querySelector(`label[for="d-foto-${i}"]`); if(lb) lb.textContent = `Fotos (${r.fotos.length})`; t.value=""; }
 });
 function apItem(e, showDate, bad){
   const c = calc(e), lk = lockedE(e), nf = (e.fotos||[]).length;
@@ -773,7 +774,8 @@ function osHistHtml(os){
   <tbody>${g.rows.map(e=>{ const c=calc(e); return `<tr><td class="mono">${fdate(e.data)}</td><td>${esc(e.profissional||"-")}</td><td class="mono">${esc(e.inicio)}</td><td class="mono">${esc(e.fim)}</td><td class="r mono">${fdec(c.total)}</td><td class="r mono">${c.e50+c.e100?fdec(c.e50+c.e100):""}</td></tr>`; }).join("")}</tbody></table></div>
   <footer><button class="btn" data-act="osPdf" data-os="${esc(os)}">PDF desta OS</button><button class="btn primary" data-act="osLancar" data-os="${esc(os)}">Lançar mais horas nesta OS</button></footer>`;
 }
-document.addEventListener("input", e=>{ if(e.target.id==="h-os-q"){ state.osQ = e.target.value; const pos = e.target.selectionStart; render(); const i=$("#h-os-q"); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(err){} } } });
+let osQT = 0;
+document.addEventListener("input", e=>{ if(e.target.id==="h-os-q"){ state.osQ = e.target.value; clearTimeout(osQT); osQT = setTimeout(()=>{ const pos = $("#h-os-q")?.selectionStart; render(); const i=$("#h-os-q"); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(err){} } }, 250); } });
 function apForm(e){
   const isNew = !e.id;
   const clientes = [...new Set([...lines(state.cfg.unidades), ...state.ap.map(x=>x.cliente).filter(Boolean)])];
@@ -952,7 +954,7 @@ function renderDayRows(){
       <label class="field"><span>Acionado às</span><input type="time" data-f="acAs" value="${esc(r.acAs||"")}"></label>
       <label class="field"><span>Como</span><select data-f="acMeio"><option value="">—</option>${MEIOS.map(m=>`<option ${r.acMeio===m?"selected":""}>${m}</option>`).join("")}</select></label>
       <label class="field"><span>Motivo / equipamento</span><input data-f="acMot" value="${esc(r.acMot||"")}" placeholder="Ex.: elevador 02 parado"></label></div>`:""}
-    ${assets?`<span class="fotos"><label class="btn sm" for="d-foto-${i}">Fotos${(r.fotos||[]).length?` (${r.fotos.length})`:""}</label><input type="file" id="d-foto-${i}" data-foto-row="${i}" accept="image/*" multiple hidden></span>`:""}
+    ${assets?`<span class="fotos"><span class="muted" style="font-size:.8rem">Fotos:</span>${["antes","durante","depois"].map(tp=>`<label class="btn sm" for="d-foto-${i}-${tp}">${tp[0].toUpperCase()+tp.slice(1)}</label><input type="file" id="d-foto-${i}-${tp}" data-foto-row="${i}" data-tipo="${tp}" accept="image/*" multiple hidden>`).join("")}${(r.fotos||[]).length?`<span class="thumbs mini">${thumbs(r.fotos,false)}</span>`:""}</span>`:""}
     <div class="info" id="d-info-${i}"></div>
   </div>`).join("");
 }
@@ -1491,9 +1493,12 @@ async function imgData(id){
   try{
     await assinarFotos([id]);
     const res = await fetch(blobSrc(id)); if(!res.ok) throw 0; const b = await res.blob();
-    const url = await new Promise((ok,no)=>{ const fr=new FileReader(); fr.onload=()=>ok(fr.result); fr.onerror=no; fr.readAsDataURL(b); });
-    const im = await new Promise((ok,no)=>{ const i=new Image(); i.onload=()=>ok(i); i.onerror=no; i.src=url; });
-    return {url, w:im.naturalWidth, h:im.naturalHeight, fmt: b.type==="image/png" ? "PNG" : "JPEG"};
+    const u0 = URL.createObjectURL(b);
+    const im = await new Promise((ok,no)=>{ const i=new Image(); i.onload=()=>ok(i); i.onerror=no; i.src=u0; });
+    const k = Math.min(1, 800/Math.max(im.naturalWidth, im.naturalHeight)), cv = document.createElement("canvas");
+    cv.width = Math.round(im.naturalWidth*k); cv.height = Math.round(im.naturalHeight*k); cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height); URL.revokeObjectURL(u0);
+    const url = cv.toDataURL("image/jpeg", 0.6);
+    return {url, w:cv.width, h:cv.height, fmt:"JPEG"};
   }catch(e){ return null; }
 }
 async function pdfFotos(doc, rows){
@@ -1852,8 +1857,8 @@ function vFinanceiro(){
   :fechs.length?"":`<div class="empty"><b>Nenhum período fechado</b>Em Relatórios, escolha “Período / fechamento” e toque em “Fechar período…” quando mandar o relatório para a empresa.</div>`}</section>
   ${byEmp.length?`<section class="section"><header><h2>Horas a receber por empresa</h2></header><div class="tablewrap"><table><thead><tr><th>Empresa</th><th class="r">Produzido</th><th class="r">Recebido</th><th class="r">A receber</th></tr></thead><tbody>${byEmp.map(r=>`<tr><td>${esc(r.emp||"(sem empresa)")}</td><td class="r mono">${brl(r.v)}</td><td class="r mono">${brl(r.rc)}</td><td class="r mono"><b>${brl(r.saldo)}</b></td></tr>`).join("")}</tbody></table></div></section>`:""}
   <section class="section"><header><h2>Horas por mês${multiEmp?" e empresa":""}</h2></header>
-  ${mrows.length?`<div class="tablewrap"><table><thead><tr><th>Competência</th>${multiEmp?"<th>Empresa</th>":""}<th class="r">Normal</th><th class="r">Extra ${pct50()}</th><th class="r">Extra ${pct100()}</th><th class="r">Valor</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
-  <tbody>${mrows.map(r=>`<tr><td style="text-transform:capitalize">${ymLabel(r.m)}</td>${multiEmp?`<td>${esc(r.emp||"(sem empresa)")}</td>`:""}<td class="r mono">${fh(r.c.n)}</td><td class="r mono">${fh(r.c.e50)}</td><td class="r mono">${fh(r.c.e100)}</td><td class="r mono">${brl(r.c.valor)}</td><td class="r mono">${brl(r.rec)}</td><td class="r mono">${brl(Math.max(0,r.saldo))}</td><td>${stPill(r.saldo,r.rec)}</td><td>${r.saldo>0.005?`<button class="btn sm" data-act="newRec" data-o="horas" data-m="${r.m}" data-e="${esc(r.emp||"")}" data-v="${r.saldo}">Receber</button>`:""}</td></tr>`).join("")}</tbody></table></div>`
+  ${mrows.length?`<div class="tablewrap"><table><thead><tr><th>Competência</th>${multiEmp?"<th>Empresa</th>":""}<th class="r hs">Normal</th><th class="r hs">Extra ${pct50()}</th><th class="r hs">Extra ${pct100()}</th><th class="r">Valor</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
+  <tbody>${mrows.map(r=>`<tr><td style="text-transform:capitalize">${ymLabel(r.m)}</td>${multiEmp?`<td>${esc(r.emp||"(sem empresa)")}</td>`:""}<td class="r mono hs">${fh(r.c.n)}</td><td class="r mono hs">${fh(r.c.e50)}</td><td class="r mono hs">${fh(r.c.e100)}</td><td class="r mono">${brl(r.c.valor)}</td><td class="r mono">${brl(r.rec)}</td><td class="r mono">${brl(Math.max(0,r.saldo))}</td><td>${stPill(r.saldo,r.rec)}</td><td>${r.saldo>0.005?`<button class="btn sm" data-act="newRec" data-o="horas" data-m="${r.m}" data-e="${esc(r.emp||"")}" data-v="${r.saldo}">Receber</button>`:""}</td></tr>`).join("")}</tbody></table></div>`
   :`<div class="empty"><b>Sem horas registradas</b>Os meses aparecem aqui conforme você aponta as OS.</div>`}</section>
   <section class="section"><header><h2>Orçamentos aprovados</h2></header>
   ${orcs.length?`<div class="tablewrap"><table><thead><tr><th>Nº</th><th>Cliente</th><th class="r">Total</th><th class="r">Recebido</th><th class="r">Saldo</th><th>Situação</th><th></th></tr></thead>
@@ -1861,8 +1866,8 @@ function vFinanceiro(){
   :`<div class="empty"><b>Nenhum orçamento aprovado</b>Quando você marcar um orçamento como Aprovado, ele entra aqui como valor a receber.</div>`}</section>
   ${despSection()}
   <section class="section"><header><h2>Recebimentos registrados</h2><span class="muted">${brl(state.rec.filter(r=>ym(r.data||"")===ym(today())).reduce((s,r)=>s+numIn(r.valor),0))} recebido em ${ymLabel(ym(today()))}</span></header>
-  ${recs.length?`<div class="tablewrap"><table><thead><tr><th>Data</th><th>Origem</th><th>Observação</th><th class="r">Valor</th><th></th></tr></thead>
-  <tbody>${recs.map(r=>`<tr><td class="mono">${fdate(r.data)}</td><td>${r.origem==="fech"?`Fechamento ${esc(state.fech.find(f=>f.id===r.fechId)?.numero||"(reaberto)")}${r.empresa?` · ${esc(r.empresa)}`:""}`:r.origem==="horas"?`Horas · <span style="text-transform:capitalize">${ymLabel(r.competencia||"2000-01")}</span>${multiEmp?` · ${esc(recEmp(r))}`:""}`:`Orçamento ${esc(state.orc.find(o=>o.id===r.orcId)?.numero||"(excluído)")}`}${r.exemplo?' <span class="pill">Exemplo</span>':""}</td><td>${esc(r.obs||"")}</td><td class="r mono">${brl(numIn(r.valor))}</td><td><button class="btn sm danger" data-act="delRec" data-id="${esc(r.id)}">Excluir</button></td></tr>`).join("")}</tbody></table></div>`
+  ${recs.length?`<div class="tablewrap"><table><thead><tr><th>Data</th><th>Origem</th><th class="hs">Observação</th><th class="r">Valor</th><th></th></tr></thead>
+  <tbody>${recs.map(r=>`<tr><td class="mono">${fdate(r.data)}</td><td>${r.origem==="fech"?`Fechamento ${esc(state.fech.find(f=>f.id===r.fechId)?.numero||"(reaberto)")}${r.empresa?` · ${esc(r.empresa)}`:""}`:r.origem==="horas"?`Horas · <span style="text-transform:capitalize">${ymLabel(r.competencia||"2000-01")}</span>${multiEmp?` · ${esc(recEmp(r))}`:""}`:`Orçamento ${esc(state.orc.find(o=>o.id===r.orcId)?.numero||"(excluído)")}`}${r.exemplo?' <span class="pill">Exemplo</span>':""}</td><td class="hs">${esc(r.obs||"")}</td><td class="r mono">${brl(numIn(r.valor))}</td><td><button class="btn sm danger" data-act="delRec" data-id="${esc(r.id)}">Excluir</button></td></tr>`).join("")}</tbody></table></div>`
   :`<div class="empty"><b>Nenhum recebimento registrado</b>Use “Registrar recebimento” quando a empresa ou o cliente pagar.</div>`}</section>`;
 }
 function recForm(o){
@@ -1967,17 +1972,7 @@ function vAjustes(){
         <button type="button" class="btn" data-act="renomearProf" style="align-self:end">Renomear</button></div></details>`:""}
       <p class="muted" style="margin:0">Funcionários, unidades e empresas aparecem como filtros e na opção “Separar por” em Horas, Relatórios e Painel. Ao apontar uma OS feita por mais de um funcionário, marque todos e o sistema cria um apontamento para cada.</p>
     </div>
-    ${lembretesHtml()}
-    <div class="panel form" id="acessos"><h3>Acessos</h3>
-      <p class="muted" style="margin:0">Cada pessoa entra com o próprio e-mail e senha. Quem criar conta aparece aqui como “Aguardando”: escolha qual funcionário é e toque em Liberar. O funcionário só vê as próprias OS, sem valores.</p>
-      <div class="tablewrap"><table class="inputs"><thead><tr><th>E-mail</th><th>Situação</th><th>Funcionário</th><th></th></tr></thead><tbody>
-      ${state.perfis.map(p=>{ const eu = p.user_id===session?.user?.id; const st = {dono:['good','Responsável'],funcionario:['good','Liberado'],pendente:['warn','Aguardando'],bloqueado:['bad','Bloqueado']}[p.papel]||['','?'];
-        return `<tr data-uid="${esc(p.user_id)}"><td>${esc(p.email)}${eu?' <b>(você)</b>':""}</td><td><span class="pill ${st[0]}">${st[1]}</span></td>
-        <td>${p.papel==="dono"?"—":`<select class="pf-nome" aria-label="Funcionário de ${esc(p.email)}"><option value="">Escolha…</option>${profs().map(n=>`<option ${p.nome===n?"selected":""}>${esc(n)}</option>`).join("")}</select>`}</td>
-        <td>${p.papel==="dono"?"":`<span class="row" style="flex-wrap:nowrap"><button type="button" class="btn sm primary" data-act="perfilLiberar" data-uid="${esc(p.user_id)}">${p.papel==="funcionario"?"Salvar":"Liberar"}</button>${p.papel!=="bloqueado"?`<button type="button" class="btn sm danger" data-act="perfilBloquear" data-uid="${esc(p.user_id)}">Bloquear</button>`:""}</span>`}</td></tr>`; }).join("") || `<tr><td colspan="4" class="muted">Ninguém além de você ainda.</td></tr>`}
-      </tbody></table></div>
-      <p class="muted" style="margin:0">Para a equipe entrar: mande o endereço do sistema; cada um toca em “Criar conta”, confirma pelo e-mail e aparece aqui para você liberar.</p>
-    </div>
+
     <div class="panel form"><h3>Custo da equipe e valor da hora por empresa</h3>
       <p class="muted" style="margin:0">O custo da equipe é usado só no Painel para mostrar o lucro. Nunca aparece nos relatórios enviados.</p>
       <div class="tablewrap"><table class="inputs"><thead><tr><th>Funcionário</th><th>Como você paga</th><th>Valor (R$)</th></tr></thead><tbody>
@@ -2011,8 +2006,21 @@ function vAjustes(){
       <label class="field"><span>Cidade</span><input id="e-cid" value="${esc(E.cidade)}"></label><label class="field"><span>Responsável técnico (assinatura)</span><input id="e-resp" value="${esc(E.responsavel)}"></label></div>
       <label class="field"><span>Quem somos</span><textarea id="e-sobre" rows="5">${esc(E.sobre)}</textarea></label>
     </div>
-    <div class="row" style="justify-content:flex-end"><button class="btn primary" type="submit">Salvar ajustes</button></div>
+    <div class="row cfg-salvar" style="justify-content:flex-end"><span class="muted cfg-aviso" id="cfg-aviso" hidden>Alterações não salvas</span><button class="btn primary" type="submit">Salvar ajustes</button></div>
   </form>
+  <section class="section" id="equipe-acessos"><header><h2>Equipe e celulares</h2></header>
+    ${lembretesHtml()}
+    <div class="panel form" id="acessos"><h3>Acessos</h3>
+      <p class="muted" style="margin:0">Cada pessoa entra com o próprio e-mail e senha. Quem criar conta aparece aqui como “Aguardando”: escolha qual funcionário é e toque em Liberar. O funcionário só vê as próprias OS, sem valores.</p>
+      <div class="tablewrap"><table class="inputs cards-sm"><thead><tr><th>E-mail</th><th>Situação</th><th>Funcionário</th><th></th></tr></thead><tbody>
+      ${state.perfis.map(p=>{ const eu = p.user_id===session?.user?.id; const st = {dono:['good','Responsável'],funcionario:['good','Liberado'],pendente:['warn','Aguardando'],bloqueado:['bad','Bloqueado']}[p.papel]||['','?'];
+        return `<tr data-uid="${esc(p.user_id)}"><td>${esc(p.email)}${eu?' <b>(você)</b>':""}</td><td><span class="pill ${st[0]}">${st[1]}</span></td>
+        <td>${p.papel==="dono"?"—":`<select class="pf-nome" aria-label="Funcionário de ${esc(p.email)}"><option value="">Escolha…</option>${profs().map(n=>`<option ${p.nome===n?"selected":""}>${esc(n)}</option>`).join("")}</select>`}</td>
+        <td>${p.papel==="dono"?"":`<span class="row" style="flex-wrap:nowrap"><button type="button" class="btn sm primary" data-act="perfilLiberar" data-uid="${esc(p.user_id)}">${p.papel==="funcionario"?"Salvar":"Liberar"}</button>${p.papel!=="bloqueado"?`<button type="button" class="btn sm danger" data-act="perfilBloquear" data-uid="${esc(p.user_id)}">Bloquear</button>`:""}</span>`}</td></tr>`; }).join("") || `<tr><td colspan="4" class="muted">Ninguém além de você ainda.</td></tr>`}
+      </tbody></table></div>
+      <p class="muted" style="margin:0">Para a equipe entrar: mande o endereço do sistema; cada um toca em “Criar conta”, confirma pelo e-mail e aparece aqui para você liberar.</p>
+    </div>
+  </section>
   <section class="section" id="lixeira"><header><h2>Lixeira</h2></header>
     <div class="panel form"><p class="muted" style="margin:0">Tudo o que foi excluído nos últimos 90 dias, por você ou pelos funcionários. Toque em Restaurar para trazer de volta.</p><div id="lx-list" class="muted">Carregando…</div></div>
   </section>
@@ -2020,7 +2028,8 @@ function vAjustes(){
     <div class="panel form"><h3>Cópia completa para guardar fora (recomendado toda semana)</h3>
       <p class="muted" style="margin:0">Baixa um arquivo .zip com todos os dados <b>e as fotos</b>. Guarde no iCloud Drive, Google Drive ou no computador. Se um dia perder o sistema, é com ele que tudo volta.</p>
       <p style="margin:0">${backupIdade()}</p>
-      <div class="row"><button class="btn primary" data-act="backupZip">Baixar backup completo (.zip)</button><button class="btn" data-act="exportJson">Só os dados (.json)</button></div>
+      <div class="row"><button class="btn primary" data-act="backupZip">${state.cfg.fotosAte?"Baixar backup (dados + fotos novas)":"Baixar backup completo (.zip)"}</button>${state.cfg.fotosAte?`<button class="btn" data-act="backupZip" data-todas="1">Todas as fotos de novo</button>`:""}<button class="btn" data-act="exportJson">Só os dados (.json)</button></div>
+      <p class="muted" style="margin:0" id="storage-uso"></p>
     </div>
     <div class="panel form"><h3>Cópias automáticas no servidor</h3>
       <p class="muted" style="margin:0">Todo dia às 03:00 o sistema guarda uma cópia dos dados (sem as fotos) e mantém os últimos 30 dias. Serve para desfazer um erro, por exemplo uma exclusão por engano.</p>
@@ -2040,6 +2049,8 @@ function backupIdade(){
   return `<span class="pill ${dias>7?"warn":"good"}">Última cópia completa: ${new Date(b).toLocaleDateString("pt-BR")} (${dias===0?"hoje":dias===1?"ontem":`há ${dias} dias`})</span>`;
 }
 async function carregarBackups(){
+  sb.rpc("uso_storage").then(({data})=>{ const el = $("#storage-uso"); if(!el || !data) return; const mb = (+data.bytes||0)/1048576, pct = Math.round(mb/10.24);
+    el.innerHTML = `Fotos guardadas: <b>${data.arquivos||0}</b> · ${mb.toFixed(0)} MB de 1.024 MB do plano gratuito (${pct}%)${pct>=80?' <span class="pill warn">Quase cheio</span>':""}`; });
   const box = $("#bk-list"); if(!box) return;
   const {data, error} = await sb.rpc("listar_backups");
   if(!$("#bk-list")) return;
@@ -2091,7 +2102,7 @@ async function submitCfg(){
   c.empresas = emps.join("\n"); c.contratante = emps[0] || "";
   try{
     if(oldDef && c.contratante !== oldDef){ const {error} = await sb.rpc("aplicar_empresa_padrao", {p_emp:oldDef}); if(error) throw dbErr(error); await loadOwner(); }
-    await saveCfg(c); state.cfg = deepMerge(DEFAULT_CFG,c); holCache={}; toast("Ajustes salvos"); state.rendered=null; render(); }
+    await saveCfg(c); state.cfgDirty = false; state.cfg = deepMerge(DEFAULT_CFG,c); holCache={}; calcCache = new WeakMap(); toast("Ajustes salvos"); state.rendered=null; render(); }
   catch(err){ toast(writeErr(err)); }
 }
 document.addEventListener("change", async e=>{
@@ -2115,11 +2126,13 @@ document.addEventListener("change", async e=>{
 
 /* ---------- actions ---------- */
 const A = {
-  nav(b){ if(state.view==="orcEdit" && state.orcDirty && b.dataset.view!=="orcEdit"){ if(!b.dataset.armed){ b.dataset.armed="1"; toast("Há alterações não salvas no orçamento. Toque de novo para sair sem salvar."); setTimeout(()=>delete b.dataset.armed,4000); return; } } state.orcDirty=false; state.view=b.dataset.view; state.rendered=null; render(); window.scrollTo(0,0); },
+  nav(b){ if(state.view==="ajustes" && state.cfgDirty && b.dataset.view!=="ajustes"){ if(!b.dataset.armed){ b.dataset.armed="1"; toast("Há alterações não salvas em Ajustes. Toque em Salvar ajustes, ou toque de novo para sair sem salvar."); setTimeout(()=>delete b.dataset.armed,4000); return; } state.cfgDirty=false; }
+    if(state.view==="orcEdit" && state.orcDirty && b.dataset.view!=="orcEdit"){ if(!b.dataset.armed){ b.dataset.armed="1"; toast("Há alterações não salvas no orçamento. Toque de novo para sair sem salvar."); setTimeout(()=>delete b.dataset.armed,4000); return; } } state.orcDirty=false; state.view=b.dataset.view; state.rendered=null; render(); window.scrollTo(0,0); },
   month(b){ state.month = shiftYm(state.month, +b.dataset.d); render(); },
   newDay(){ dayOpen(state.view==="horas" && ym(today())!==state.month ? state.month+"-01" : today()); },
   dayAdd(){ const d=state.day, last=d.rows[d.rows.length-1]; const r=blankRow(); r.ini = last&&last.fim ? nextStart(last.fim) : ""; d.rows.push(r); renderDayRows(); updateDay(); const os=document.querySelectorAll('#d-rows [data-f="os"]'); os[os.length-1]?.focus(); },
-  dayDel(b){ const d=state.day; d.rows.splice(+b.dataset.r,1); if(!d.rows.length) d.rows.push(blankRow()); renderDayRows(); updateDay(); },
+  dayDel(b){ const d=state.day, r=d.rows[+b.dataset.r]; if(r && (r.os||r.desc||r.fim) && !b.dataset.armed){ b.dataset.armed="1"; b.textContent="?"; b.title="Toque de novo para remover"; toast("Toque de novo no ✕ para remover esta OS."); setTimeout(()=>{ if(b.isConnected){ delete b.dataset.armed; b.textContent="✕"; } }, 4000); return; }
+    d.rows.splice(+b.dataset.r,1); if(!d.rows.length) d.rows.push(blankRow()); renderDayRows(); updateDay(); },
   dayPreset(b){ $("#d-sp-ini").value=b.dataset.a; $("#d-sp-fim").value=b.dataset.b; },
   daySplit(){ const d=state.day, a=hm($("#d-sp-ini").value), b0=hm($("#d-sp-fim").value), n=Math.max(1,Math.min(12,parseInt($("#d-sp-n").value)||1));
     if(a==null||b0==null||a===b0){ toast("Informe o início e o fim do período."); return; }
@@ -2217,7 +2230,10 @@ const A = {
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("recebimentos", y); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   recarregar(){ location.reload(); },
-  dayDescartar(){ rascunho.limpar(); closeModal(); },
+  dayDescartar(b){ const d = state.day, temDados = d && d.rows.some(r=>r.os||r.desc||r.fim);
+    if(temDados && !b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar descarte"; setTimeout(()=>{ if(b.isConnected){ delete b.dataset.armed; b.textContent="Descartar"; } }, 4000); return; }
+    const copia = d ? clone(d) : null; rascunho.limpar(); closeModal();
+    if(temDados) toastAcao("Lançamento descartado.", "Desfazer", ()=>{ state.day = copia; openModal(dayForm(), "wide"); state.modalDirty = true; renderDayRows(); updateDay(); }); },
   async pushAtivar(b){
     b.disabled = true;
     try{
@@ -2273,20 +2289,26 @@ const A = {
     b.disabled = true; const old = b.textContent;
     try{
       if(!window.JSZip){ b.textContent = "Preparando…"; await loadScript(JSZIP); }
-      const zip = new JSZip(), dados = backupDados();
+      const dados = backupDados(), todas = b.dataset.todas==="1", desde = todas ? 0 : (state.cfg.fotosAte ? new Date(state.cfg.fotosAte).getTime() : 0);
+      const tempo = id => { const n = id.split("/").pop().replace(/\.\w+$/,""); const t = parseInt(n.slice(0,-6), 36); return isFinite(t) ? t : Date.now(); };
+      const ids = [...new Set([...state.ap, ...state.orc, ...state.desp].flatMap(x=>x.fotos||[]))].filter(id=>tempo(id) > desde);
+      let n = 0, falhas = 0, parte = 1, tamanho = 0, zip = new JSZip(); const LIM = 150*1024*1024;
       zip.file("backup.json", JSON.stringify(dados, null, 1));
-      const ids = [...new Set([...state.ap, ...state.orc].flatMap(x=>x.fotos||[]))];
-      let n = 0, falhas = 0;
+      const fechar = async (ultima)=>{ b.textContent = "Compactando…"; const blob = await zip.generateAsync({type:"blob", compression:"STORE"});
+        await offerFile(`backup-gaap-${todas||!desde?"completo":"fotos-novas"}-${today()}${parte>1||!ultima?`-parte${parte}`:""}.zip`, blob);
+        if(!ultima){ await new Promise(ok=>{ const t = setInterval(()=>{ if($("#modal").hidden){ clearInterval(t); ok(); } }, 400); }); parte++; zip = new JSZip(); tamanho = 0; } };
       for(let i=0; i<ids.length; i+=40) await assinarFotos(ids.slice(i, i+40));
-      for(const id of ids){
-        b.textContent = `Fotos ${++n} de ${ids.length}…`;
-        try{ const r = await fetch(assetUrls[id]); if(!r.ok) throw 0; zip.file("fotos/"+id, await r.blob()); }catch(err){ falhas++; }
+      for(let i=0; i<ids.length; i+=4){
+        const lote = ids.slice(i, i+4);
+        const blobs = await Promise.all(lote.map(async id=>{ try{ const r = await fetch(assetUrls[id]); if(!r.ok) throw 0; return [id, await r.blob()]; }catch(err){ falhas++; return null; } }));
+        for(const x of blobs.filter(Boolean)){ zip.file("fotos/"+x[0], x[1]); tamanho += x[1].size; n++; }
+        b.textContent = `Fotos ${n} de ${ids.length}…`;
+        if(tamanho > LIM && i+4 < ids.length) await fechar(false);
       }
       zip.file("LEIA-ME.txt", `Backup do GAAP Gestão de Serviços gerado em ${new Date().toLocaleString("pt-BR")}.\nPara restaurar: Ajustes > Backup > Importar backup e escolha este arquivo .zip.\nRegistros: ${COLS.reduce((s,c)=>s+(dados[c]||[]).length,0)} · Fotos: ${ids.length-falhas}${falhas?` (${falhas} não baixaram)`:""}`);
-      b.textContent = "Compactando…";
-      const blob = await zip.generateAsync({type:"blob", compression:"STORE"});
-      await offerFile(`backup-gaap-completo-${today()}.zip`, blob);
+      await fechar(true);
       await sb.rpc("marcar_backup_baixado"); state.cfg.backupBaixadoEm = new Date().toISOString();
+      if(!falhas){ const {error} = await sb.rpc("marcar_fotos_ate", {p_ate:new Date().toISOString()}); if(!error) state.cfg.fotosAte = new Date().toISOString(); }
       { const {data} = await sb.from("config").select("atualizado_em").eq("id","main").maybeSingle(); if(data && !state.cfgDirty) state.cfgV = data.atualizado_em; }
       toast(falhas ? `Backup gerado, mas ${falhas} foto(s) não baixaram.` : "Backup completo gerado. Guarde o arquivo fora do celular.");
       state.rendered = null; render(); $("#backup")?.scrollIntoView();

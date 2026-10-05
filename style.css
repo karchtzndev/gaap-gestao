@@ -302,3 +302,34 @@ tr.click:hover td{background:var(--surface-2)}
 /* etiqueta antes/depois nas fotos */
 .thumb{position:relative}
 .thumbtag{position:absolute;left:4px;top:4px;font-style:normal;font-size:.62rem;font-weight:700;letter-spacing:.04em;background:rgba(0,0,0,.65);color:#fff;padding:1px 5px;border-radius:4px;pointer-events:none}
+
+/* ===== revisão iPhone ===== */
+/* campos com 16px: o iPhone não dá zoom ao tocar */
+input,select,textarea{font-size:16px}
+/* janelas: título e botões sempre visíveis */
+.sheet>header{position:sticky;top:-18px;background:var(--surface);z-index:3;padding-top:4px}
+.sheet form>footer{position:sticky;bottom:calc(-18px - env(safe-area-inset-bottom,0px));background:var(--surface);padding:10px 0 calc(10px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);margin-bottom:calc(-18px - env(safe-area-inset-bottom,0px));z-index:3}
+@media (min-width:700px){.sheet>header{top:-22px}.sheet form>footer{bottom:-22px;margin-bottom:-22px;padding-bottom:12px}}
+/* Ajustes: botão salvar fixo acima da barra de abas */
+.cfg-salvar{position:sticky;bottom:calc(68px + env(safe-area-inset-bottom,0px));z-index:5;background:var(--surface);padding:10px;border:1px solid var(--line);border-radius:12px;box-shadow:0 -4px 14px rgba(0,0,0,.06);align-items:center;gap:10px}
+@media (min-width:900px){.cfg-salvar{bottom:12px}}
+/* tabelas viram cartões no celular */
+@media (max-width:640px){
+  .hs{display:none}
+  table.cards-sm thead{display:none}
+  table.cards-sm, table.cards-sm tbody, table.cards-sm tr, table.cards-sm td{display:block;width:100%}
+  table.cards-sm tr{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px;background:var(--surface)}
+  table.cards-sm td{border:0;padding:4px 0}
+  table.cards-sm td select{width:100%}
+  table.cards-sm .row{flex-wrap:wrap!important}
+}
+/* cronômetro sempre visível e botões grandes */
+.cronobar{position:sticky;top:calc(58px + env(safe-area-inset-top,0px));z-index:15}
+.crono .btn{min-height:44px;padding:10px 16px}
+/* miniaturas na linha do lote */
+.thumbs.mini{display:inline-flex;gap:4px;flex-wrap:wrap;margin-left:6px}
+.thumbs.mini .thumb img{width:44px;height:44px}
+.dayrow>.fotos{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+/* visualizador de foto por cima da janela */
+.fotoview{z-index:60}
+.topbar .iconbtn,.btn.sm{min-height:36px}
