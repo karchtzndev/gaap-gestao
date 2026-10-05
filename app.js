@@ -110,6 +110,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
+const VERSAO = "2026.10.05-4";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -2246,7 +2247,7 @@ function fechCard(f){
       <span>Saldo <b class="mono">${brl(sd)}</b><small>${nf.numero?`NF ${esc(nf.numero)}${nf.status==="cancelada"?" (cancelada)":""}`:'<span class="pill warn" style="padding:0 6px">Sem NF</span>'}</small></span>
     </div>
     ${fechAlterado(f)?`<div class="warnbox">Há OS deste período alteradas depois do fechamento. O PDF continua igual ao que foi enviado; use “PDF atual” para ver como ficaria hoje.</div>`:""}
-    ${f.aprovacao?`<p style="margin:0">${f.aprovacao.aprovado?`<span class="pill good">Aprovado por ${esc(f.aprovacao.nome||"aprovador")}${f.aprovacao.cargo?` (${esc(f.aprovacao.cargo)})`:""} em ${fdate((f.aprovacao.em||"").slice(0,10))}</span>`:`<span class="pill bad">Contestado: ${(f.aprovacao.contestadas||[]).length} OS · ${esc(f.aprovacao.nome||"")}</span>`}</p>`:f.aprovPedida?`<p class="muted" style="margin:0;font-size:.85rem">Aprovação pedida em ${fdate(f.aprovPedida)}, aguardando resposta.</p>`:""}
+    ${f.aprovacao?`<p style="margin:0">${f.aprovacao.aprovado?`<span class="pill good">Aprovado por ${esc(f.aprovacao.nome||"aprovador")}${f.aprovacao.cargo?` (${esc(f.aprovacao.cargo)})`:""} ${f.aprovacao.em?` em ${fdate(f.aprovacao.em.slice(0,10))}`:""}</span>`:`<span class="pill bad">Contestado: ${(f.aprovacao.contestadas||[]).length} OS · ${esc(f.aprovacao.nome||"")}</span>`}</p>`:f.aprovPedida?`<p class="muted" style="margin:0;font-size:.85rem">Aprovação pedida em ${fdate(f.aprovPedida)}, aguardando resposta.</p>`:""}
     ${ult?`<p class="muted" style="margin:0;font-size:.85rem">Última cobrança em ${fdate(ult)}${(f.cobrancas||[]).length>1?` (${f.cobrancas.length} no total)`:""}.</p>`:""}
     ${f.itens?`<p class="muted" style="margin:0;font-size:.85rem"><span class="pill info">Planilha importada</span> ${f.itens.length} OS lançadas pela planilha aprovada${f.pedido?` · pedido ${esc(f.pedido)}`:""}.</p>`:""}
     <div class="row fc-acts">${f.itens?"":`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}">PDF enviado</button>`}<button class="btn sm" data-act="terceirosPdf" data-id="${esc(f.id)}">Fechamento p/ fiscal (PDF)</button><button class="btn sm" data-act="terceirosXlsx" data-id="${esc(f.id)}">Excel</button>${fechAlterado(f)?`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}" data-atual="1">PDF atual</button>`:""}
@@ -2448,7 +2449,7 @@ function vAjustes(){
   setTimeout(()=>{ carregarBackups(); carregarLixeira(); }, 0);
   const c = state.cfg, E = c.empresa; const y = new Date().getFullYear();
   const hol = Object.entries(holidays(y)).sort();
-  return `<div class="pagehead"><div><span class="eyebrow">Ajustes</span><h1>Empresa, valores e jornada</h1><p class="muted">Valores novos valem para os próximos apontamentos. Os já lançados mantêm o valor da hora da época.</p></div></div>
+  return `<div class="pagehead"><div><span class="eyebrow">Ajustes</span><h1>Empresa, valores e jornada</h1><p class="muted">Valores novos valem para os próximos apontamentos. Os já lançados mantêm o valor da hora da época.</p><p class="muted" style="margin:0;font-size:.8rem">Versão do app: <b>${VERSAO}</b></p></div></div>
   ${state.mode==="local"?`<div class="banner">Os dados estão sendo salvos só neste navegador. Exporte um backup com frequência.</div>`:""}
   <form class="form" id="cfgForm">
     <div class="panel form"><h3>Valores da hora</h3>
@@ -2948,5 +2949,11 @@ const A = {
 document.addEventListener("click", e=>{ const b = e.target.closest("[data-act]"); if(!b) return; const f = A[b.dataset.act]; if(f){ if(b.tagName==="BUTTON" && b.type!=="submit") e.preventDefault(); f(b,e); } });
 
 renderNav();
-if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("/sw.js").then(r=>{ try{ r.update(); }catch(e){} }).catch(()=>{});
+  // saiu versão nova do app: recarrega sozinho (só se não houver nada sendo digitado)
+  let jaTinha = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener("controllerchange", ()=>{ if(!jaTinha){ jaTinha = true; return; } if(state.modalDirty || state.cfgDirty || state.orcDirty || $("#dayForm")){ toast("Saiu uma versão nova do app. Salve o que está fazendo e toque em Atualizar."); return; } location.reload(); });
+  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) navigator.serviceWorker.getRegistration().then(r=>r && r.update()).catch(()=>{}); });
+}
 initStore();
