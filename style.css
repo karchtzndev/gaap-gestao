@@ -358,3 +358,11 @@ input,select,textarea{font-size:16px}
 .fechcard .pill{white-space:normal;max-width:100%}
 .fc-vals{grid-template-columns:repeat(auto-fit,minmax(100px,1fr))}
 .fc-top>span:first-child{min-width:0;overflow-wrap:anywhere}
+/* tabelas em cartões: rótulo ao lado de cada número */
+@media (max-width:640px){
+  table.cards-sm td[data-l]{display:flex;justify-content:space-between;gap:10px;text-align:right}
+  table.cards-sm td[data-l]::before{content:attr(data-l);color:var(--muted);font-family:var(--f-body);font-size:.8rem;text-align:left}
+  table.cards-sm td[data-l]:empty{display:none}
+  table.cards-sm tfoot{display:block} table.cards-sm tfoot tr{display:block;border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--surface-2)}
+  table.cards-sm tfoot th{display:inline-block;margin-right:10px;border:0;padding:2px 0}
+}

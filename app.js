@@ -110,7 +110,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.05-4";
+const VERSAO = "2026.10.05-5";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -950,10 +950,25 @@ function totalsReceber(){
   const recO = orcs.reduce((s,o)=>s+orcRecebido(o.id),0);
   return {horas:Math.max(0,prod+reemb-recH-glosas), orc:Math.max(0,orcTot-recO), prod, recH, orcTot, recO, glosas, reemb};
 }
+/* meses que vieram das planilhas aprovadas (fechamentos importados, sem lançamentos dia a dia) */
+const compDe = f => f.competencia || (f.ate||"").slice(0,7);
+const planilhasDoMes = m => state.fech.filter(f=>f.itens && compDe(f)===m && (!state.hf?.f?.emp || state.hf.f.emp===ALL || chaveEmp(f.empresa||"")===chaveEmp(state.hf.f.emp)));
+function resumoPlan(fs){ const r = {os:0, n:0, e50:0, e100:0, not:0, total:0, valor:0, itens:[]};
+  fs.forEach(f=>{ r.valor += +f.valor||0; (f.itens||[]).forEach(x=>{ r.os++; r.n += (+x.hn||0)*60; r.e50 += (+x.h50||0)*60; r.e100 += (+x.h100||0)*60; r.not += (+x.not||0)*60; r.itens.push({...x, fech:f}); }); }); // valor oficial do fechamento
+  r.total = r.n + r.e50 + r.e100; r.valor = Math.round(r.valor*100)/100; return r; }
+function planilhaTabela(r, titulo){
+  if(!r.os) return "";
+  const fs = [...new Set(r.itens.map(x=>x.fech))], hh = h => fdec((+h||0)*60);
+  return `<section class="section"><header><h2>${titulo}</h2><span class="mono muted">${r.os} OS · ${fdec(r.total)} h · ${brl(r.valor)}</span></header>
+  <p class="muted" style="margin:0 0 8px">Mês lançado pela planilha aprovada (${fs.map(f=>esc(f.numero)).join(", ")}): mostra o total de cada OS, sem os horários de cada dia.</p>
+  <div class="tablewrap"><table class="cards-sm"><thead><tr><th>OS</th><th>Serviço</th><th class="r">Normal</th><th class="r">Extra 50%</th><th class="r">Extra 100%</th><th class="r">Noturno</th><th class="r">Valor</th></tr></thead>
+  <tbody>${r.itens.map(x=>`<tr class="click" data-act="osHist" data-os="${esc(x.os)}"><td class="mono"><b>${esc(x.os||"s/n")}</b></td><td>${esc(x.desc||"")}</td><td class="r mono" data-l="Normal">${hh(x.hn)} h</td><td class="r mono" data-l="Extra 50%">${x.h50?hh(x.h50)+" h":""}</td><td class="r mono" data-l="Extra 100%">${x.h100?hh(x.h100)+" h":""}</td><td class="r mono" data-l="Noturno">${x.not?hh(x.not)+" h":""}</td><td class="r mono" data-l="Valor"><b>${brl(+x.total||0)}</b></td></tr>`).join("")}</tbody>
+  <tfoot><tr><th colspan="2">Total</th><th class="r mono">${fdec(r.n)}</th><th class="r mono">${fdec(r.e50)}</th><th class="r mono">${fdec(r.e100)}</th><th class="r mono">${fdec(r.not)}</th><th class="r mono">${brl(r.valor)}</th></tr></tfoot></table></div></section>`;
+}
 function vPainel(){
   const t = totalsReceber();
   const mAp = state.ap.filter(e=>ym(e.data)===state.month);
-  const mc = sumCalc(mAp);
+  const mc = sumCalc(mAp), pl = resumoPlan(planilhasDoMes(state.month));
   const tdAp = state.ap.filter(e=>e.data===today()); const tc = sumCalc(tdAp);
   const abertos = state.orc.filter(o=>o.status==="enviado");
   const abertosV = abertos.reduce((s,o)=>s+orcTotals(o).total,0);
@@ -970,15 +985,15 @@ function vPainel(){
   ${alertasHtml()}
   <div class="kpis">
     <div class="kpi"><span class="eyebrow">Hoje</span><span class="v">${fh(tc.total)}</span><span class="s">${tdAp.length} OS · ${brl(tc.valor)}</span></div>
-    <div class="kpi"><span class="eyebrow">Em ${MESES[+state.month.slice(5)-1]}</span><span class="v">${fh(mc.total)}</span><span class="s">${brl(mc.valor)} em ${new Set(mAp.map(e=>e.data)).size} dias</span></div>
-    ${(()=>{ const ct = mAp.filter(e=>!e.orcId), fat = sumCalc(ct).valor, cu = custoSum(ct) + state.desp.filter(x=>ym(x.data)===state.month && !x.reembolsavel && !x.orcId).reduce((s,x)=>s+despValor(x),0);
+    <div class="kpi"><span class="eyebrow">Em ${MESES[+state.month.slice(5)-1]}</span><span class="v">${fh(mc.total + pl.total)}</span><span class="s">${brl(mc.valor + pl.valor)}${pl.os ? ` · ${pl.os} OS da planilha aprovada${mAp.length?` + ${new Set(mAp.map(e=>e.data)).size} dia(s) lançados`:""}` : ` em ${new Set(mAp.map(e=>e.data)).size} dias`}</span></div>
+    ${(()=>{ const ct = mAp.filter(e=>!e.orcId), fat = sumCalc(ct).valor + pl.valor, cu = custoSum(ct) + state.desp.filter(x=>ym(x.data)===state.month && !x.reembolsavel && !x.orcId).reduce((s,x)=>s+despValor(x),0);
       return temCustos() ? `<div class="kpi"><span class="eyebrow">Lucro em ${MESES[+state.month.slice(5)-1]}</span><span class="v" style="color:${fat-cu>=0?"var(--good)":"var(--bad)"}">${brl(fat-cu)}</span><span class="s">${brl(fat)} faturado − ${brl(cu)} de equipe e despesas${fat>0?` · margem ${Math.round(100*(fat-cu)/fat)}%`:""}</span></div>`
         : `<div class="kpi"><span class="eyebrow">Lucro do mês</span><span class="v">—</span><span class="s">Informe o custo de cada funcionário em <button class="btn sm" data-act="nav" data-view="ajustes" style="padding:1px 6px">Ajustes</button></span></div>`; })()}
     <div class="kpi"><span class="eyebrow">Orçamentos enviados</span><span class="v">${abertos.length}</span><span class="s">${brl(abertosV)} aguardando${taxa!=null?` · ${taxa}% aprovados`:""}</span></div>
   </div>
-  <section class="section"><header><h2>Valor por dia em ${ymLabel(state.month)}</h2>
+  ${pl.os && !mAp.length ? planilhaTabela(pl, `OS de ${ymLabel(state.month)}`) : `<section class="section"><header><h2>Valor por dia em ${ymLabel(state.month)}</h2>
     <div class="legend"><span><i class="dot d-n"></i>Normal</span><span><i class="dot d-50"></i>Extra ${pct50()}</span><span><i class="dot d-100"></i>Domingo/feriado ${pct100()}</span></div></header>
-    <div class="panel"><div class="chartwrap" id="chart"></div></div></section>
+    <div class="panel"><div class="chartwrap" id="chart"></div></div></section>${pl.os ? planilhaTabela(pl, `OS da planilha de ${ymLabel(state.month)}`) : ""}`}
   ${confHtml(conferencia(ymd(addDays(parseYmd(today()),-14)), today()), "Conferência dos últimos 14 dias")}
   ${painelDims(mAp)}
   <div class="two">
@@ -1053,14 +1068,15 @@ function vHoras(){
   const list = applyF(all, H.f).sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio));
   const c = sumCalc(list); const bad = overlaps(list);
   const dayList = rows => { const byDay = {}; rows.forEach(e=>(byDay[e.data] ||= []).push(e)); return Object.keys(byDay).sort().reverse().map(d=>{ const dc=sumCalc(byDay[d]); const hol=holidayName(d); return `<div class="dayhead"><span>${WD[parseYmd(d).getDay()]}, ${fdate(d)} ${hol?`<span class="pill bad">${esc(hol)}</span>`:""}</span><span class="mono">${fh(dc.total)} · ${brl(dc.valor)}</span></div>${byDay[d].sort((a,b)=>a.inicio.localeCompare(b.inicio)).map(e=>apItem(e,false,bad)).join("")}`; }).join(""); };
-  const groups = groupBy(list, H.by);
+  const groups = groupBy(list, H.by), pl = resumoPlan(planilhasDoMes(state.month));
   return `${exampleBanner()}
   <div class="pagehead"><div><span class="eyebrow">Apontamentos</span><h1>Horas por OS</h1><p class="muted">Cada linha é uma ordem de serviço com início e fim. O sistema separa hora normal e extra pela sua jornada.</p></div>
     <div class="row">${monthNav()}<button class="btn" data-act="newAp">+ Uma OS</button><button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
   ${hmodeChips()}
   <div class="panel filtergrid" style="margin-bottom:12px">${filterBar("h", H.f, H.by)}</div>
   <div class="summary"><span><b>${list.length}</b> apontamentos</span><span><i class="dot d-n"></i>Normal <b>${fh(c.n)}</b></span><span><i class="dot d-50"></i>Extra ${pct50()} <b>${fh(c.e50)}</b></span><span><i class="dot d-100"></i>Extra ${pct100()} <b>${fh(c.e100)}</b></span><span>Total <b>${fh(c.total)}</b></span><span>Valor <b>${brl(c.valor)}</b></span></div>
-  ${!list.length ? `<div class="empty"><b>Nenhum apontamento em ${ymLabel(state.month)}${all.length?" com esses filtros":""}</b>Use “Lançar OS do dia” para registrar as OS com o horário de cada uma.</div>`
+  ${planilhaTabela(pl, `Planilha aprovada de ${ymLabel(state.month)}`)}
+  ${!list.length ? (pl.os ? "" : `<div class="empty"><b>Nenhum apontamento em ${ymLabel(state.month)}${all.length?" com esses filtros":""}</b>Use “Lançar OS do dia” para registrar as OS com o horário de cada uma.</div>`)
    : H.by ? `${dimTable(list, H.by)}${groups.map(g=>{ const gc=sumCalc(g.rows); return `<section class="section"><header><h2>${esc(g.label)}</h2><span class="mono muted">${g.rows.length} OS · ${fdec(gc.total)} h · ${brl(gc.valor)}</span></header><div class="list">${dayList(g.rows)}</div></section>`; }).join("")}`
    : `<div class="list">${dayList(list)}</div>`}`;
 }
@@ -1075,6 +1091,10 @@ function osGroups(list){
 function vHorasOS(){
   const H = state.hf, q = state.osQ.trim().toLowerCase();
   const gs = osGroups(applyF(state.ap, H.f)).filter(g=>!q || g.os.toLowerCase().includes(q) || g.desc.toLowerCase().includes(q));
+  const vistos = new Set(gs.map(g=>g.os)), plOS = new Map();
+  state.fech.filter(f=>f.itens && (!H.f.emp || H.f.emp===ALL || chaveEmp(f.empresa||"")===chaveEmp(H.f.emp))).forEach(f=>f.itens.forEach(x=>{ const k = x.os||"(sem nº)"; if(vistos.has(k)) return;
+    const o = plOS.get(k) || {os:k, desc:x.desc||"", meses:new Set(), min:0, ext:0, valor:0, local:[f.empresa, x.unid].filter(Boolean).join(" · ")}; o.meses.add(compDe(f)); o.min += ((+x.hn||0)+(+x.h50||0)+(+x.h100||0))*60; o.ext += ((+x.h50||0)+(+x.h100||0))*60; o.valor += +x.total||0; if(!o.desc && x.desc) o.desc = x.desc; plOS.set(k, o); }));
+  const gp = [...plOS.values()].filter(g=>!q || g.os.toLowerCase().includes(q) || g.desc.toLowerCase().includes(q)).sort((a,b)=>[...b.meses].sort().pop().localeCompare([...a.meses].sort().pop()));
   return `${exampleBanner()}
   <div class="pagehead"><div><span class="eyebrow">Apontamentos</span><h1>Histórico por OS</h1><p class="muted">Todas as horas já lançadas em cada ordem de serviço, de todos os dias e funcionários.</p></div>
     <div class="row"><button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
@@ -1082,10 +1102,15 @@ function vHorasOS(){
   <div class="panel filtergrid" style="margin-bottom:12px"><label class="field" style="grid-column:1/-1"><span>Buscar OS ou serviço</span><input id="h-os-q" value="${esc(state.osQ)}" placeholder="Ex.: 2165557 ou telhado" inputmode="search"></label>${filterBar("h", H.f, "").replace(/<label class="field"><span>Separar por<\/span>[\s\S]*$/,"")}</div>
   ${gs.length ? `<div class="tablewrap"><table><thead><tr><th>OS</th><th>Serviço</th><th>Local</th><th class="r">Dias</th><th class="r">Horas</th><th class="r">Extras</th><th class="r">Valor</th><th>Último dia</th></tr></thead>
   <tbody>${gs.map(g=>`<tr class="click" data-act="osHist" data-os="${esc(g.os)}"><td class="mono"><b>${esc(g.os)}</b></td><td>${esc(g.desc)}${g.orc?` <span class="pill info">Orçamento ${esc(orcNum(g.orc))}</span>`:""}${g.fotos?` <span class="pill">${g.fotos} foto${g.fotos>1?"s":""}</span>`:""}</td><td>${esc(g.locais.join(", "))}</td><td class="r mono">${g.dias}</td><td class="r mono"><b>${fdec(g.c.total)}</b></td><td class="r mono">${fdec(g.c.e50+g.c.e100)}</td><td class="r mono">${g.orc?"orçamento":brl(g.c.valor)}</td><td class="mono">${fdate(g.last)}</td></tr>`).join("")}</tbody></table></div>`
-    : `<div class="empty"><b>Nenhuma OS encontrada</b>Confira a busca ou os filtros.</div>`}`;
+    : gp.length ? "" : `<div class="empty"><b>Nenhuma OS encontrada</b>Confira a busca ou os filtros.</div>`}
+  ${gp.length ? `<section class="section"><header><h2>OS das planilhas aprovadas</h2><span class="mono muted">${gp.length} OS</span></header><div class="tablewrap"><table class="cards-sm"><thead><tr><th>OS</th><th>Serviço</th><th>Local</th><th class="r">Horas</th><th class="r">Extras</th><th class="r">Valor</th><th>Mês</th></tr></thead>
+  <tbody>${gp.map(g=>`<tr class="click" data-act="osHist" data-os="${esc(g.os)}"><td class="mono"><b>${esc(g.os)}</b></td><td>${esc(g.desc)} <span class="pill">planilha</span></td><td>${esc(g.local)}</td><td class="r mono" data-l="Horas">${fdec(g.min)} h</td><td class="r mono" data-l="Extras">${g.ext?fdec(g.ext)+" h":""}</td><td class="r mono" data-l="Valor"><b>${brl(Math.round(g.valor*100)/100)}</b></td><td data-l="Mês">${[...g.meses].sort().map(m=>ymLabel(m)).join(", ")}</td></tr>`).join("")}</tbody></table></div></section>` : ""}`;
 }
 function osHistHtml(os){
-  const g = osGroups(state.ap.filter(e=>(e.os||"(sem nº)")===os))[0]; if(!g) return "";
+  const pl = state.fech.filter(f=>f.itens).flatMap(f=>f.itens.filter(x=>(x.os||"(sem nº)")===os).map(x=>({...x, f})));
+  const plHtml = pl.length ? `<h3 style="margin:12px 0 6px">Nas planilhas aprovadas</h3><div class="tablewrap"><table><thead><tr><th>Mês</th><th>Fechamento</th><th class="r">Normal</th><th class="r">Extras</th><th class="r">Valor</th></tr></thead><tbody>${pl.map(x=>`<tr><td>${ymLabel(compDe(x.f))}</td><td class="mono">${esc(x.f.numero)}</td><td class="r mono">${fdec((+x.hn||0)*60)}</td><td class="r mono">${fdec(((+x.h50||0)+(+x.h100||0))*60)}</td><td class="r mono">${brl(+x.total||0)}</td></tr>`).join("")}</tbody></table></div>` : "";
+  const g = osGroups(state.ap.filter(e=>(e.os||"(sem nº)")===os))[0];
+  if(!g) return pl.length ? `<header><h2>OS ${esc(os)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header><p style="margin:0 0 10px"><b>${esc(pl[pl.length-1].desc||"")}</b><br><span class="muted">${esc([pl[0].f.empresa, pl[0].unid].filter(Boolean).join(" · "))}</span></p>${plHtml}<footer><span></span><button class="btn primary" data-act="osLancar" data-os="${esc(os)}">Lançar horas nesta OS</button></footer>` : "";
   const fotos = g.rows.flatMap(e=>e.fotos||[]);
   return `<header><h2>OS ${esc(os)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
   <p style="margin:0 0 10px"><b>${esc(g.desc)}</b><br><span class="muted">${esc(g.locais.join(" / "))}</span></p>
@@ -1094,6 +1119,7 @@ function osHistHtml(os){
   ${fotos.length?`<div class="thumbs" style="margin-bottom:12px">${thumbs(fotos,false)}</div>`:""}
   <div class="tablewrap"><table><thead><tr><th>Data</th><th>Funcionário</th><th>Início</th><th>Fim</th><th class="r">Horas</th><th class="r">Extra</th></tr></thead>
   <tbody>${g.rows.map(e=>{ const c=calc(e); return `<tr><td class="mono">${fdate(e.data)}</td><td>${esc(e.profissional||"-")}</td><td class="mono">${esc(e.inicio)}</td><td class="mono">${esc(e.fim)}</td><td class="r mono">${fdec(c.total)}</td><td class="r mono">${c.e50+c.e100?fdec(c.e50+c.e100):""}</td></tr>`; }).join("")}</tbody></table></div>
+  ${plHtml}
   <footer><button class="btn" data-act="osPdf" data-os="${esc(os)}">PDF desta OS</button><button class="btn primary" data-act="osLancar" data-os="${esc(os)}">Lançar mais horas nesta OS</button></footer>`;
 }
 let osQT = 0;
