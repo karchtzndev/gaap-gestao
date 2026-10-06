@@ -86,6 +86,7 @@ e cole o conteúdo de cada arquivo no modelo correspondente:
 | `013_ajustes_seguranca.sql` | Tira do acesso anônimo a criação de link de aprovação; índice para os lembretes |
 | `014_unidades_por_empresa.sql` | Lista de unidades de cada contratante também para o funcionário |
 | `015_adicional_noturno.sql` | Adicional noturno (22h às 5h) por contratante, inclusive nos lançamentos dos funcionários |
+| `016_liberar_acesso.sql` | Liberar acesso em um passo (funcionário ou responsável), já confirmando o e-mail da pessoa |
 
 ## Rotinas automáticas
 

@@ -370,3 +370,4 @@ input,select,textarea{font-size:16px}
 input[type="date"],input[type="time"],input[type="month"]{-webkit-appearance:none;appearance:none;min-width:0;max-width:100%;width:100%;display:block;text-align:left}
 input[type="date"]::-webkit-date-and-time-value,input[type="time"]::-webkit-date-and-time-value{text-align:left}
 .field{min-width:0}
+.pf-box{display:grid;gap:6px;min-width:0}.pf-box select,.pf-box input{width:100%}

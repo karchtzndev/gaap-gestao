@@ -110,7 +110,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.05-6";
+const VERSAO = "2026.10.06-1";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -199,8 +199,10 @@ function alertasDinheiro(){
   });
   return out;
 }
+function alertasAcesso(){ if(state.worker) return []; const n = state.perfis.filter(p=>p.papel==="pendente");
+  return n.length ? [{nivel:"warn", txt:`${n.length===1 ? n[0].email+" criou conta e" : n.length+" pessoas criaram conta e"} aguarda${n.length>1?"m":""} sua liberação.`, btn:`<button class="btn sm primary" data-act="irAcessos">Liberar</button>`}] : []; }
 function alertasHtml(){
-  const a = [...alertasDinheiro(), ...(typeof alertasEquipe==="function" ? alertasEquipe() : [])]; if(!a.length) return "";
+  const a = [...alertasAcesso(), ...alertasDinheiro(), ...(typeof alertasEquipe==="function" ? alertasEquipe() : [])]; if(!a.length) return "";
   return `<section class="section"><header><h2>Para fazer hoje</h2><span class="pill ${a.some(x=>x.nivel==="bad")?"bad":"warn"}">${a.length}</span></header>
   <div class="list">${a.slice(0,10).map(x=>`<div class="item alerta" style="cursor:default"><span class="dot-${x.nivel}"></span><span>${esc(x.txt)}</span><span>${x.btn||""}</span></div>`).join("")}</div></section>`;
 }
@@ -2484,7 +2486,8 @@ async function submitRec(){
 
 /* ---------- AJUSTES ---------- */
 function vAjustes(){
-  setTimeout(()=>{ carregarBackups(); carregarLixeira(); }, 0);
+  setTimeout(()=>{ carregarBackups(); carregarLixeira();
+    sb.from("perfis").select("*").order("criado_em").then(({data})=>{ if(data && JSON.stringify(data)!==JSON.stringify(state.perfis)){ state.perfis = data; if(state.view==="ajustes" && !state.cfgDirty){ state.rendered = null; render(); } } }).catch(()=>{}); }, 0);
   const c = state.cfg, E = c.empresa; const y = new Date().getFullYear();
   const hol = Object.entries(holidays(y)).sort();
   return `<div class="pagehead"><div><span class="eyebrow">Ajustes</span><h1>Empresa, valores e jornada</h1><p class="muted">Valores novos valem para os próximos apontamentos. Os já lançados mantêm o valor da hora da época.</p><p class="muted" style="margin:0;font-size:.8rem">Versão do app: <b>${VERSAO}</b></p></div></div>
@@ -2566,13 +2569,14 @@ function vAjustes(){
     ${lembretesHtml()}
     <div class="panel form" id="acessos"><h3>Acessos</h3>
       <p class="muted" style="margin:0">Cada pessoa entra com o próprio e-mail e senha. Quem criar conta aparece aqui como “Aguardando”: escolha qual funcionário é e toque em Liberar. O funcionário só vê as próprias OS, sem valores.</p>
-      <div class="tablewrap"><table class="inputs cards-sm"><thead><tr><th>E-mail</th><th>Situação</th><th>Funcionário</th><th></th></tr></thead><tbody>
+      <div class="tablewrap"><table class="inputs cards-sm"><thead><tr><th>E-mail</th><th>Situação</th><th>Acesso</th><th></th></tr></thead><tbody>
       ${state.perfis.map(p=>{ const eu = p.user_id===session?.user?.id; const st = {dono:['good','Responsável'],funcionario:['good','Liberado'],pendente:['warn','Aguardando'],bloqueado:['bad','Bloqueado']}[p.papel]||['','?'];
         return `<tr data-uid="${esc(p.user_id)}"><td>${esc(p.email)}${eu?' <b>(você)</b>':""}</td><td><span class="pill ${st[0]}">${st[1]}</span></td>
-        <td>${p.papel==="dono"?"—":`<select class="pf-nome" aria-label="Funcionário de ${esc(p.email)}"><option value="">Escolha…</option>${profs().map(n=>`<option ${p.nome===n?"selected":""}>${esc(n)}</option>`).join("")}</select>`}</td>
-        <td>${p.papel==="dono"?"":`<span class="row" style="flex-wrap:nowrap"><button type="button" class="btn sm primary" data-act="perfilLiberar" data-uid="${esc(p.user_id)}">${p.papel==="funcionario"?"Salvar":"Liberar"}</button>${p.papel!=="bloqueado"?`<button type="button" class="btn sm danger" data-act="perfilBloquear" data-uid="${esc(p.user_id)}">Bloquear</button>`:""}</span>`}</td></tr>`; }).join("") || `<tr><td colspan="4" class="muted">Ninguém além de você ainda.</td></tr>`}
-      </tbody></table></div>
-      <p class="muted" style="margin:0">Para a equipe entrar: mande o endereço do sistema; cada um toca em “Criar conta”, confirma pelo e-mail e aparece aqui para você liberar.</p>
+        <td>${eu ? "—" : `<div class="pf-box"><select class="pf-papel" aria-label="Tipo de acesso de ${esc(p.email)}"><option value="funcionario" ${p.papel!=="dono"?"selected":""}>Funcionário (só as próprias OS)</option><option value="dono" ${p.papel==="dono"?"selected":""}>Responsável (vê tudo)</option></select>
+          <input class="pf-nome" list="pf-profs" value="${esc(p.nome||"")}" placeholder="Nome (ex.: Juliano de Oliveira)" aria-label="Nome de ${esc(p.email)}"></div>`}</td>
+        <td>${eu ? "" : `<span class="row" style="flex-wrap:nowrap"><button type="button" class="btn sm primary" data-act="perfilLiberar" data-uid="${esc(p.user_id)}">${p.papel==="pendente"||p.papel==="bloqueado"?"Liberar":"Salvar"}</button>${p.papel!=="bloqueado"?`<button type="button" class="btn sm danger" data-act="perfilBloquear" data-uid="${esc(p.user_id)}">Bloquear</button>`:""}</span>`}</td></tr>`; }).join("") || `<tr><td colspan="4" class="muted">Ninguém além de você ainda.</td></tr>`}
+      </tbody></table></div><datalist id="pf-profs">${profs().map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
+      <p class="muted" style="margin:0">Para a equipe entrar: mande o endereço do sistema; cada um toca em “Criar conta” e aparece aqui para você liberar. Ao liberar, o e-mail da pessoa já fica confirmado (não precisa achar o e-mail do Supabase).</p>
     </div>
   </section>
   <section class="section" id="lixeira"><header><h2>Lixeira</h2></header>
@@ -2763,10 +2767,17 @@ const A = {
   orcLancar(b){ const o = state.orc.find(x=>x.id===b.dataset.id); if(!o) return; dayOpen(today(), {orcId:o.id, emp:o.cliente?.nome||""}); },
   authModo(b){ state.auth = b.dataset.m; render(); },
   irAcessos(){ state.view = "ajustes"; state.rendered = null; render(); setTimeout(()=>$("#acessos")?.scrollIntoView({behavior:"smooth"}), 50); },
-  async perfilLiberar(b){ const tr = b.closest("tr"), nome = tr.querySelector(".pf-nome")?.value || ""; if(!nome){ toast("Escolha qual funcionário é essa pessoa."); return; }
-    if(state.perfis.some(p=>p.user_id!==b.dataset.uid && p.papel==="funcionario" && p.nome===nome)){ toast(`${nome} já está ligado a outro e-mail.`); return; }
-    const {error} = await sb.from("perfis").update({papel:"funcionario", nome}).eq("user_id", b.dataset.uid); if(error){ toast(writeErr(dbErr(error))); return; }
-    state.perfis = state.perfis.map(p=>p.user_id===b.dataset.uid ? {...p, papel:"funcionario", nome} : p); toast(`Acesso liberado para ${nome}.`); state.rendered=null; render(); $("#acessos")?.scrollIntoView(); },
+  async perfilLiberar(b){ const tr = b.closest("tr"), papel = tr.querySelector(".pf-papel")?.value || "funcionario", nome = (tr.querySelector(".pf-nome")?.value || "").trim(), email = state.perfis.find(p=>p.user_id===b.dataset.uid)?.email || "";
+    if(papel==="funcionario" && !nome){ toast("Escreva o nome do funcionário (como aparece nos relatórios)."); tr.querySelector(".pf-nome")?.focus(); return; }
+    if(papel==="funcionario" && state.perfis.some(p=>p.user_id!==b.dataset.uid && p.papel==="funcionario" && p.nome===nome)){ toast(`${nome} já está ligado a outro e-mail.`); return; }
+    if(papel==="dono" && !b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Confirmar"; toast(`${email} vai ver tudo: valores, financeiro e ajustes. Toque em Confirmar.`); return; }
+    b.disabled = true;
+    try{
+      if(papel==="funcionario" && !profs().includes(nome)){ const c = clone(state.cfg); c.profissionais = [...profs(), nome].join("\n"); await saveCfg(c); state.cfg = deepMerge(DEFAULT_CFG, c); } // entra na lista de funcionários
+      const {error} = await sb.rpc("liberar_acesso", {p_uid:b.dataset.uid, p_papel:papel, p_nome:nome}); if(error) throw dbErr(error);
+      state.perfis = state.perfis.map(p=>p.user_id===b.dataset.uid ? {...p, papel, nome:nome||null} : p);
+      toast(papel==="dono" ? `${email} agora é responsável e já pode entrar.` : `Acesso liberado para ${nome}. Já pode entrar.`); state.rendered=null; render(); $("#acessos")?.scrollIntoView();
+    }catch(err){ b.disabled = false; toast(writeErr(err)); } },
   async perfilBloquear(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; }
     const {error} = await sb.from("perfis").update({papel:"bloqueado"}).eq("user_id", b.dataset.uid); if(error){ toast(writeErr(dbErr(error))); return; }
     state.perfis = state.perfis.map(p=>p.user_id===b.dataset.uid ? {...p, papel:"bloqueado"} : p); toast("Acesso bloqueado."); state.rendered=null; render(); $("#acessos")?.scrollIntoView(); },
@@ -2790,6 +2801,7 @@ const A = {
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("recebimentos", y); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   recarregar(){ location.reload(); },
+  irAcessos(){ state.view = "ajustes"; state.rendered = null; render(); voltar.empilhar("tela"); setTimeout(()=>$("#acessos")?.scrollIntoView({block:"start"}), 50); },
   repTerceiros(){ const [de, ate] = repRange(), e = state.rep.f.emp, emp = (e && e!==ALL) ? e : (state.cfg.contratante || "");
     if(!fechRows(de, ate, emp).length){ toast(`Não há OS lançadas de ${fdate(de)} a ${fdate(ate)}${emp?` para ${emp}`:""}. Os meses que vieram das planilhas ficam em “Fechamentos deste período”, logo abaixo.`); return; }
     fechTerceiros({numero:"prévia", de, ate, empresa:emp, competencia:ate.slice(0,7)}, "pdf"); },
