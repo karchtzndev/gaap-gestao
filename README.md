@@ -87,6 +87,7 @@ e cole o conteúdo de cada arquivo no modelo correspondente:
 | `014_unidades_por_empresa.sql` | Lista de unidades de cada contratante também para o funcionário |
 | `015_adicional_noturno.sql` | Adicional noturno (22h às 5h) por contratante, inclusive nos lançamentos dos funcionários |
 | `016_liberar_acesso.sql` | Liberar acesso em um passo (funcionário ou responsável), já confirmando o e-mail da pessoa |
+| `017_esvaziar_lixeira.sql` | Botão "Esvaziar lixeira" em Ajustes (só responsável) |
 
 ## Rotinas automáticas
 

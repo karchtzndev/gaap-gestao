@@ -110,7 +110,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.06-2";
+const VERSAO = "2026.10.06-3";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -1205,7 +1205,7 @@ async function carregarLixeira(){
   const {data, error} = await sb.rpc("lixeira", {p_dias:90}); if(!$("#lx-list")) return;
   if(error){ box.textContent = "Não consegui carregar a lixeira."; return; }
   state.lixo = data || [];
-  box.classList.remove("muted");
+  box.classList.remove("muted"); const acts = $("#lx-acts"); if(acts){ acts.hidden = !state.lixo.length; const eb = acts.querySelector('[data-act="lixoEsvaziar"]'); if(eb){ eb.disabled = false; delete eb.dataset.armed; eb.textContent = "Esvaziar lixeira"; } }
   box.innerHTML = state.lixo.length ? `<div class="bk-list">${state.lixo.map((x,i)=>{ const d = x.dados||{}; const res = x.tabela==="apontamentos" ? `OS ${d.os||"s/n"} · ${fdate(d.data)} ${d.inicio||""}–${d.fim||""}${d.profissional?` · ${d.profissional}`:""}` : x.tabela==="despesas" ? `${d.tipo||""} · ${fdate(d.data)} · ${brl(d.valor)}` : x.tabela==="recebimentos" ? `${fdate(d.data)} · ${brl(d.valor)}` : x.tabela==="fechamentos" ? `${d.numero||""} · ${fdate(d.de)} a ${fdate(d.ate)}` : `${d.numero||""} ${d.titulo||""}`;
     return `<div class="bk-item"><span><b>${TAB_LABEL[x.tabela]||x.tabela}</b> ${esc(res)}<small class="muted">Excluído por ${esc(x.quem_nome||"")} em ${new Date(x.quando).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"})}</small></span><button class="btn sm" data-act="lixoRestaurar" data-i="${i}">Restaurar</button></div>`; }).join("")}</div>` : "A lixeira está vazia.";
 }
@@ -2594,7 +2594,8 @@ function vAjustes(){
     </div>
   </section>
   <section class="section" id="lixeira"><header><h2>Lixeira</h2></header>
-    <div class="panel form"><p class="muted" style="margin:0">Tudo o que foi excluído nos últimos 90 dias, por você ou pelos funcionários. Toque em Restaurar para trazer de volta.</p><div id="lx-list" class="muted">Carregando…</div></div>
+    <div class="panel form"><p class="muted" style="margin:0">Tudo o que foi excluído nos últimos 90 dias, por você ou pelos funcionários. Toque em Restaurar para trazer de volta.</p><div id="lx-list" class="muted">Carregando…</div>
+    <div class="row" id="lx-acts" hidden><button type="button" class="btn danger" data-act="lixoEsvaziar">Esvaziar lixeira</button><span class="muted" style="font-size:.85rem">Apaga de vez tudo o que está na lixeira e as fotos dessas OS. Não dá para desfazer.</span></div></div>
   </section>
   <section class="section" id="backup"><header><h2>Backup</h2></header>
     <div class="panel form"><h3>Cópia completa para guardar fora (recomendado toda semana)</h3>
@@ -2815,6 +2816,15 @@ const A = {
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("recebimentos", y); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   recarregar(){ location.reload(); },
+  async lixoEsvaziar(b){ const n = (state.lixo||[]).length; if(!n) return;
+    if(!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = `Confirmar: apagar ${n} item(ns) de vez`; toast("Tudo o que está na lixeira será apagado para sempre. Toque de novo para confirmar."); setTimeout(()=>{ if(b.isConnected){ delete b.dataset.armed; b.textContent = "Esvaziar lixeira"; } }, 6000); return; }
+    b.disabled = true;
+    try{ const {data, error} = await sb.rpc("esvaziar_lixeira"); if(error){ if(/esvaziar_lixeira|function|PGRST202/i.test(error.message||"") || error.code==="PGRST202") throw {code:"db", message:"O botão ainda não foi ativado no banco. Peça para rodar a migração 017 (esvaziar lixeira)."}; throw dbErr(error); }
+      // fotos que eram só dos itens apagados (não as que continuam em alguma OS ou despesa)
+      const usadas = new Set([...state.ap, ...state.desp].flatMap(x=>x.fotos||[])), fotos = (data?.fotos||[]).filter(f=>f && !usadas.has(f));
+      if(fotos.length) await sb.storage.from("fotos").remove(fotos).catch(()=>{});
+      toast(`Lixeira esvaziada: ${data?.itens||0} item(ns)${fotos.length?` e ${fotos.length} foto(s)`:""} apagados de vez.`); carregarLixeira();
+    }catch(err){ b.disabled = false; delete b.dataset.armed; b.textContent = "Esvaziar lixeira"; toast(writeErr(err)); } },
   irAcessos(){ state.view = "ajustes"; state.rendered = null; render(); voltar.empilhar("tela"); setTimeout(()=>$("#acessos")?.scrollIntoView({block:"start"}), 50); },
   repTerceiros(){ const [de, ate] = repRange(), e = state.rep.f.emp, emp = (e && e!==ALL) ? e : (state.cfg.contratante || "");
     if(!fechRows(de, ate, emp).length){ toast(`Não há OS lançadas de ${fdate(de)} a ${fdate(ate)}${emp?` para ${emp}`:""}. Os meses que vieram das planilhas ficam em “Fechamentos deste período”, logo abaixo.`); return; }
