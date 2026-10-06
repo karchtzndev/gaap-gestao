@@ -71,6 +71,13 @@ function calc(e){ // memória: mesma OS e mesma configuração → mesmo resulta
   const c = calcCache.get(e); if(c && c.cfg===state.cfg) return c.r;
   const r = Object.freeze(calcRaw(e)); calcCache.set(e, {cfg:state.cfg, r}); return r;
 }
+// almoço exato da OS (saída e volta), em minutos contados a partir do dia da OS
+function almocoMin(e, s0){ let a = hm(e.almIni), b = hm(e.almFim); if(a==null || b==null || a===b) return null; if(s0!=null && a<s0) a += 1440; if(b<=a) b += 1440; return [a, b]; }
+function almErro(ini, fim, ai, af){
+  if(!ai && !af) return ""; if(!ai || !af) return "informe a saída e a volta do almoço (ou deixe as duas em branco)";
+  const s0 = hm(ini); let f = hm(fim); if(f<=s0) f += 1440; const a = almocoMin({almIni:ai, almFim:af}, s0);
+  if(!a) return "saída e volta do almoço iguais"; if(a[0]<=s0 || a[1]>=f) return `o almoço (${ai}–${af}) precisa ficar entre o início e o término`; return ""; }
+const almTxt = e => e.almIni && e.almFim ? `Almoço ${e.almIni}–${e.almFim}` : "";
 function calcRaw(e){
   const cfg = state.cfg;
   const r = {n:0,e50:0,e100:0,total:0,valor:0,vn:0,v50:0,v100:0,not:0,vnot:0};
@@ -78,13 +85,14 @@ function calcRaw(e){
   if(!e.data || s0==null || f0==null) return r;
   let f = f0; if(f <= s0) f += 1440;
   const base = parseYmd(e.data), days = {};
-  const aIni = hm(cfg.almoco.ini), aFim = hm(cfg.almoco.fim);
+  const aIni = hm(cfg.almoco.ini), aFim = hm(cfg.almoco.fim), al = almocoMin(e, s0);
   let early = 0, late = 0;
   for(let t=s0; t<f; t++){
     const dn = Math.floor(t/1440), mod = t%1440;
     let info = days[dn];
     if(!info){ const dt=addDays(base,dn), wd=dt.getDay(), j=cfg.jornada[wd]||{}; info = days[dn] = {special: wd===0 || !!holidayName(ymd(dt)), ji:hm(j.ini), jf:hm(j.fim)}; }
-    const almoco = cfg.almoco.ativo && aIni!=null && aFim!=null && mod>=aIni && mod<aFim;
+    if(al && t>=al[0] && t<al[1]) continue; // almoço informado na OS: horário exato, não conta
+    const almoco = !al && cfg.almoco.ativo && aIni!=null && aFim!=null && mod>=aIni && mod<aFim;
     if(almoco && !e.noAlmoco) continue;
     if(mod>=NOITE_INI || mod<NOITE_FIM) r.not++; // 22h às 5h
     let b;
@@ -110,7 +118,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.06-10";
+const VERSAO = "2026.10.06-11";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -145,7 +153,7 @@ const MEIOS = ["Ligação","WhatsApp","Presencial","Rádio","Outro"];
 function emergTxt(e){ if(!e.emergencia) return ""; const a = e.acion||{};
   return ["EMERGÊNCIA", a.por?`acionado por ${a.por}`:"", a.as?`às ${a.as}`:"", a.meio?`via ${a.meio}`:"", a.motivo?`(${a.motivo})`:""].filter(Boolean).join(" "); }
 function descRep(e){ const q = e.equipId && eqDe(e.equipId), pl = q && e.prevId && (q.plano||[]).find(x=>x.id===e.prevId);
-  return [e.descricao||"", q?`Equip. ${q.tag||""}${pl?` (preventiva: ${pl.atividade})`:""}`:"", emergTxt(e), e.obs?`Obs.: ${e.obs}`:""].filter(Boolean).join(" · "); }
+  return [e.descricao||"", almTxt(e), q?`Equip. ${q.tag||""}${pl?` (preventiva: ${pl.atividade})`:""}`:"", emergTxt(e), e.obs?`Obs.: ${e.obs}`:""].filter(Boolean).join(" · "); }
 function acionadores(){ const m = {}; state.ap.forEach(e=>{ const p = e.acion?.por; if(p) m[p] = (m[p]||0)+1; }); return Object.keys(m).sort((a,b)=>m[b]-m[a]).slice(0,30); }
 /* ---------- ficha da contratante ---------- */
 const ficha = emp => ((state.cfg.contratantes||{})[emp]) || {};
@@ -716,7 +724,7 @@ document.addEventListener("change", async e=>{
 function apItem(e, showDate, bad){
   const c = calc(e), lk = lockedE(e), nf = (e.fotos||[]).length;
   return `<button class="item" data-act="editAp" data-id="${esc(e.id)}">
-    <span class="t">${showDate?`${fdate(e.data).slice(0,5)}<br>`:""}${esc(e.inicio)}–${e.andamento?"…":esc(e.fim)}</span>
+    <span class="t">${showDate?`${fdate(e.data).slice(0,5)}<br>`:""}${esc(e.inicio)}–${e.andamento?"…":esc(e.fim)}${e.almIni&&e.almFim?`<br><small class="muted">alm. ${esc(e.almIni)}–${esc(e.almFim)}</small>`:""}</span>
     <span class="main"><b>${e.os?`OS ${esc(e.os)}`:"Sem nº de OS"}${e.andamento?' <span class="pill info">Em andamento</span>':""}${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.exemplo?' <span class="pill">Exemplo</span>':""}${e._pend?' <span class="pill warn" title="Será enviado quando a internet voltar">⏳ a enviar</span>':""}${e.geo && !state.worker?` <span class="pill" role="link" data-act="abrirMapa" data-lat="${esc(e.geo.lat)}" data-lng="${esc(e.geo.lng)}" title="Onde estava ao iniciar (precisão ${e.geo.acc||"?"} m)">📍 local</span>`:""}</b>
       <span class="sub">${esc(e.descricao||"")}</span>
       <span class="sub" style="display:block">${[empOf(e), e.cliente].filter(Boolean).map(esc).join(" · ")}</span>
@@ -1363,6 +1371,8 @@ function apForm(e){
     ${orcSelect("f-orc", e.orcId)}
     ${eqSelect('id="f-eq"', e.equipId, e.prevId)}
     ${state.worker?"":`<label class="field"><span>Cálculo da hora</span><select id="f-tipo">${Object.entries(TIPOS).map(([k,l])=>`<option value="${k}" ${ (e.tipo||"auto")===k?"selected":""}>${l}</option>`).join("")}</select></label>`}
+    <div class="grid2"><label class="field"><span>Saída para o almoço</span><input type="time" id="f-almi" value="${esc(e.almIni||"")}"></label><label class="field"><span>Volta do almoço</span><input type="time" id="f-almf" value="${esc(e.almFim||"")}"></label></div>
+    <p class="muted" style="margin:-4px 0 0;font-size:.85rem">Horário exato do almoço: esse intervalo não conta como hora trabalhada. Deixe em branco se não parou para almoçar nessa OS.</p>
     ${state.cfg.almoco.ativo?`<label class="check"><input type="checkbox" id="f-noalm" ${e.noAlmoco?"checked":""}> Trabalhei no horário de almoço (${esc(state.cfg.almoco.ini)}–${esc(state.cfg.almoco.fim)} conta como extra 50%)</label>`:""}
     <label class="check"><input type="checkbox" id="f-emerg" ${e.emergencia?"checked":""}> Chamado de emergência (fora da escala)</label>
     <div class="grid2 emergbox" id="f-acion" ${e.emergencia?"":"hidden"}>
@@ -1381,7 +1391,7 @@ function apForm(e){
       <span class="row">${isNew?"":`<button type="button" class="btn" data-act="dupAp">Duplicar</button>`}<button class="btn primary" type="submit">${isNew?"Salvar apontamento":"Salvar alterações"}</button></span></footer>
   </form>`;
 }
-const CAMPOS = [["data","Data",fdate],["os","OS"],["inicio","Início"],["fim","Término"],["descricao","Serviço"],["profissional","Funcionário"],["empresa","Empresa"],["cliente","Unidade"],["tipo","Cálculo",v=>TIPOS[v]||v],["emergencia","Emergência",v=>v?"sim":"não"],["obs","Obs."],["noAlmoco","Trabalhou no almoço",v=>v?"sim":"não"],["orcId","Orçamento",v=>v?orcNum(v):"—"],["excluido","Excluído",v=>v?"sim":"não"]];
+const CAMPOS = [["data","Data",fdate],["os","OS"],["inicio","Início"],["fim","Término"],["almIni","Saída almoço"],["almFim","Volta almoço"],["descricao","Serviço"],["profissional","Funcionário"],["empresa","Empresa"],["cliente","Unidade"],["tipo","Cálculo",v=>TIPOS[v]||v],["emergencia","Emergência",v=>v?"sim":"não"],["obs","Obs."],["noAlmoco","Trabalhou no almoço",v=>v?"sim":"não"],["orcId","Orçamento",v=>v?orcNum(v):"—"],["excluido","Excluído",v=>v?"sim":"não"]];
 function difHist(a, b){ a = a||{}; b = b||{}; return CAMPOS.filter(([k])=>JSON.stringify(a[k]??"")!==JSON.stringify(b[k]??"")).map(([k,l,f])=>{ const F = f || (v=>v); return `${l}: ${esc(F(a[k])||"—")} → <b>${esc(F(b[k])||"—")}</b>`; }); }
 async function carregarHist(id){
   const box = $("#f-hist-box"); if(!box) return;
@@ -1407,7 +1417,7 @@ function readApForm(){
   const id = $("#apForm").dataset.id;
   const old = state.ap.find(x=>x.id===id) || {};
   const eqv = $("#f-eq") ? eqSplit($("#f-eq").value) : {equipId:old.equipId, prevId:old.prevId};
-  return {...old, ...eqv, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo: $("#f-tipo") ? $("#f-tipo").value : (old.tipo||"auto"), noAlmoco: $("#f-noalm") ? $("#f-noalm").checked : !!old.noAlmoco, emergencia:$("#f-emerg").checked, acion: $("#f-emerg").checked ? {por:$("#f-ac-por").value.trim(), as:$("#f-ac-as").value, meio:$("#f-ac-meio").value, motivo:$("#f-ac-mot").value.trim()} : undefined, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])], fotoMeta: Object.fromEntries((state.apFotos||[]).map(id=>[id, (old.fotoMeta||{})[id] || state.fotoMetaNovo?.[id]]).filter(([,v])=>v))};
+  return {...old, ...eqv, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, almIni:$("#f-almi")?.value||"", almFim:$("#f-almf")?.value||"", cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo: $("#f-tipo") ? $("#f-tipo").value : (old.tipo||"auto"), noAlmoco: $("#f-noalm") ? $("#f-noalm").checked : !!old.noAlmoco, emergencia:$("#f-emerg").checked, acion: $("#f-emerg").checked ? {por:$("#f-ac-por").value.trim(), as:$("#f-ac-as").value, meio:$("#f-ac-meio").value, motivo:$("#f-ac-mot").value.trim()} : undefined, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])], fotoMeta: Object.fromEntries((state.apFotos||[]).map(id=>[id, (old.fotoMeta||{})[id] || state.fotoMetaNovo?.[id]]).filter(([,v])=>v))};
 }
 function lastEmp(){ let v=""; try{ v = localStorage.getItem("gaap-last-emp")||""; }catch(err){} return v || state.cfg.contratante || ""; }
 function selProfs(){ return [...document.querySelectorAll('input[name="f-prof"]:checked')].map(x=>x.value); }
@@ -1430,7 +1440,7 @@ function updateApPreview(){
     ${ov?`<div class="warnbox">Esse horário se sobrepõe a outro apontamento do mesmo profissional nesse dia.</div>`:""}`;
 }
 /* ---------- LANÇAR OS DO DIA ---------- */
-const blankRow = () => ({os:"", desc:"", ini:"", fim:"", cli:"", emerg:false, noAlm:false, ids:{}});
+const blankRow = () => ({os:"", desc:"", ini:"", fim:"", almIni:"", almFim:"", cli:"", emerg:false, noAlm:false, ids:{}});
 function nextStart(fim){ const a = state.cfg.almoco; return (a.ini && a.fim && fim===a.ini) ? a.fim : fim; }
 function dayPresets(ds){
   const cfg = state.cfg, j = cfg.jornada[parseYmd(ds).getDay()] || {}, a = cfg.almoco;
@@ -1505,6 +1515,8 @@ function renderDayRows(){
     <label class="field f-os"><span>Nº da OS</span><input data-f="os" list="os-list" inputmode="numeric" value="${esc(r.os)}" placeholder="Ex.: 2165557"></label>
     <label class="field f-ini"><span>Início</span><input type="time" data-f="ini" value="${esc(r.ini)}"></label>
     <label class="field f-fim"><span>Término</span><input type="time" data-f="fim" value="${esc(r.fim)}"></label>
+    <label class="field f-almi"><span>Saída almoço</span><input type="time" data-f="almIni" value="${esc(r.almIni||"")}"></label>
+    <label class="field f-almf"><span>Volta almoço</span><input type="time" data-f="almFim" value="${esc(r.almFim||"")}"></label>
     <button type="button" class="iconbtn" data-act="dayDel" data-r="${i}" aria-label="Remover linha ${i+1}" style="align-self:end">✕</button>
     <label class="field f-desc"><span>Serviço executado</span><input data-f="desc" value="${esc(r.desc)}" placeholder="Descrição da OS"></label>
     <label class="field f-cli"><span>Unidade</span>${unidCampo('data-f="cli"', d.emp, r.cli, d.unid ? `Igual à de cima (${d.unid})` : "Igual à de cima")}</label>
@@ -1537,7 +1549,7 @@ function updateDay(){
   d.rows.forEach((r,i)=>{
     const el = $("#d-info-"+i); if(!el) return;
     if(!r.ini || !r.fim){ el.innerHTML = r.os||r.desc ? `<span class="pill warn">Falta ${!r.ini?"início":"fim"}</span>` : ""; return; }
-    const c = calc({data:d.data, inicio:r.ini, fim:r.fim, noAlmoco:!!r.noAlm, empresa:d.emp, ...(d.orcId?{orcId:d.orcId}:{}), ...(state.worker?{}:rateFor(d.emp||state.cfg.contratante||"", d.data))});
+    const c = calc({data:d.data, inicio:r.ini, fim:r.fim, almIni:r.almIni, almFim:r.almFim, noAlmoco:!!r.noAlm, empresa:d.emp, ...(d.orcId?{orcId:d.orcId}:{}), ...(state.worker?{}:rateFor(d.emp||state.cfg.contratante||"", d.data))});
     ["n","e50","e100","total","valor"].forEach(k=>tot[k]+=c[k]);
     const others = [...ex, ...d.rows.filter((x,k)=>k!==i && x.ini && x.fim).map((x,k)=>({id:"r"+k, data:d.data, inicio:x.ini, fim:x.fim}))];
     const ov = overlaps([...others.map(o=>({...o, profissional:""})), {id:"__me", data:d.data, inicio:r.ini, fim:r.fim, profissional:""}]).has("__me");
@@ -1591,6 +1603,7 @@ async function submitDay(){
   if(!rows.length){ toast("Preencha pelo menos uma OS."); return; }
   const bad = rows.find(r=>!r.ini || !r.fim || r.ini===r.fim);
   if(bad){ toast(`Linha ${bad.i+1}: confira início e fim.`); return; }
+  for(const r of rows){ const ae = r.ini && r.fim ? almErro(r.ini, r.fim, r.almIni, r.almFim) : ""; if(ae){ toast(`Linha ${r.i+1}: ${ae}.`); return; } }
   if(osObrigatoria(d.emp)){ const sem = rows.find(r=>!r.os.trim()); if(sem){ toast(`Linha ${sem.i+1}: a ${d.emp||state.cfg.contratante} exige o nº da OS.`); return; } }
   const btn = $("#d-save"); btn.disabled = true;
   const base = {...(state.worker ? {} : rateFor(d.emp || state.cfg.contratante || "", d.data)), tipo:"auto", obs:"", ...(d.orcId?{orcId:d.orcId}:{})};
@@ -1601,7 +1614,7 @@ async function submitDay(){
   try{
     for(const r of rows) for(const pr of quem){
       const row = d.rows[r.i]; row.ids ||= {}; const id = row.ids[pr||"_"] ||= uid();
-      await save(col, {...base, id, ...eqSplit(r.eq), noAlmoco:!!r.noAlm, obs:(r.obs||"").trim(), ...(r.emerg?{acion:{por:(r.acPor||"").trim(), as:r.acAs||"", meio:r.acMeio||"", motivo:(r.acMot||"").trim()}}:{}), data:d.data, os:r.os.trim(), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], fotoMeta:r.fotoMeta||{}, criadoEm:new Date().toISOString()});
+      await save(col, {...base, id, ...eqSplit(r.eq), almIni:r.almIni||"", almFim:r.almFim||"", noAlmoco:!!r.noAlm, obs:(r.obs||"").trim(), ...(r.emerg?{acion:{por:(r.acPor||"").trim(), as:r.acAs||"", meio:r.acMeio||"", motivo:(r.acMot||"").trim()}}:{}), data:d.data, os:r.os.trim(), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], fotoMeta:r.fotoMeta||{}, criadoEm:new Date().toISOString()});
       n++;
     }
     try{ if(d.profs.length) localStorage.setItem("gaap-last-prof", JSON.stringify(d.profs)); if(d.emp) localStorage.setItem("gaap-last-emp", d.emp); }catch(err){}
@@ -1618,6 +1631,7 @@ document.addEventListener("submit", async e=>{
     const d = readApForm(); delete d.andamento;
     if(!d.data || !d.inicio || !d.fim){ toast("Preencha data, início e término."); return; }
     if(d.inicio===d.fim){ toast("Início e término iguais. Confira os horários."); return; }
+    { const ae = almErro(d.inicio, d.fim, d.almIni, d.almFim); if(ae){ toast("Almoço: "+ae+"."); return; } }
     if(!d.os && osObrigatoria(empOf(d))){ toast(`A ${empOf(d)} exige o nº da OS.`); return; }
     const multi = (!$("#f-prof1") && !state.worker) ? selProfs() : [];
     if(!d.id && profs().length && !multi.length && !state.worker){ toast("Marque quem trabalhou nessa OS."); return; }
