@@ -110,7 +110,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.06-7";
+const VERSAO = "2026.10.06-8";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -985,13 +985,25 @@ function conferirHtml(f, deles){
   <footer><span></span><button class="btn" data-act="closeModal">Fechar</button></footer>`;
 }
 /* ---------- EQUIPE: acerto e documentos ---------- */
-const TIPOS_PAG = {vale:["Vale / adiantamento",-1], pagamento:["Pagamento",-1], bonus:["Bônus",1], desconto:["Desconto",-1]};
+const TIPOS_PAG = {vale:["Vale / adiantamento",-1], pagamento:["Pagamento",-1], bonus:["Bônus",1], desconto:["Desconto",-1], folga:["Folga (usa o banco de horas)",0], bancoPago:["Horas do banco pagas",0]};
+const HORAS_PAG = ["folga","bancoPago"];
+const usaBanco = nome => !!((state.cfg.custos||{})[nome]||{}).banco;
+// banco de horas: extras (50% e 100%) entram como crédito; folgas e horas pagas saem
+function bancoHoras(nome){
+  const desde = ((state.cfg.custos||{})[nome]||{}).bancoDesde || "";
+  const cred = state.ap.filter(e=>e.profissional===nome && !e.andamento && !e.orcId && e.data>=desde).reduce((s,e)=>{ const c = calc(e); return s+c.e50+c.e100; },0);
+  const deb = Math.round(state.pag.filter(x=>x.profissional===nome && HORAS_PAG.includes(x.tipo)).reduce((s,x)=>s+numIn(x.horas)*60,0));
+  return {cred, deb, saldo:cred-deb, desde};
+}
+const DOCS_FUNC = ["ASO","NR-10","NR-12","NR-35"];
 const TIPOS_DOC = ["ASO","NR-10","NR-11","NR-12","NR-33","NR-35","Integração na contratante","Ficha de EPI","CND Federal","CND FGTS","CND Trabalhista","CND Estadual","CND Municipal","Alvará","Seguro","Contrato","Outro"];
 function acertoDe(nome, de, ate){
-  const aps = state.ap.filter(e=>e.profissional===nome && e.data>=de && e.data<=ate && !e.andamento), c = sumCalc(aps), cu = Math.round(custoSum(aps)*100)/100;
+  const aps = state.ap.filter(e=>e.profissional===nome && e.data>=de && e.data<=ate && !e.andamento), c = sumCalc(aps);
+  // no banco de horas as extras não entram no acerto em dinheiro (viram folga ou são pagas depois)
+  const cu = usaBanco(nome) ? Math.round(aps.reduce((s,e)=>s+custoHora(nome)/60*calc(e).n,0)*100)/100 : Math.round(custoSum(aps)*100)/100;
   const pags = state.pag.filter(x=>x.profissional===nome && ((x.tipo==="pagamento" && x.ref) ? (x.ref.de===de && x.ref.ate===ate) : (x.data>=de && x.data<=ate)));
   const som = t => Math.round(pags.filter(x=>x.tipo===t).reduce((s,x)=>s+numIn(x.valor),0)*100)/100;
-  const v = {vale:som("vale"), pago:som("pagamento"), bonus:som("bonus"), desconto:som("desconto")};
+  const v = {vale:som("vale"), pago:som("pagamento"), bonus:som("bonus"), desconto:som("desconto"), bancoPago:som("bancoPago")};
   return {aps, c, cu, pags, ...v, saldo:Math.round((cu + v.bonus - v.desconto - v.vale - v.pago)*100)/100};
 }
 function docStatus(x){ if(!x.validade) return ["", "sem validade"]; const d = diasEntre(today(), x.validade); return d<0 ? ["bad", `vencido há ${-d} dia${d<-1?"s":""}`] : d<=30 ? ["warn", `vence em ${d} dia${d!==1?"s":""}`] : ["good", `válido até ${fdate(x.validade)}`]; }
@@ -1003,17 +1015,26 @@ function vEquipe(){
     <div class="field" style="grid-column:1/-1"><span>Atalhos</span><div class="row"><button class="btn sm" data-act="eqPreset" data-p="sem">Esta semana</button><button class="btn sm" data-act="eqPreset" data-p="q1">1ª quinzena</button><button class="btn sm" data-act="eqPreset" data-p="q2">2ª quinzena</button><button class="btn sm" data-act="eqPreset" data-p="mes">Este mês</button><button class="btn sm" data-act="eqPreset" data-p="ant">Mês passado</button></div></div></div>
   ${!temCustos()?`<div class="banner"><span>Informe quanto você paga a cada funcionário (por hora ou salário) para o acerto calcular os valores.</span><button class="btn sm" data-act="nav" data-view="ajustes">Ajustes</button></div>`:""}
   <section class="section"><header><h2>Acerto de ${fdate(q.de)} a ${fdate(q.ate)}</h2><button class="btn sm primary" data-act="pagNovo">+ Vale / pagamento</button></header>
-  ${ps.length?`<div class="fechlist">${ps.map(n=>{ const a = acertoDe(n, q.de, q.ate); return `<div class="fechcard"><div class="fc-top"><b>${esc(n)}</b><span class="pill ${a.saldo>0.005?"warn":"good"}">${a.saldo>0.005?`A pagar ${brl(a.saldo)}`:"Quitado"}</span></div>
+  ${ps.length?`<div class="fechlist">${ps.map(n=>{ const a = acertoDe(n, q.de, q.ate); const bh = usaBanco(n) ? bancoHoras(n) : null; return `<div class="fechcard" data-pcard="${esc(n)}"><div class="fc-top"><b>${esc(n)}</b><span class="pill ${a.saldo>0.005?"warn":"good"}">${a.saldo>0.005?`A pagar ${brl(a.saldo)}`:"Quitado"}</span></div>
     <div class="fc-vals"><span>Horas<b class="mono">${fdec(a.c.total)} h</b><small>normal ${fdec(a.c.n)} · 50% ${fdec(a.c.e50)} · 100% ${fdec(a.c.e100)}</small></span><span>Custo<b class="mono">${brl(a.cu)}</b><small>${a.aps.length} OS</small></span>
-      ${a.bonus||a.desconto?`<span>Bônus / desc.<b class="mono">${brl(a.bonus-a.desconto)}</b></span>`:""}<span>Vales<b class="mono">${brl(a.vale)}</b></span><span>Pago<b class="mono">${brl(a.pago)}</b></span></div>
-    ${a.pags.length?`<p class="muted" style="margin:0;font-size:.85rem">${a.pags.map(x=>`${fdate(x.data)} ${TIPOS_PAG[x.tipo]?.[0]||x.tipo} ${brl(numIn(x.valor))}`).join(" · ")}</p>`:""}
-    <div class="row fc-acts">${a.saldo>0.005?`<button class="btn sm primary" data-act="pagNovo" data-p="${esc(n)}" data-t="pagamento" data-v="${a.saldo}">Pagar saldo</button>`:""}<button class="btn sm" data-act="pagNovo" data-p="${esc(n)}" data-t="vale">Vale</button><button class="btn sm" data-act="reciboPdf" data-p="${esc(n)}">Recibo / extrato (PDF)</button></div></div>`; }).join("")}</div>`:`<div class="empty"><b>Nenhum funcionário cadastrado</b>Cadastre em Ajustes → Funcionários.</div>`}
-  ${state.pag.length?`<details class="fichabox" style="margin-top:10px"><summary>Todos os vales e pagamentos (${state.pag.length})</summary><div class="list">${[...state.pag].sort((a,b)=>b.data.localeCompare(a.data)).slice(0,100).map(x=>`<button class="item" data-act="pagEditar" data-id="${esc(x.id)}"><span class="mono">${fdate(x.data)}</span><span><b>${esc(x.profissional)}</b> · ${TIPOS_PAG[x.tipo]?.[0]||esc(x.tipo)}${x.obs?`<br><small class="muted">${esc(x.obs)}</small>`:""}</span><span class="mono">${brl(numIn(x.valor))}</span></button>`).join("")}</div></details>`:""}
+      ${a.bonus||a.desconto?`<span>Bônus / desc.<b class="mono">${brl(a.bonus-a.desconto)}</b></span>`:""}<span>Vales<b class="mono">${brl(a.vale)}</b></span><span>Pago<b class="mono">${brl(a.pago)}</b></span>${bh?`<span>Banco de horas<b class="mono" style="color:${bh.saldo<0?"var(--bad)":"inherit"}">${bh.saldo<0?"−":""}${fdec(Math.abs(bh.saldo))} h</b><small>+${fdec(bh.cred)} extras − ${fdec(bh.deb)} usadas</small></span>`:""}</div>
+    ${a.pags.length?`<p class="muted" style="margin:0;font-size:.85rem">${a.pags.map(x=>`${fdate(x.data)} ${TIPOS_PAG[x.tipo]?.[0]||x.tipo} ${pagValTxt(x)}`).join(" · ")}</p>`:""}
+    <div class="row fc-acts">${a.saldo>0.005?`<button class="btn sm primary" data-act="pagNovo" data-p="${esc(n)}" data-t="pagamento" data-v="${a.saldo}">Pagar saldo</button>`:""}<button class="btn sm" data-act="pagNovo" data-p="${esc(n)}" data-t="vale">Vale</button><button class="btn sm" data-act="reciboPdf" data-p="${esc(n)}">Recibo / extrato (PDF)</button>${bh?`<button class="btn sm" data-act="pagNovo" data-p="${esc(n)}" data-t="folga">Folga</button><button class="btn sm" data-act="pagNovo" data-p="${esc(n)}" data-t="bancoPago">Pagar horas do banco</button>`:""}</div></div>`; }).join("")}</div>`:`<div class="empty"><b>Nenhum funcionário cadastrado</b>Cadastre em Ajustes → Funcionários.</div>`}
+  ${state.pag.length?`<details class="fichabox" style="margin-top:10px"><summary>Todos os vales e pagamentos (${state.pag.length})</summary><div class="list">${[...state.pag].sort((a,b)=>b.data.localeCompare(a.data)).slice(0,100).map(x=>`<button class="item" data-act="pagEditar" data-id="${esc(x.id)}"><span class="mono">${fdate(x.data)}</span><span><b>${esc(x.profissional)}</b> · ${TIPOS_PAG[x.tipo]?.[0]||esc(x.tipo)}${x.obs?`<br><small class="muted">${esc(x.obs)}</small>`:""}</span><span class="mono">${pagValTxt(x)}</span></button>`).join("")}</div></details>`:""}
   </section>
+  ${temCustos()?`<section class="section"><header><h2>Lucro por funcionário (${fdate(q.de)} a ${fdate(q.ate)})</h2></header>
+  ${dimTable(state.ap.filter(e=>e.data>=q.de && e.data<=q.ate && !e.orcId && !e.andamento), "prof", {lucro:true}) || `<p class="muted">Precisa de lançamentos de pelo menos dois funcionários no período.</p>`}
+  <p class="muted" style="margin:0">Faturado = valor cobrado da empresa pelas horas de cada um. Custo = o que você paga a ele (com as extras). Só você vê.</p></section>`:""}
+  ${ps.length?`<section class="section"><header><h2>Documentos de cada funcionário</h2></header><div class="tablewrap"><table class="docmat"><thead><tr><th>Funcionário</th>${DOCS_FUNC.map(t=>`<th>${t}</th>`).join("")}</tr></thead>
+  <tbody>${ps.map(n=>`<tr><td><b>${esc(n)}</b></td>${DOCS_FUNC.map(t=>{ const x = state.docs.filter(d=>d.titular===n && d.tipo===t).sort((a,b)=>(b.validade||"").localeCompare(a.validade||""))[0];
+    if(!x) return `<td><button class="btn sm" data-act="docNovo" data-t="${t}" data-p="${esc(n)}">+ incluir</button></td>`; const [cl] = docStatus(x);
+    return `<td><button class="pill ${cl||"info"}" style="border:0;cursor:pointer" data-act="docEditar" data-id="${esc(x.id)}">${x.validade?(cl==="bad"?"vencido ":"")+fdate(x.validade):"sem validade"}</button></td>`; }).join("")}</tr>`).join("")}</tbody></table></div>
+  <p class="muted" style="margin:0">Vermelho: vencido (a contratante pode barrar a entrada). Amarelo: vence em até 30 dias. Você recebe aviso no Painel e no celular.</p></section>`:""}
   <section class="section" id="documentos"><header><h2>Documentos e validades</h2><button class="btn sm primary" data-act="docNovo">+ Documento</button></header>
   ${docs.length?`<div class="list">${docs.map(x=>{ const [cl, st] = docStatus(x); return `<button class="item" data-act="docEditar" data-id="${esc(x.id)}"><span><b>${esc(x.tipo||"")}</b><br><small class="muted">${esc(x.titular||"Empresa")}</small></span><span>${x.obs?`<small class="muted">${esc(x.obs)}</small>`:""}${x.arquivo?' <span class="pill">📎</span>':""}</span><span class="pill ${cl}">${st}</span></button>`; }).join("")}</div>`:`<div class="empty"><b>Nenhum documento</b>Cadastre ASO, NRs, integração e certidões com a validade: o sistema avisa 30 dias antes de vencer.</div>`}
   </section>`;
 }
+const pagValTxt = x => x.tipo==="folga" ? `${fdec(numIn(x.horas)*60)} h` : x.tipo==="bancoPago" ? `${fdec(numIn(x.horas)*60)} h · ${brl(numIn(x.valor))}` : brl(numIn(x.valor));
 function pagForm(x){
   return `<header><h2>${x.id?"Editar":"Novo"} lançamento da equipe</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
   <form class="form" id="pagForm" data-id="${esc(x.id||"")}">
@@ -1021,6 +1042,7 @@ function pagForm(x){
     <label class="field"><span>Tipo</span><select id="pg-tipo">${Object.entries(TIPOS_PAG).map(([k,[l]])=>`<option value="${k}" ${(x.tipo||"vale")===k?"selected":""}>${l}</option>`).join("")}</select></label>
     <label class="field"><span>Data</span><input type="date" id="pg-data" value="${esc(x.data||today())}"></label>
     <label class="field"><span>Valor (R$)</span><input id="pg-valor" inputmode="decimal" value="${x.valor!=null?String(Math.round(numIn(x.valor)*100)/100).replace(".",","):""}"></label></div>
+    <label class="field"><span>Horas (para folga ou horas do banco pagas)</span><input id="pg-horas" inputmode="decimal" value="${x.horas!=null?String(x.horas).replace(".",","):""}" placeholder="Ex.: 8"></label>
     <label class="field"><span>Observação</span><input id="pg-obs" value="${esc(x.obs||"")}" placeholder="Ex.: PIX, adiantamento quinzena"></label>
     ${x.ref?`<p class="muted" style="margin:0">Referente ao período ${fdate(x.ref.de)} a ${fdate(x.ref.ate)}.</p>`:""}
     <footer>${x.id?`<button type="button" class="btn danger" data-act="pagExcluir" data-id="${esc(x.id)}">Excluir</button>`:"<span></span>"}<button class="btn primary" type="submit">Salvar</button></footer>
@@ -2019,7 +2041,8 @@ async function submitFech(){
   closeModal(); toast(feitos.length>1 ? `${feitos.length} fechamentos criados (um por funcionário)` : `Fechamento ${feitos[0].numero} criado`);
   if(feitos.length===1) return fechArquivo(feitos[0]);
   openModal(`<header><h2>${feitos.length} fechamentos criados</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
-    <div class="form"><p class="muted" style="margin:0">Um PDF por funcionário. Toque em cada um para ver e enviar.</p>
+    <div class="form"><p class="muted" style="margin:0">Um PDF por funcionário. Toque em cada um para ver e enviar, ou junte todos num PDF só.</p>
+    <div class="row"><button class="btn primary" data-act="fechJuntos" data-id="${esc(feitos[0].id)}">Todos em um PDF</button></div>
     ${feitos.map(f=>`<div class="line"><span><b>${esc(f.profissional||"Sem nome")}</b> · <span class="mono">${esc(f.numero)}</span> · ${brl(f.valor)}</span><span class="row"><button class="btn sm primary" data-act="${ficha(f.empresa||state.cfg.contratante||"").codigo?"terceirosPdf":"fechPdfBtn"}" data-id="${esc(f.id)}">PDF</button>${ficha(f.empresa||state.cfg.contratante||"").codigo?`<button class="btn sm" data-act="terceirosXlsx" data-id="${esc(f.id)}">Excel</button>`:""}</span></div>`).join("")}</div>`);
 }
 function fechArquivo(f){ return ficha(f.empresa||state.cfg.contratante||"").codigo ? fechTerceiros(f, "pdf") : fechPdf(f); }
@@ -2047,16 +2070,35 @@ function linhasTerceiros(f){
   const r2 = v => Math.round(v*100)/100;
   return [...g.values()].map(o=>({...o, desc:(o.desc||"").toUpperCase(), hn:r2(o.hn), vn:r2(o.vn), h50:r2(o.h50), v50:r2(o.v50), h100:r2(o.h100), v100:r2(o.v100), not:r2(o.not), notv:r2(o.notv), total:r2(o.total)}));
 }
-async function fechTerceiros(f, fmt){
+function fechIrmaos(f){ return state.fech.filter(x=>x.profissional && x.de===f.de && x.ate===f.ate && chaveEmp(x.empresa||"")===chaveEmp(f.empresa||"")).sort((a,b)=>(a.profissional||"").localeCompare(b.profissional||"")); }
+// todos os funcionários do período num PDF só: capa com o resumo + as folhas de cada um
+async function fechJuntosPdf(fs){
+  if(!fs.length) return; const doc = pdfDoc(true); if(!doc) return;
+  const f0 = fs[0], emp = f0.empresa || state.cfg.contratante || "", W = pw(doc), tot = fs.reduce((s,f)=>s+(+f.valor||0),0);
+  doc.setFont("helvetica","bold"); doc.setFontSize(13); doc.setTextColor(0); doc.text("FECHAMENTO DE TERCEIROS - RESUMO POR FUNCIONÁRIO", W/2, 14, {align:"center"});
+  doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.text(`${ficha(emp).nomeFech || state.cfg.empresa.nome}  ·  ${emp}  ·  período ${fdate(f0.de)} a ${fdate(f0.ate)}`, W/2, 20, {align:"center"});
+  doc.autoTable({startY:26, theme:"grid", margin:{left:30, right:30}, head:[["Funcionário","Fechamento","OS","Horas","Valor"]],
+    body: fs.map(f=>[f.profissional||"", f.numero, String(f.os||0), fdec(+f.horas||0), "R$ "+n2(f.valor)]),
+    foot:[["TOTAL", `${fs.length} fechamento(s)`, String(fs.reduce((s,f)=>s+(+f.os||0),0)), fdec(fs.reduce((s,f)=>s+(+f.horas||0),0)), "R$ "+n2(tot)]],
+    styles:{fontSize:9, cellPadding:1.6, textColor:0}, headStyles:{fillColor:[235,235,235], textColor:0}, footStyles:{fillColor:[235,235,235], textColor:0, fontStyle:"bold"}, columnStyles:{2:{halign:"right"},3:{halign:"right"},4:{halign:"right"}}});
+  for(const f of fs){ const d = terceirosDados(f); if(!d) continue; for(const g of d.grupos.values()){ doc.addPage(); terceirosPagina(doc, g, d.cab, f); } }
+  await offerFile(`todos-funcionarios-${slug(emp)}-${(f0.ate||"").slice(0,7)}.pdf`, doc.output("blob"));
+}
+function terceirosDados(f){
   const cfg = state.cfg;
   if(f.snap && !f.itens){ state.cfg = {...cfg, ...f.snap.cfg}; holCache = {}; calcCache = new WeakMap(); }
   let linhas; try{ linhas = linhasTerceiros(f); } finally { state.cfg = cfg; holCache = {}; calcCache = new WeakMap(); }
-  if(!linhas.length){ toast("Esse fechamento não tem OS."); return; }
+  if(!linhas.length) return null;
   const emp = f.empresa || state.cfg.contratante || "", F = ficha(emp), mes = (f.competencia || f.ate || "").slice(0,7);
   const cab = {nome: F.nomeFech || state.cfg.empresa.nome, codigo: F.codigo || "", compet: COMPET[+mes.slice(5,7)-1] || "", ano: mes.slice(0,4)};
   // uma folha por centro (unidade)
   const grupos = new Map(); linhas.forEach(l=>{ const c = centroDe(l.unid); const k = c.centro || c.cidade; if(!grupos.has(k)) grupos.set(k, {...c, linhas:[]}); grupos.get(k).linhas.push(l); });
   const nome = f.profissional ? fechNomeArq(f, `fechamento-${mes}-${f.numero}`) : `fechamento-terceiros-${slug(emp)}-${mes}`;
+  return {grupos, cab, nome};
+}
+async function fechTerceiros(f, fmt){
+  const d = terceirosDados(f); if(!d){ toast("Esse fechamento não tem OS."); return; }
+  const {grupos, cab, nome} = d;
   if(fmt==="xlsx") return terceirosXlsx(grupos, cab, nome, f);
   const doc = pdfDoc(true); if(!doc) return;
   let pg = 0; for(const g of grupos.values()){ if(pg++) doc.addPage(); terceirosPagina(doc, g, cab, f); }
@@ -2454,7 +2496,7 @@ function fechCard(f){
     ${f.aprovacao?`<p style="margin:0">${f.aprovacao.aprovado?`<span class="pill good">Aprovado por ${esc(f.aprovacao.nome||"aprovador")}${f.aprovacao.cargo?` (${esc(f.aprovacao.cargo)})`:""} ${f.aprovacao.em?` em ${fdate(f.aprovacao.em.slice(0,10))}`:""}</span>`:`<span class="pill bad">Contestado: ${(f.aprovacao.contestadas||[]).length} OS · ${esc(f.aprovacao.nome||"")}</span>`}</p>`:f.aprovPedida?`<p class="muted" style="margin:0;font-size:.85rem">Aprovação pedida em ${fdate(f.aprovPedida)}, aguardando resposta.</p>`:""}
     ${ult?`<p class="muted" style="margin:0;font-size:.85rem">Última cobrança em ${fdate(ult)}${(f.cobrancas||[]).length>1?` (${f.cobrancas.length} no total)`:""}.</p>`:""}
     ${f.itens?`<p class="muted" style="margin:0;font-size:.85rem"><span class="pill info">Planilha importada</span> ${f.itens.length} OS lançadas pela planilha aprovada${f.pedido?` · pedido ${esc(f.pedido)}`:""}.</p>`:""}
-    <div class="row fc-acts">${f.itens?"":`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}">PDF enviado</button>`}<button class="btn sm" data-act="terceirosPdf" data-id="${esc(f.id)}">Fechamento p/ fiscal (PDF)</button><button class="btn sm" data-act="terceirosXlsx" data-id="${esc(f.id)}">Excel</button><button class="btn sm" data-act="fechConferir" data-id="${esc(f.id)}">Conferir planilha deles</button>${fechAlterado(f)?`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}" data-atual="1">PDF atual</button>`:""}
+    <div class="row fc-acts">${f.itens?"":`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}">PDF enviado</button>`}<button class="btn sm" data-act="terceirosPdf" data-id="${esc(f.id)}">Fechamento p/ fiscal (PDF)</button><button class="btn sm" data-act="terceirosXlsx" data-id="${esc(f.id)}">Excel</button>${f.profissional && fechIrmaos(f).length>1?`<button class="btn sm" data-act="fechJuntos" data-id="${esc(f.id)}">Todos do período em 1 PDF (${fechIrmaos(f).length})</button>`:""}${f.profissional?`<button class="btn sm" data-act="fechAcerto" data-id="${esc(f.id)}">Acerto do funcionário</button>`:""}<button class="btn sm" data-act="fechConferir" data-id="${esc(f.id)}">Conferir planilha deles</button>${fechAlterado(f)?`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}" data-atual="1">PDF atual</button>`:""}
       ${sd>0.005?`<button class="btn sm primary" data-act="newRec" data-o="fech" data-id="${esc(f.id)}" data-v="${sd}">Receber</button><button class="btn sm" data-act="fechCobrar" data-id="${esc(f.id)}">Cobrar</button>`:""}
       <button class="btn sm" data-act="fechNF" data-id="${esc(f.id)}">Nota fiscal / vencimento</button>${f.snap?`<button class="btn sm" data-act="fechAprov" data-id="${esc(f.id)}">${f.aprovacao?"Ver aprovação":"Pedir aprovação"}</button>`:""}${sd>0.005?`<button class="btn sm" data-act="fechGlosa" data-id="${esc(f.id)}">Glosa</button>`:""}
       <button class="btn sm danger" data-act="fechReabrir" data-id="${esc(f.id)}">Reabrir</button></div>
@@ -2519,10 +2561,53 @@ function vFinanceiro(){
   <tbody>${orcs.map(o=>{const T=orcTotals(o).total, rec=orcRecebido(o.id), s=Math.round((T-rec)*100)/100; return `<tr><td class="mono">${esc(o.numero)}</td><td>${esc(o.cliente?.nome)}<br><span class="muted">${esc(o.titulo||"")}</span></td><td class="r mono">${brl(T)}</td><td class="r mono">${brl(rec)}</td><td class="r mono">${brl(Math.max(0,s))}</td><td>${stPill(s,rec)}</td><td>${s>0.005?`<button class="btn sm" data-act="newRec" data-o="orc" data-id="${esc(o.id)}" data-v="${s}">Receber</button>`:""}</td></tr>`;}).join("")}</tbody></table></div>`
   :`<div class="empty"><b>Nenhum orçamento aprovado</b>Quando você marcar um orçamento como Aprovado, ele entra aqui como valor a receber.</div>`}</section>
   ${despSection()}
+  ${anualHtml()}
   <section class="section"><header><h2>Recebimentos registrados</h2><span class="muted">${brl(state.rec.filter(r=>ym(r.data||"")===ym(today())).reduce((s,r)=>s+numIn(r.valor),0))} recebido em ${ymLabel(ym(today()))}</span></header>
   ${recs.length?`<div class="tablewrap"><table><thead><tr><th>Data</th><th>Origem</th><th class="hs">Observação</th><th class="r">Valor</th><th></th></tr></thead>
   <tbody>${recs.map(r=>`<tr><td class="mono">${fdate(r.data)}</td><td>${r.origem==="fech"?`Fechamento ${esc(state.fech.find(f=>f.id===r.fechId)?.numero||"(reaberto)")}${r.empresa?` · ${esc(r.empresa)}`:""}`:r.origem==="horas"?`Horas · <span style="text-transform:capitalize">${ymLabel(r.competencia||"2000-01")}</span>${multiEmp?` · ${esc(recEmp(r))}`:""}`:`Orçamento ${esc(state.orc.find(o=>o.id===r.orcId)?.numero||"(excluído)")}`}${r.exemplo?' <span class="pill">Exemplo</span>':""}</td><td class="hs">${esc(r.obs||"")}</td><td class="r mono">${brl(numIn(r.valor))}</td><td><button class="btn sm danger" data-act="delRec" data-id="${esc(r.id)}">Excluir</button></td></tr>`).join("")}</tbody></table></div>`
   :`<div class="empty"><b>Nenhum recebimento registrado</b>Use “Registrar recebimento” quando a empresa ou o cliente pagar.</div>`}</section>`;
+}
+/* ---------- relatório anual para o contador ---------- */
+function anualDados(ano){
+  const r2 = v => Math.round(v*100)/100;
+  return Array.from({length:12}, (_,i)=>{ const m = `${ano}-${pad(i+1)}`;
+    const fs = state.fech.filter(f=>compDe(f)===m), rs = state.rec.filter(r=>ym(r.data||"")===m);
+    const ret = Object.fromEntries(RETS.map(([k])=>[k, r2(rs.reduce((s,r)=>s+numIn((r.ret||{})[k]),0))]));
+    const pg = state.pag.filter(x=>ym(x.data||"")===m && ["vale","pagamento","bancoPago","bonus"].includes(x.tipo)).reduce((s,x)=>s+numIn(x.valor),0) - state.pag.filter(x=>ym(x.data||"")===m && x.tipo==="desconto").reduce((s,x)=>s+numIn(x.valor),0);
+    const o = {m, fat:r2(fs.reduce((s,f)=>s+(+f.valor||0),0)), reemb:r2(fs.reduce((s,f)=>s+(+f.reemb||0),0)), glosa:r2(fs.reduce((s,f)=>s+fechGlosa(f),0)),
+      liq:r2(rs.reduce((s,r)=>s+numIn(r.valor),0)), ret, desp:r2(state.desp.filter(x=>ym(x.data||"")===m && !x.orcId).reduce((s,x)=>s+despValor(x),0)), equipe:r2(pg)};
+    o.bruto = r2(o.liq + RETS.reduce((s,[k])=>s+o.ret[k],0)); o.result = r2(o.liq - o.desp - o.equipe); return o; });
+}
+const anoAnual = () => state.anual || today().slice(0,4);
+function anualAnos(){ const ys = new Set([today().slice(0,4)]); state.fech.forEach(f=>ys.add(compDe(f).slice(0,4))); state.rec.forEach(r=>r.data && ys.add(r.data.slice(0,4))); return [...ys].filter(Boolean).sort().reverse(); }
+const ANUAL_COLS = [["fat","Faturado (fechamentos)"],["glosa","Glosas"],["bruto","Recebido bruto"],...RETS.map(([k,l])=>["ret."+k, l+" retido"]),["liq","Recebido líquido"],["desp","Despesas"],["equipe","Pago à equipe"],["result","Resultado (caixa)"]];
+const anualVal = (o, k) => k.startsWith("ret.") ? o.ret[k.slice(4)] : o[k];
+function anualHtml(){
+  const ano = anoAnual(), ds = anualDados(ano), tot = k => ds.reduce((s,o)=>s+anualVal(o,k),0);
+  return `<section class="section" id="anual"><header><h2>Relatório anual (contador / imposto de renda)</h2><div class="row"><select id="anual-ano" aria-label="Ano">${anualAnos().map(y=>`<option ${y===ano?"selected":""}>${y}</option>`).join("")}</select><button class="btn sm" data-act="anualPdf">PDF</button><button class="btn sm" data-act="anualXlsx">Excel</button></div></header>
+  <div class="tablewrap"><table><thead><tr><th>Mês</th>${ANUAL_COLS.map(([,l])=>`<th class="r">${l}</th>`).join("")}</tr></thead>
+  <tbody>${ds.map(o=>`<tr><td style="text-transform:capitalize">${MESES[+o.m.slice(5)-1]}</td>${ANUAL_COLS.map(([k])=>`<td class="r mono">${anualVal(o,k)?brl(anualVal(o,k)):"-"}</td>`).join("")}</tr>`).join("")}</tbody>
+  <tfoot><tr><th>Total ${ano}</th>${ANUAL_COLS.map(([k])=>`<th class="r mono">${brl(tot(k))}</th>`).join("")}</tr></tfoot></table></div>
+  <p class="muted" style="margin:0">Faturado pela competência do fechamento; recebido, retenções, despesas e pagamentos pela data em que aconteceram.</p></section>`;
+}
+document.addEventListener("change", e=>{ if(e.target.id==="anual-ano"){ state.anual = e.target.value; state.rendered = null; render(); } });
+async function anualRel(fmt){
+  const ano = anoAnual(), ds = anualDados(ano), tot = k => Math.round(ds.reduce((s,o)=>s+anualVal(o,k),0)*100)/100, nome = `relatorio-anual-${slug(state.cfg.empresa.nome||"gaap")}-${ano}`;
+  if(fmt==="xlsx"){
+    if(!window.XLSX) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
+    const X = window.XLSX, aoa = [[`${state.cfg.empresa.nome} - CNPJ ${state.cfg.empresa.cnpj||""}`], [`Relatório anual ${ano}`], [], ["Mês", ...ANUAL_COLS.map(([,l])=>l)], ...ds.map(o=>[MESES[+o.m.slice(5)-1], ...ANUAL_COLS.map(([k])=>anualVal(o,k))]), ["TOTAL", ...ANUAL_COLS.map(([k])=>tot(k))]];
+    const ws = X.utils.aoa_to_sheet(aoa); ws["!cols"] = [{wch:12}, ...ANUAL_COLS.map(()=>({wch:16}))];
+    for(let r=4; r<aoa.length; r++) for(let c=1; c<=ANUAL_COLS.length; c++){ const cell = ws[X.utils.encode_cell({r,c})]; if(cell && typeof cell.v==="number") cell.z = "#,##0.00"; }
+    const wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, String(ano));
+    return offerFile(nome+".xlsx", new Blob([X.write(wb, {type:"array", bookType:"xlsx"})], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
+  }
+  const doc = pdfDoc(true); if(!doc) return;
+  const y = pdfHeader(doc, `RELATÓRIO ANUAL ${ano}`, [`Faturamento, recebimentos e retenções`, `Emitido em ${fdate(today())}`]);
+  doc.autoTable({startY:y, theme:"grid", margin:{left:14, right:14}, head:[["Mês", ...ANUAL_COLS.map(([,l])=>l)]],
+    body: ds.map(o=>[MESES[+o.m.slice(5)-1], ...ANUAL_COLS.map(([k])=>n2(anualVal(o,k)))]), foot:[["TOTAL", ...ANUAL_COLS.map(([k])=>n2(tot(k)))]],
+    styles:{fontSize:7.5, cellPadding:1.2, textColor:INK, halign:"right"}, headStyles:{fillColor:GREEN, textColor:255, halign:"center", fontSize:7}, footStyles:{fillColor:[255,240,150], textColor:INK, fontStyle:"bold", halign:"right"}, columnStyles:{0:{halign:"left", fontStyle:"bold"}}});
+  doc.setFontSize(7.5); doc.setTextColor(...GREY); doc.text("Faturado pela competência do fechamento; recebido, retenções, despesas e pagamentos pela data em que aconteceram. Valores em R$.", 14, doc.lastAutoTable.finalY + 6);
+  pdfFooter(doc); await offerFile(nome+".pdf", doc.output("blob"));
 }
 function recForm(o){
   const orcs = state.orc.filter(orcAberto), fs = state.fech.filter(f=>fechSaldo(f)>0.005 || f.id===o.id);
@@ -2608,9 +2693,10 @@ document.addEventListener("submit", async e=>{
   if(e.target.id==="cronoForm"){ e.preventDefault(); submitCrono(); }
   if(e.target.id==="pagForm"){ e.preventDefault(); const id = e.target.dataset.id, old = state.pag.find(x=>x.id===id) || {};
     const x = {...old, id: id || (state.pgId ||= uid()), profissional:$("#pg-prof").value, tipo:$("#pg-tipo").value, data:$("#pg-data").value, valor:numIn($("#pg-valor").value), obs:$("#pg-obs").value.trim()};
+    if(HORAS_PAG.includes(x.tipo)){ x.horas = numIn($("#pg-horas").value); if(!(x.horas>0)){ toast("Informe quantas horas."); return; } if(x.tipo==="folga") x.valor = 0; } else delete x.horas;
     if(!id && x.tipo==="pagamento") x.ref = {...state.eqp};
-    if(!x.profissional || !(x.valor>0) || !x.data){ toast("Informe funcionário, data e valor."); return; }
-    try{ await save("pagamentos", x); state.pgId = null; state.modalDirty = false; closeModal(); render(); toast(`${TIPOS_PAG[x.tipo][0]} de ${brl(x.valor)} para ${x.profissional} salvo.`); }catch(err){ toast(writeErr(err)); } }
+    if(!x.profissional || !x.data || (x.tipo!=="folga" && !(x.valor>0))){ toast("Informe funcionário, data e valor."); return; }
+    try{ await save("pagamentos", x); state.pgId = null; state.modalDirty = false; closeModal(); render(); toast(`${TIPOS_PAG[x.tipo][0]} de ${pagValTxt(x)} para ${x.profissional} salvo.`); }catch(err){ toast(writeErr(err)); } }
   if(e.target.id==="docForm"){ e.preventDefault(); const id = e.target.dataset.id, old = state.docs.find(x=>x.id===id) || {}, btn = e.target.querySelector("[type=submit]");
     const x = {...old, id: id || (state.dcId ||= uid()), tipo:$("#dc-tipo").value, titular:$("#dc-tit").value, emissao:$("#dc-emi").value, validade:$("#dc-val").value, obs:$("#dc-obs").value.trim()};
     try{ btn.disabled = true;
@@ -2662,7 +2748,7 @@ async function submitRec(){
 
 /* ---------- AJUSTES ---------- */
 function vAjustes(){
-  setTimeout(()=>{ carregarBackups(); carregarLixeira();
+  setTimeout(()=>{ carregarBackups(); carregarLixeira(); carregarDrive();
     sb.from("perfis").select("*").order("criado_em").then(({data})=>{ if(data && JSON.stringify(data)!==JSON.stringify(state.perfis)){ state.perfis = data; if(state.view==="ajustes" && !state.cfgDirty){ state.rendered = null; render(); } } }).catch(()=>{}); }, 0);
   const c = state.cfg, E = c.empresa; const y = new Date().getFullYear();
   const hol = Object.entries(holidays(y)).sort();
@@ -2705,8 +2791,8 @@ function vAjustes(){
 
     <div class="panel form" data-aba="valores"><h3>Custo da equipe e valor da hora por empresa</h3>
       <p class="muted" style="margin:0">O custo da equipe é usado só no Painel para mostrar o lucro. Nunca aparece nos relatórios enviados.</p>
-      <div class="tablewrap"><table class="inputs"><thead><tr><th>Funcionário</th><th>Como você paga</th><th>Valor (R$)</th></tr></thead><tbody>
-      ${profs().map(n=>{ const cu=(c.custos||{})[n]||{}; return `<tr data-cu="${esc(n)}"><td>${esc(n)}</td><td><select class="cu-t" aria-label="Forma de pagamento de ${esc(n)}"><option value="hora" ${cu.tipo!=="mes"?"selected":""}>Por hora</option><option value="mes" ${cu.tipo==="mes"?"selected":""}>Salário mensal</option></select></td><td><input class="cu-v" inputmode="decimal" aria-label="Valor pago a ${esc(n)}" value="${cu.valor!=null?String(cu.valor).replace(".",","):""}" placeholder="0,00"></td></tr>`; }).join("") || `<tr><td colspan="3" class="muted">Cadastre os funcionários acima e salve para preencher os custos.</td></tr>`}
+      <div class="tablewrap"><table class="inputs"><thead><tr><th>Funcionário</th><th>Como você paga</th><th>Valor (R$)</th><th>Banco de horas</th></tr></thead><tbody>
+      ${profs().map(n=>{ const cu=(c.custos||{})[n]||{}; return `<tr data-cu="${esc(n)}"><td>${esc(n)}</td><td><select class="cu-t" aria-label="Forma de pagamento de ${esc(n)}"><option value="hora" ${cu.tipo!=="mes"?"selected":""}>Por hora</option><option value="mes" ${cu.tipo==="mes"?"selected":""}>Salário mensal</option></select></td><td><input class="cu-v" inputmode="decimal" aria-label="Valor pago a ${esc(n)}" value="${cu.valor!=null?String(cu.valor).replace(".",","):""}" placeholder="0,00"></td><td><label class="check"><input type="checkbox" class="cu-b" ${cu.banco?"checked":""} aria-label="Banco de horas de ${esc(n)}"> extras viram folga</label></td></tr>`; }).join("") || `<tr><td colspan="4" class="muted">Cadastre os funcionários acima e salve para preencher os custos.</td></tr>`}
       </tbody></table></div>
       <p class="muted" style="margin:0">Por hora: a hora extra do funcionário usa os mesmos adicionais (${c.extraPct}% e ${c.feriadoPct}%). Salário mensal: o custo da hora é o salário dividido por ${HORAS_MES} horas (padrão da CLT), com os mesmos adicionais nas extras.</p>
       <div class="tablewrap"><table class="inputs"><thead><tr><th>Empresa</th><th>Valor da hora (R$)</th><th>Extra (%)</th><th>Domingo e feriado (%)</th><th>Adicional noturno (%)</th></tr></thead><tbody>
@@ -2769,6 +2855,18 @@ function vAjustes(){
       <div class="row"><button class="btn primary" data-act="backupZip">${state.cfg.fotosAte?"Baixar backup (dados + fotos novas)":"Baixar backup completo (.zip)"}</button>${state.cfg.fotosAte?`<button class="btn" data-act="backupZip" data-todas="1">Todas as fotos de novo</button>`:""}<button class="btn" data-act="exportJson">Só os dados (.json)</button></div>
       <p class="muted" style="margin:0" id="storage-uso"></p>
     </div>
+    <div class="panel form" id="drive"><h3>Backup automático no Google Drive</h3>
+      <p class="muted" style="margin:0">Todo dia às 03:30 o servidor manda uma cópia dos dados para uma pasta “GAAP Backups” no <b>seu</b> Google Drive (guarda as últimas 60). Configura uma vez só, uns 5 minutos, de preferência no computador:</p>
+      <ol class="muted" style="margin:0;padding-left:20px">
+        <li>Entre em <b>script.google.com</b> com a sua conta Google e clique em <b>Novo projeto</b>.</li>
+        <li>Apague o que estiver lá e cole este código: <button type="button" class="btn sm" data-act="driveCopiar">Copiar código</button></li>
+        <li>Clique em <b>Implantar → Nova implantação</b>, tipo <b>App da Web</b>. Executar como: <b>Eu</b>. Quem pode acessar: <b>Qualquer pessoa</b>. Clique em Implantar e autorize com a sua conta (em “Avançado”, clique em “Acessar”).</li>
+        <li>Copie a <b>URL do app da Web</b> (termina em /exec), cole abaixo e salve.</li></ol>
+      <details><summary class="muted">Ver o código</summary><pre class="codebox" id="drv-code">${esc(driveScript())}</pre></details>
+      <label class="field"><span>URL do app da Web</span><input id="drv-url" inputmode="url" placeholder="https://script.google.com/macros/s/…/exec"></label>
+      <div id="drv-status" class="muted">Verificando…</div>
+      <div class="row"><button type="button" class="btn primary" data-act="driveSalvar">Salvar</button><button type="button" class="btn" data-act="driveAgora">Enviar backup agora</button></div>
+    </div>
     <div class="panel form"><h3>Cópias automáticas no servidor</h3>
       <p class="muted" style="margin:0">Todo dia às 03:00 o sistema guarda uma cópia dos dados (sem as fotos) e mantém os últimos 30 dias. Serve para desfazer um erro, por exemplo uma exclusão por engano.</p>
       <div id="bk-list" class="muted">Carregando cópias…</div>
@@ -2786,6 +2884,27 @@ function backupIdade(){
   const dias = Math.floor((Date.now() - new Date(b).getTime())/86400000);
   return `<span class="pill ${dias>7?"warn":"good"}">Última cópia completa: ${new Date(b).toLocaleDateString("pt-BR")} (${dias===0?"hoje":dias===1?"ontem":`há ${dias} dias`})</span>`;
 }
+// chave que só o seu script conhece (fica na URL salva no servidor)
+function driveChave(){ let k = state.cfg.driveChave; if(!k){ k = state.cfg.driveChave = Array.from(crypto.getRandomValues(new Uint8Array(18)), b=>b.toString(16).padStart(2,"0")).join(""); save("config", {...state.cfg}).catch(()=>{}); } return k; }
+function driveScript(){ return `// GAAP Gestão - backup automático no Google Drive
+const CHAVE = "${state.cfg.driveChave || "(abra esta tela de novo para gerar a chave)"}";
+const PASTA = "GAAP Backups", MANTER = 60;
+function doPost(e) {
+  const out = o => ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
+  if (!e || !e.parameter || e.parameter.k !== CHAVE) return out({ ok: false, erro: "chave errada" });
+  const it = DriveApp.getFoldersByName(PASTA), pasta = it.hasNext() ? it.next() : DriveApp.createFolder(PASTA);
+  const nome = String(e.parameter.nome || "gaap-backup.json").replace(/[^\\w.-]/g, "_");
+  const arq = pasta.createFile(nome, e.postData.contents, "application/json");
+  const todos = []; const fs = pasta.getFiles(); while (fs.hasNext()) todos.push(fs.next());
+  todos.sort((a, b) => b.getDateCreated() - a.getDateCreated()).slice(MANTER).forEach(f => f.setTrashed(true));
+  return out({ ok: true, arquivo: nome, tamanho: arq.getSize() });
+}
+function autorizar() { DriveApp.getRootFolder(); }`; }
+async function carregarDrive(){ const box = $("#drv-status"); if(!box) return; driveChave(); const c = $("#drv-code"); if(c) c.textContent = driveScript();
+  let data = null, error = null; try{ ({data, error} = (await sb.rpc("drive_status")) || {}); }catch(e){ error = e; } if(!$("#drv-status")) return;
+  if(error || !data){ $("#drv-status").textContent = "Não consegui verificar agora."; return; }
+  let u = null; try{ u = data.ultimo ? JSON.parse(data.ultimo) : null; }catch(e){}
+  $("#drv-status").innerHTML = !data.configurado ? `<span class="pill warn">Ainda não ligado</span>` : `<span class="pill good">Ligado</span> ${u ? (u.ok ? `Último backup: ${new Date(u.em).toLocaleString("pt-BR")} (${esc(u.arquivo||"")})` : `<span class="pill bad">Falhou em ${new Date(u.em).toLocaleString("pt-BR")}: ${esc(u.erro||"")}</span>`) : "Nenhum backup enviado ainda."}`; }
 async function carregarBackups(){
   sb.rpc("uso_storage").then(({data})=>{ const el = $("#storage-uso"); if(!el || !data) return; const mb = (+data.bytes||0)/1048576, pct = Math.round(mb/10.24);
     el.innerHTML = `Fotos guardadas: <b>${data.arquivos||0}</b> · ${mb.toFixed(0)} MB de 1.024 MB do plano gratuito (${pct}%)${pct>=80?' <span class="pill warn">Quase cheio</span>':""}`; });
@@ -2832,7 +2951,8 @@ async function submitCfg(){
   c.profissionais = lines(g("c-profs")).join("\n"); c.unidades = lines(g("c-unids")).join("\n");
   c.feriados = {carnaval:$("#c-carn").checked, corpus:$("#c-corp").checked, extras:g("c-fer")};
   c.empresa = {nome:g("e-nome"), cnpj:g("e-cnpj"), email:g("e-email"), telefone:g("e-tel"), cidade:g("e-cid"), responsavel:g("e-resp"), sobre:g("e-sobre"), codServico:g("e-codserv"), issPct:g("e-iss")};
-  c.custos = {}; document.querySelectorAll("[data-cu]").forEach(tr=>{ const v = numIn(tr.querySelector(".cu-v").value); if(v>0) c.custos[tr.dataset.cu] = {tipo:tr.querySelector(".cu-t").value, valor:v}; });
+  const cuOld = c.custos || {}; c.custos = {}; document.querySelectorAll("[data-cu]").forEach(tr=>{ const v = numIn(tr.querySelector(".cu-v").value), bco = !!tr.querySelector(".cu-b")?.checked, o = cuOld[tr.dataset.cu] || {};
+    if(v>0 || bco) c.custos[tr.dataset.cu] = {tipo:tr.querySelector(".cu-t").value, valor:v, ...(bco?{banco:true, bancoDesde:o.banco && o.bancoDesde ? o.bancoDesde : today()}:{})}; });
   c.contratantes = {}; document.querySelectorAll("[data-ct]").forEach(el=>{ const q = k=>el.querySelector(k);
     c.contratantes[el.dataset.ct] = {razao:q(".ct-razao").value.trim(), cnpj:q(".ct-cnpj").value.trim(), aprovador:q(".ct-apr").value.trim(), cargo:q(".ct-cargo").value.trim(), whats:q(".ct-whats").value.trim(), email:q(".ct-email").value.trim(), corte:Math.min(28,Math.max(0,+q(".ct-corte").value||0)), prazo:Math.max(0,+q(".ct-prazo").value||0), exigirOS:q(".ct-exos").checked, unidades:lines(q(".ct-unids").value).join("\n"), codigo:q(".ct-cod").value.trim(), nomeFech:q(".ct-nomef").value.trim(), osLista:lines(q(".ct-oslista").value).join("\n")}; });
   const txAnt = c.taxas || {}; c.taxas = {}; document.querySelectorAll("[data-tx]").forEach(tr=>{ const q = k=>tr.querySelector(k).value.trim(), a = txAnt[tr.dataset.tx] || {}, t = {}; if(q(".tx-v")) t.valorHora = numIn(q(".tx-v")); if(q(".tx-p50")!=="") t.extraPct = +q(".tx-p50"); if(q(".tx-p100")!=="") t.feriadoPct = +q(".tx-p100"); if(q(".tx-not")!=="") t.noturnoPct = +q(".tx-not");
@@ -3068,6 +3188,13 @@ const A = {
     else if(b.dataset.p==="mes"){ q.de = ymd(new Date(y,m,1)); q.ate = ymd(new Date(y,m+1,0)); }
     else { q.de = ymd(new Date(y,m-1,1)); q.ate = ymd(new Date(y,m,0)); }
     state.rendered = null; render(); },
+  fechJuntos(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(f) fechJuntosPdf(fechIrmaos(f).length ? fechIrmaos(f) : [f]); },
+  fechAcerto(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; state.eqp = {de:f.de, ate:f.ate}; closeModal(); state.view = "equipe"; state.rendered = null; render(); setTimeout(()=>document.querySelector(`[data-pcard="${CSS.escape(f.profissional||"")}"]`)?.scrollIntoView({block:"center"}), 50); },
+  anualPdf(){ anualRel("pdf"); }, anualXlsx(){ anualRel("xlsx"); },
+  async driveSalvar(b){ const url = ($("#drv-url")?.value||"").trim(); if(url && !/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url)){ toast("Cole a URL do App da Web (termina em /exec)."); return; }
+    b.disabled = true; const {error} = await sb.rpc("drive_config", {p_url: url ? `${url}?k=${driveChave()}` : ""}); b.disabled = false; if(error){ toast(writeErr(dbErr(error))); return; } toast(url ? "Google Drive ligado. Backup todo dia às 03:30." : "Backup no Drive desligado."); carregarDrive(); },
+  async driveAgora(b){ b.disabled = true; b.textContent = "Enviando…"; const {data, error} = await sb.functions.invoke("backup-drive", {body:{agora:true}}); b.disabled = false; b.textContent = "Enviar backup agora"; toast(error || !data?.ok ? `Não consegui enviar: ${data?.erro || "confira a URL e a autorização do script"}.` : `Backup salvo no Drive: ${data.arquivo}.`); carregarDrive(); },
+  async driveCopiar(){ try{ await navigator.clipboard.writeText(driveScript()); toast("Código copiado. Cole no Apps Script."); }catch(e){ toast("Selecione o código e copie manualmente."); } },
   pagNovo(b){ const d = b.dataset||{}; openModal(pagForm({profissional:d.p||profs()[0], tipo:d.t||"vale", valor:d.v?+d.v:undefined, ref: d.t==="pagamento" ? {...state.eqp} : undefined})); },
   pagEditar(b){ const x = state.pag.find(y=>y.id===b.dataset.id); if(x) openModal(pagForm(x)); },
   async pagExcluir(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } const x = state.pag.find(y=>y.id===b.dataset.id); try{ await removeDoc("pagamentos", b.dataset.id); closeModal(); render(); toastAcao("Lançamento excluído.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("pagamentos", y); render(); }); }catch(err){ toast(writeErr(err)); } },
@@ -3084,7 +3211,7 @@ const A = {
     doc.setFontSize(9.5); doc.splitTextToSize(`Declaro ter recebido de ${state.cfg.empresa.nome} os valores acima referentes aos serviços prestados no período de ${fdate(q.de)} a ${fdate(q.ate)}.`, 182).forEach(l=>{ doc.text(l,14,y); y+=5; });
     signature(doc, y+4, state.cfg.empresa.nome, nome); pdfFooter(doc);
     offerFile(`recibo-${slug(nome)}-${q.de}_a_${q.ate}.pdf`, doc.output("blob")); },
-  docNovo(){ state.docArq = null; openModal(docForm({})); },
+  docNovo(b){ state.docArq = null; openModal(docForm({tipo:b?.dataset?.t, titular:b?.dataset?.p})); },
   docEditar(b){ const x = state.docs.find(y=>y.id===b.dataset.id); if(x){ state.docArq = null; openModal(docForm(x)); } },
   async docVer(b){ const {data, error} = await sb.storage.from("documentos").createSignedUrl(b.dataset.path, 600); if(error || !data){ toast("Não consegui abrir o arquivo."); return; } window.open(data.signedUrl, "_blank"); },
   async docExcluir(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } try{ await removeDoc("documentos", b.dataset.id); closeModal(); render(); toast("Documento excluído (fica na lixeira)."); }catch(err){ toast(writeErr(err)); } },

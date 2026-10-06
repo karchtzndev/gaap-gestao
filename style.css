@@ -399,3 +399,5 @@ body[data-ajaba="dados"] #view [data-aba]:not([data-aba~="dados"]){display:none}
 .esc-dia .field{margin-bottom:6px}.esc-dia select{width:100%}
 .prevbar{height:8px;border-radius:99px;background:var(--surface-2);margin:6px 0;overflow:hidden}.prevbar i{display:block;height:100%;background:var(--green,#1b7a3d)}
 .ajuda{margin-bottom:8px}.ajuda summary{cursor:pointer;padding:4px 0;font-size:1rem}.ajuda ol{margin:8px 0 2px 18px;padding:0;display:grid;gap:6px}
+.codebox{white-space:pre-wrap;word-break:break-all;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;background:var(--soft,rgba(127,127,127,.08));padding:10px;border-radius:8px;max-height:260px;overflow:auto;margin:6px 0 0}
+.docmat td,.docmat th{text-align:center;white-space:nowrap}.docmat td:first-child,.docmat th:first-child{text-align:left}
