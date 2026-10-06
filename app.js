@@ -110,7 +110,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.06-6";
+const VERSAO = "2026.10.06-7";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -635,8 +635,8 @@ function bucketChips(c){
 const money = v => state.worker ? "" : brl(v);
 function fechList(){ return state.worker ? (state.pub?.fechados||[]) : state.fech; }
 const chaveEmp = x => String(x||"").trim().toLowerCase();
-function lockOf(data, emp){ return fechList().find(f=>data>=f.de && data<=f.ate && (!f.empresa || chaveEmp(f.empresa)===chaveEmp(emp))); }
-const lockedE = e => lockOf(e.data, empOf(e));
+function lockOf(data, emp, prof){ return fechList().find(f=>data>=f.de && data<=f.ate && (!f.empresa || chaveEmp(f.empresa)===chaveEmp(emp)) && (!f.profissional || !prof || f.profissional===prof)); }
+const lockedE = e => lockOf(e.data, empOf(e), e.profissional);
 const lockMsg = f => state.worker ? `Esse período já foi fechado (${f.numero||""}). Fale com o responsável para alterar.` : `Período fechado (${f.numero||""}). Para alterar, reabra o fechamento no Financeiro.`;
 function orcOpts(){ return state.worker ? (state.pub?.orcs||[]) : state.orc.filter(orcAberto).map(o=>({id:o.id, numero:o.numero||"", titulo:o.titulo||"", cliente:o.cliente?.nome||""})); }
 function orcNum(id){ const o = orcOpts().find(x=>x.id===id) || state.orc.find(x=>x.id===id); return o ? (o.numero||"") : ""; }
@@ -1361,7 +1361,7 @@ function updateApPreview(){
     ${c.e50?`<div class="line"><span><i class="dot d-50"></i> Extra ${pct50()} ${fh(c.e50)}</span><span class="mono">${money(c.v50)}</span></div>`:""}
     ${c.e100?`<div class="line"><span><i class="dot d-100"></i> Extra ${pct100()} ${fh(c.e100)}</span><span class="mono">${money(c.v100)}</span></div>`:""}
     <div class="line tot"><span>Total ${fh(c.total)}</span><span class="mono">${c.orc && !state.worker ? "serviço de orçamento" : money(c.valor)}</span></div>
-    ${lockOf(e.data, empOf(e))?`<div class="warnbox">${esc(lockMsg(lockOf(e.data, empOf(e))))}</div>`:""}
+    ${lockOf(e.data, empOf(e), e.profissional)?`<div class="warnbox">${esc(lockMsg(lockOf(e.data, empOf(e), e.profissional)))}</div>`:""}
     ${ov?`<div class="warnbox">Esse horário se sobrepõe a outro apontamento do mesmo profissional nesse dia.</div>`:""}`;
 }
 /* ---------- LANÇAR OS DO DIA ---------- */
@@ -1556,7 +1556,7 @@ document.addEventListener("submit", async e=>{
     if(!d.os && osObrigatoria(empOf(d))){ toast(`A ${empOf(d)} exige o nº da OS.`); return; }
     const multi = (!$("#f-prof1") && !state.worker) ? selProfs() : [];
     if(!d.id && profs().length && !multi.length && !state.worker){ toast("Marque quem trabalhou nessa OS."); return; }
-    const lk = lockOf(d.data, empOf(d)); if(lk){ toast(lockMsg(lk)); return; }
+    const lk = lockOf(d.data, empOf(d), d.profissional); if(lk){ toast(lockMsg(lk)); return; }
     const prev = d.id ? state.ap.find(x=>x.id===d.id) : null, novo = !prev;
     state.apIds ||= {};
     if(novo){ d.criadoEm = state.apIds._criado ||= new Date().toISOString(); delete d.exemplo; if(!d.id) d.id = state.apIds._ ||= uid(); }
@@ -1785,6 +1785,7 @@ function baixarBlob(blob, filename){
 const slug = s => String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^\w]+/g,"-").replace(/^-|-$/g,"").toLowerCase();
 function repFileTag(){
   if(state.rep.os) return `os-${slug(state.rep.os)}`;
+  if(state.rep.fechArq) return state.rep.fechArq;
   if(state.rep.fechNum) return `fechamento-${state.rep.fechNum}-${state.rep.f.emp!==ALL?slug(state.rep.f.emp)+"-":""}${state.rep.de}_a_${state.rep.ate}`;
   const r = state.rep, f = Object.keys(DIMS).filter(k=>r.f[k]!==ALL).map(k=>slug(r.f[k]));
   return [...f, r.by?`por-${slug(DIMS[r.by].label)}`:"", r.modo==="dia"?r.dia:`${r.de}_a_${r.ate}`].filter(Boolean).join("-");
@@ -1845,7 +1846,7 @@ async function repXlsx(){
 }
 
 /* ---------- FECHAMENTOS ---------- */
-function fechRows(de, ate, emp){ return state.ap.filter(e=>e.data>=de && e.data<=ate && !e.orcId && !e.andamento && (!emp || empOf(e)===emp)); }
+function fechRows(de, ate, emp, prof){ return state.ap.filter(e=>e.data>=de && e.data<=ate && !e.orcId && !e.andamento && (!emp || empOf(e)===emp) && (!prof || e.profissional===prof)); }
 /* ---------- lembretes (notificações no celular) ---------- */
 const ehIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
 let pedidoInstalar = null;
@@ -1906,7 +1907,7 @@ function cronoForm(pre={}){
   </form>`;
 }
 async function encerrarOS(e, quando){
-  const lk = lockOf(e.data, empOf(e)); if(lk) throw {code:"db", message:`A OS ${e.os||"s/n"} está num período já fechado (${lk.numero}). Peça ao responsável para ajustar.`};
+  const lk = lockOf(e.data, empOf(e), e.profissional); if(lk) throw {code:"db", message:`A OS ${e.os||"s/n"} está num período já fechado (${lk.numero}). Peça ao responsável para ajustar.`};
   if(e.data!==today()) throw {code:"db", message:`A OS ${e.os||"s/n"} ficou aberta desde ${fdate(e.data).slice(0,5)} às ${e.inicio}. Toque em Encerrar na faixa e informe a hora real de término.`};
   let f = quando || nowHM();
   if(e.data===today() && hm(f)<=hm(e.inicio)){
@@ -1953,8 +1954,8 @@ function fechSituacao(f){
 const despCobrada = x => state.fech.some(f=>(f.despIds||[]).includes(x.id));
 function despReemb(de, ate, emp){ return state.desp.filter(x=>x.reembolsavel && !x.orcId && x.data<=ate && !despCobrada(x) && (!emp || chaveEmp(x.empresa||state.cfg.contratante||"")===chaveEmp(emp))); }
 const despValor = x => Math.round((x.tipo==="Km rodado" ? numIn(x.km)*numIn(x.valorKm) : numIn(x.valor))*100)/100;
-function fechAlterado(f){ if(!f.snap) return false; const cur = fechRows(f.de, f.ate, f.empresa||""); return cur.length!==f.snap.aps.length || Math.abs(sumCalc(cur).valor - (+f.valor||0)) > 0.01; }
-function fechConflict(de, ate, emp){ return state.fech.find(f=>f.de<=ate && f.ate>=de && (!f.empresa || !emp || f.empresa===emp)); }
+function fechAlterado(f){ if(!f.snap) return false; const cur = fechRows(f.de, f.ate, f.empresa||"", f.profissional||""); return cur.length!==f.snap.aps.length || Math.abs(sumCalc(cur).valor - (+f.valor||0)) > 0.01; }
+function fechConflict(de, ate, emp, prof){ return state.fech.find(f=>f.de<=ate && f.ate>=de && (!f.empresa || !emp || f.empresa===emp) && (!f.profissional || !prof || f.profissional===prof)); }
 function fechFormHtml(){
   const r = state.rep, emps = dimVals("emp"), cur = r.f.emp!==ALL ? r.f.emp : (emps.length===1 ? emps[0] : "");
   return `<header><h2>Fechar período</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
@@ -1966,14 +1967,19 @@ function fechFormHtml(){
     </div>
     <div id="fx-prev" class="preview"></div>
     <p class="muted" style="margin:0">Depois de fechado, as OS desse período ficam travadas, inclusive para os funcionários. O fechamento aparece no Financeiro como enviado, aguardando pagamento. Se precisar corrigir algo, reabra por lá.</p>
-    <footer><button type="button" class="btn" data-act="closeModal">Cancelar</button><button class="btn primary" type="submit" id="fx-ok">Fechar e baixar PDF</button></footer>
+    <footer><button type="button" class="btn" data-act="closeModal">Cancelar</button><button class="btn primary" type="submit" id="fx-ok">Fechar (1 PDF por funcionário)</button></footer>
   </form>`;
 }
+// um fechamento por funcionário: nunca mistura dois profissionais no mesmo fechamento
+function fechGrupos(de, ate, emp){ const g = new Map(); fechRows(de, ate, emp).forEach(e=>{ const k = e.profissional||""; if(!g.has(k)) g.set(k, []); g.get(k).push(e); });
+  return [...g.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([prof, rows])=>({prof, rows, cf:fechConflict(de, ate, emp, prof)})); }
 function updateFech(){
   const de = $("#fx-de")?.value, ate = $("#fx-ate")?.value, emp = $("#fx-emp")?.value || ""; if(!de || !ate) return;
-  const rows = fechRows(de, ate, emp), t = sumCalc(rows), cf = fechConflict(de, ate, emp);
+  const gs = fechGrupos(de, ate, emp), livres = gs.filter(g=>!g.cf), rows = livres.flatMap(g=>g.rows), t = sumCalc(rows), fechados = gs.filter(g=>g.cf), cf = gs.length && !livres.length ? fechados[0].cf : null;
   $("#fx-prev").innerHTML = `<div class="line"><span>${rows.length} OS · ${new Set(rows.map(e=>e.profissional).filter(Boolean)).size} funcionário(s)</span><span class="mono">${fdec(t.total)} h</span></div>
     <div class="line"><span class="muted">Normal ${fdec(t.n)} h · Extra ${fdec(t.e50+t.e100)} h</span><span class="mono"><b>${brl(t.valor)}</b></span></div>
+    ${livres.length?`<div class="line"><span class="muted">Serão ${livres.length} fechamento(s), um por funcionário: ${livres.map(g=>`${esc(g.prof||"sem nome")} (${brl(sumCalc(g.rows).valor)})`).join(", ")}</span></div>`:""}
+    ${fechados.length && livres.length?`<div class="line"><span class="muted">Já fechado(s): ${fechados.map(g=>`${esc(g.prof||"sem nome")} (${esc(g.cf.numero)})`).join(", ")}</span></div>`:""}
     ${cf?`<div class="warnbox">Esse período já tem o fechamento ${esc(cf.numero)} (${fdate(cf.de)} a ${fdate(cf.ate)}). Escolha outras datas.</div>`:""}
     ${!rows.length?`<div class="warnbox">Não há OS nesse período.</div>`:""}
     ${fechPendencias(de, ate, emp, rows)}`;
@@ -1996,21 +2002,32 @@ function fechPendencias(de, ate, emp, rows){
 async function submitFech(){
   const de = $("#fx-de").value, ate = $("#fx-ate").value, emp = $("#fx-emp").value || "";
   if(!de || !ate || de>ate){ toast("Confira as datas."); return; }
-  const rows = fechRows(de, ate, emp); if(!rows.length){ toast("Não há OS nesse período."); return; }
-  if(fechConflict(de, ate, emp)){ toast("Esse período já foi fechado."); return; }
-  const t = sumCalc(rows);
-  const C = state.cfg, rb = despReemb(de, ate, emp);
-  const f = {numero:nextFech(ate), de, ate, empresa:emp, os:rows.length, horas:t.total, valor:t.valor, enviadoEm:today(), criadoEm:new Date().toISOString(),
-    reemb: Math.round(rb.reduce((s,x)=>s+despValor(x),0)*100)/100, despIds: rb.map(x=>x.id),
-    snap:{aps: clone(rows), desp: clone(rb), cfg: clone({jornada:C.jornada, almoco:C.almoco, tolerancia:C.tolerancia, feriados:C.feriados, valorHora:C.valorHora, extraPct:C.extraPct, feriadoPct:C.feriadoPct, taxas:C.taxas})}};
-  f.vencimento = fechVenc(f);
+  const gs = fechGrupos(de, ate, emp).filter(g=>!g.cf); if(!gs.length){ toast("Não há OS em aberto nesse período."); return; }
+  const C = state.cfg, rbAll = despReemb(de, ate, emp), cfgSnap = clone({jornada:C.jornada, almoco:C.almoco, tolerancia:C.tolerancia, feriados:C.feriados, valorHora:C.valorHora, extraPct:C.extraPct, feriadoPct:C.feriadoPct, taxas:C.taxas}), feitos = [];
   $("#fx-ok").disabled = true;
-  try{ f.id = await save("fechamentos", f); if(!state.fech.find(x=>x.id===f.id)) state.fech = [...state.fech, f]; closeModal(); toast(`Fechamento ${f.numero} criado`); if(ficha(f.empresa||state.cfg.contratante||"").codigo) await fechTerceiros(f, "pdf"); else await fechPdf(f); }
-  catch(err){ $("#fx-ok").disabled = false; toast(writeErr(err)); }
+  try{
+    for(const [i, g] of gs.entries()){
+      // despesas reembolsáveis vão no fechamento de quem lançou (ou no primeiro, se não tiver nome)
+      const rb = rbAll.filter(x=>x.profissional ? x.profissional===g.prof || (!gs.some(o=>o.prof===x.profissional) && i===0) : i===0);
+      const t = sumCalc(g.rows);
+      const f = {numero:nextFech(ate), de, ate, empresa:emp, profissional:g.prof, os:g.rows.length, horas:t.total, valor:t.valor, enviadoEm:today(), criadoEm:new Date().toISOString(),
+        reemb: Math.round(rb.reduce((s,x)=>s+despValor(x),0)*100)/100, despIds: rb.map(x=>x.id), snap:{aps: clone(g.rows), desp: clone(rb), cfg: cfgSnap}};
+      f.vencimento = fechVenc(f);
+      f.id = await save("fechamentos", f); if(!state.fech.find(x=>x.id===f.id)) state.fech = [...state.fech, f]; feitos.push(f);
+    }
+  }catch(err){ $("#fx-ok").disabled = false; toast(writeErr(err)); if(!feitos.length) return; }
+  closeModal(); toast(feitos.length>1 ? `${feitos.length} fechamentos criados (um por funcionário)` : `Fechamento ${feitos[0].numero} criado`);
+  if(feitos.length===1) return fechArquivo(feitos[0]);
+  openModal(`<header><h2>${feitos.length} fechamentos criados</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+    <div class="form"><p class="muted" style="margin:0">Um PDF por funcionário. Toque em cada um para ver e enviar.</p>
+    ${feitos.map(f=>`<div class="line"><span><b>${esc(f.profissional||"Sem nome")}</b> · <span class="mono">${esc(f.numero)}</span> · ${brl(f.valor)}</span><span class="row"><button class="btn sm primary" data-act="${ficha(f.empresa||state.cfg.contratante||"").codigo?"terceirosPdf":"fechPdfBtn"}" data-id="${esc(f.id)}">PDF</button>${ficha(f.empresa||state.cfg.contratante||"").codigo?`<button class="btn sm" data-act="terceirosXlsx" data-id="${esc(f.id)}">Excel</button>`:""}</span></div>`).join("")}</div>`);
 }
+function fechArquivo(f){ return ficha(f.empresa||state.cfg.contratante||"").codigo ? fechTerceiros(f, "pdf") : fechPdf(f); }
+// nome do arquivo começa pelo funcionário e pela empresa
+function fechNomeArq(f, resto){ return [f.profissional, f.empresa||state.cfg.contratante||""].filter(Boolean).map(slug).join("-") + "-" + resto; }
 async function fechPdf(f, atual){
   const saved = clone(state.rep), ap = state.ap, desp = state.desp, cfg = state.cfg;
-  state.rep = {...state.rep, modo:"periodo", orc:false, os:"", de:f.de, ate:f.ate, f:{prof:ALL, unid:ALL, emp:f.empresa||ALL}, fechNum:f.numero, reembIds:f.despIds||null};
+  state.rep = {...state.rep, modo:"periodo", orc:false, os:"", de:f.de, ate:f.ate, f:{prof:f.profissional||ALL, unid:ALL, emp:f.empresa||ALL}, fechNum:f.numero, fechArq:f.profissional ? fechNomeArq(f, `fechamento-${f.numero}-${f.de}_a_${f.ate}`) : "", reembIds:f.despIds||null};
   if(f.snap && !atual){ state.ap = f.snap.aps; state.desp = f.snap.desp||[]; state.cfg = {...cfg, ...f.snap.cfg}; holCache = {}; mmCache.ref = null; }
   try{ await repPdf(); } finally { state.rep = saved; state.ap = ap; state.desp = desp; state.cfg = cfg; holCache = {}; mmCache.ref = null; }
 }
@@ -2021,7 +2038,7 @@ function centroDe(u){ const m = String(u||"").match(/^\s*(\d{2,})\s*[-–]\s*(.+
 // linhas por OS: horas e valores por tipo (das OS do fechamento ou das linhas importadas da planilha aprovada)
 function linhasTerceiros(f){
   if(f.itens) return f.itens.map(x=>({...x, unid:x.unid||f.unidade||""}));
-  const aps = (f.snap?.aps || fechRows(f.de, f.ate, f.empresa||"")).filter(e=>!e.andamento && !e.orcId).slice().sort((a,b)=>(a.data+a.inicio).localeCompare(b.data+b.inicio));
+  const aps = (f.snap?.aps || fechRows(f.de, f.ate, f.empresa||"", f.profissional||"")).filter(e=>!e.andamento && !e.orcId).slice().sort((a,b)=>(a.data+a.inicio).localeCompare(b.data+b.inicio));
   const g = new Map();
   aps.forEach(e=>{ const k = `${(e.os||"").trim()||"s/n-"+e.id}|${e.cliente||""}`, c = calc(e);
     const o = g.get(k) || {os:(e.os||"").trim(), desc:"", unid:e.cliente||"", hn:0, vn:0, h50:0, v50:0, h100:0, v100:0, not:0, notv:0, total:0};
@@ -2039,7 +2056,7 @@ async function fechTerceiros(f, fmt){
   const cab = {nome: F.nomeFech || state.cfg.empresa.nome, codigo: F.codigo || "", compet: COMPET[+mes.slice(5,7)-1] || "", ano: mes.slice(0,4)};
   // uma folha por centro (unidade)
   const grupos = new Map(); linhas.forEach(l=>{ const c = centroDe(l.unid); const k = c.centro || c.cidade; if(!grupos.has(k)) grupos.set(k, {...c, linhas:[]}); grupos.get(k).linhas.push(l); });
-  const nome = `fechamento-terceiros-${slug(emp)}-${mes}`;
+  const nome = f.profissional ? fechNomeArq(f, `fechamento-${mes}-${f.numero}`) : `fechamento-terceiros-${slug(emp)}-${mes}`;
   if(fmt==="xlsx") return terceirosXlsx(grupos, cab, nome, f);
   const doc = pdfDoc(true); if(!doc) return;
   let pg = 0; for(const g of grupos.values()){ if(pg++) doc.addPage(); terceirosPagina(doc, g, cab, f); }
@@ -2051,11 +2068,11 @@ const n2 = v => (Math.round((+v||0)*100)/100).toLocaleString("pt-BR", {minimumFr
 function terceirosPagina(doc, g, cab, f){
   const W = pw(doc), L = 8, R = W-8, t = f.itens && f.totais && grupos1(f) ? f.totais : totaisTerceiros(g.linhas);
   doc.setFont("helvetica","bold"); doc.setFontSize(12); doc.setTextColor(0); doc.text("FECHAMENTO DE TERCEIROS - HORAS E VALORES", W/2, 12, {align:"center"});
-  doc.setFontSize(7.5); const kv = [["NOME DA EMPRESA:", cab.nome], ["EMPRESA:", cab.codigo], ["COMPETÊNCIA:", `${cab.compet}   ${cab.ano}`], ["CENTRO:", g.centro], ["CIDADE:", g.cidade]];
+  doc.setFontSize(7.5); const kv = [["NOME DA EMPRESA:", cab.nome], ...(f.profissional?[["FUNCIONÁRIO:", f.profissional.toUpperCase()]]:[]), ["EMPRESA:", cab.codigo], ["COMPETÊNCIA:", `${cab.compet}   ${cab.ano}`], ["CENTRO:", g.centro], ["CIDADE:", g.cidade]];
   kv.forEach(([k,v],i)=>{ doc.setFont("helvetica","bold"); doc.text(k, 34, 18+i*3.6, {align:"right"}); doc.setFont("helvetica","normal"); doc.text(String(v||""), 36, 18+i*3.6); });
   const z = "0,00", body = g.linhas.map(l=>[l.os||"", l.cargo||"TERCEIRIZADO", l.desc||"", n2(l.dt), n2(l.dtv), n2(l.dc), n2(l.dcv), n2(l.km), n2(l.kmv), n2(l.hn), n2(l.vn), n2(l.h50), n2(l.v50), n2(l.h100), n2(l.v100), n2(l.not), n2(l.notv), n2(l.total)]);
   const H = (c, o={}) => ({content:c, ...o, styles:{halign:"center", valign:"middle", fontStyle:"bold"}});
-  doc.autoTable({startY:36, margin:{left:L, right:8, bottom:8}, theme:"grid", tableWidth:R-L,
+  doc.autoTable({startY:f.profissional?39:36, margin:{left:L, right:8, bottom:8}, theme:"grid", tableWidth:R-L,
     head:[[H("ORDENS",{rowSpan:2}), H("CARGO",{rowSpan:2}), H("DESCRIÇÃO DO SERVIÇO",{rowSpan:2}), H("DIÁRIAS TRABALHADAS",{colSpan:2}), H("DIÁRIAS DE CUSTO",{colSpan:2}), H("KM RODADO",{colSpan:2}), H("HORAS NORMAIS",{colSpan:2}), H("HORAS EXTRAS 50%",{colSpan:2}), H("HORAS EXTRAS 100%",{colSpan:2}), H("ADICIONAL NOTURNO",{colSpan:2}), H("VALOR TOTAL DA ORDEM",{rowSpan:2})],
       ["Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$"].map(x=>H(x))],
     body, foot:[[{content:"TOTAIS", colSpan:3, styles:{halign:"left"}}, z, z, z, z, z, z, n2(t.hn), n2(t.vn), n2(t.h50), n2(t.v50), n2(t.h100), n2(t.v100), n2(t.not), n2(t.notv), n2(t.total)]],
@@ -2079,7 +2096,7 @@ async function terceirosXlsx(grupos, cab, nome, f){
   const X = window.XLSX, wb = X.utils.book_new();
   for(const g of grupos.values()){
     const t = f.itens && f.totais && grupos1(f) ? f.totais : totaisTerceiros(g.linhas), N = v => Math.round((+v||0)*100)/100;
-    const aoa = [["","","","","","","","FECHAMENTO DE TERCEIROS - HORAS E VALORES"], ["NOME DA EMPRESA:", cab.nome], ["EMPRESA:", cab.codigo], ["COMPETÊNCIA:", cab.compet, cab.ano], ["CENTRO:", g.centro], ["CIDADE:", g.cidade], [],
+    const aoa = [["","","","","","","","FECHAMENTO DE TERCEIROS - HORAS E VALORES"], ["NOME DA EMPRESA:", cab.nome], ...(f.profissional?[["FUNCIONÁRIO:", f.profissional.toUpperCase()]]:[]), ["EMPRESA:", cab.codigo], ["COMPETÊNCIA:", cab.compet, cab.ano], ["CENTRO:", g.centro], ["CIDADE:", g.cidade], [],
       ["ORDENS","CARGO","DESCRIÇÃO DO SERVIÇO","DIÁRIAS TRABALHADAS","","DIÁRIAS DE CUSTO","","KM RODADO","","HORAS NORMAIS","","HORAS EXTRAS 50%","","HORAS EXTRAS 100%","","ADICIONAL NOTURNO","","VALOR TOTAL DA ORDEM"],
       ["","","","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$",""],
       ...g.linhas.map(l=>[l.os||"", l.cargo||"TERCEIRIZADO", l.desc||"", N(l.dt), N(l.dtv), N(l.dc), N(l.dcv), N(l.km), N(l.kmv), N(l.hn), N(l.vn), N(l.h50), N(l.v50), N(l.h100), N(l.v100), N(l.not), N(l.notv), N(l.total)]),
@@ -2425,7 +2442,7 @@ async function submitDesp(){
 function fechCard(f){
   const rc = fechRecebido(f), gl = fechGlosa(f), sd = fechSaldo(f), [cl, st] = fechSituacao(f), nf = f.nf||{}, ult = (f.cobrancas||[]).slice(-1)[0];
   return `<div class="fechcard">
-    <div class="fc-top"><span><b class="mono">${esc(f.numero)}</b> · ${fdate(f.de)} a ${fdate(f.ate)}${f.empresa?` · ${esc(f.empresa)}`:""}</span><span class="pill ${cl}">${st}</span></div>
+    <div class="fc-top"><span><b class="mono">${esc(f.numero)}</b>${f.profissional?` · <b>${esc(f.profissional)}</b>`:""} · ${fdate(f.de)} a ${fdate(f.ate)}${f.empresa?` · ${esc(f.empresa)}`:""}</span><span class="pill ${cl}">${st}</span></div>
     <div class="fc-vals">
       <span>Horas <b class="mono">${brl(+f.valor||0)}</b><small>${f.os||0} OS · ${fdec(+f.horas||0)} h</small></span>
       ${+f.reemb?`<span>Despesas <b class="mono">${brl(+f.reemb)}</b><small>reembolsáveis</small></span>`:""}
@@ -2449,7 +2466,7 @@ function agingHtml(fechs){
   return `<div class="kpis aging"><div class="kpi"><span class="eyebrow">A vencer</span><span class="v">${brl(b.av)}</span></div><div class="kpi"><span class="eyebrow">Vencido 1–30 dias</span><span class="v" style="color:${b.a30?"var(--bad)":"inherit"}">${brl(b.a30)}</span></div><div class="kpi"><span class="eyebrow">Vencido 31–60</span><span class="v" style="color:${b.a60?"var(--bad)":"inherit"}">${brl(b.a60)}</span></div><div class="kpi"><span class="eyebrow">Mais de 60 dias</span><span class="v" style="color:${b.a90?"var(--bad)":"inherit"}">${brl(b.a90)}</span></div></div>`;
 }
 function naoFechadoHtml(){
-  const ate = ymd(addDays(parseYmd(today()),-1)), ls = state.ap.filter(e=>!e.orcId && !e.andamento && e.data<=ate && !lockOf(e.data, empOf(e)));
+  const ate = ymd(addDays(parseYmd(today()),-1)), ls = state.ap.filter(e=>!e.orcId && !e.andamento && e.data<=ate && !lockOf(e.data, empOf(e), e.profissional));
   const dp = state.desp.filter(x=>x.reembolsavel && !x.orcId && !despCobrada(x)), vdp = dp.reduce((s,x)=>s+despValor(x),0);
   if(!ls.length && !dp.length) return ""; const t = sumCalc(ls), datas = [...ls.map(e=>e.data), ...dp.map(x=>x.data)], first = datas.reduce((m,x)=>x<m?x:m, datas[0]), d = diasEntre(first, today());
   return `<div class="banner ${d>35?"warn":""}"><span><b>${brl(t.valor+vdp)}</b> ainda não fechado (${ls.length} OS${dp.length?` e ${dp.length} despesa(s) reembolsável(eis) de ${brl(vdp)}`:""} desde ${fdate(first)}${d>35?` — há ${d} dias`:""}).</span><button class="btn sm" data-act="irFechar" data-de="${first}">Fechar período</button></div>`;
@@ -2461,7 +2478,7 @@ function vFinanceiro(){
   const multiEmp = new Set([...apH.map(empOf), ...recH.map(recEmp)]).size > 1;
   const keys = [...new Set([...apH.map(e=>ym(e.data)+"|"+(multiEmp?empOf(e):"")), ...recH.map(r=>(r.competencia||"")+"|"+(multiEmp?recEmp(r):""))])].filter(k=>!k.startsWith("|")).sort((a,b)=>b.localeCompare(a));
   const fechRecs = state.rec.filter(r=>r.origem==="fech"), shareCache = {};
-  const share = (f, m, emp) => { const key = f.id+"|"+m+"|"+emp; if(key in shareCache) return shareCache[key]; const rows = fechRows(f.de, f.ate, f.empresa||""), tot = sumCalc(rows).valor; return shareCache[key] = tot ? sumCalc(rows.filter(e=>ym(e.data)===m && (!multiEmp || empOf(e)===emp))).valor/tot : 0; };
+  const share = (f, m, emp) => { const key = f.id+"|"+m+"|"+emp; if(key in shareCache) return shareCache[key]; const rows = fechRows(f.de, f.ate, f.empresa||"", f.profissional||""), tot = sumCalc(rows).valor; return shareCache[key] = tot ? sumCalc(rows.filter(e=>ym(e.data)===m && (!multiEmp || empOf(e)===emp))).valor/tot : 0; };
   const mrows = keys.map(k=>{ const [m,emp] = k.split("|"); const doMes = apH.filter(e=>ym(e.data)===m && (!multiEmp || empOf(e)===emp)), c = sumCalc(doMes);
     c.valor = Math.round((sumCalc(doMes.filter(e=>!lockedE(e))).valor + state.fech.reduce((s,f)=>s + (+f.valor||0)*share(f, m, emp), 0))*100)/100;
     const rec = recH.filter(r=>r.competencia===m && (!multiEmp || recEmp(r)===emp)).reduce((s,r)=>s+recBruto(r),0)
@@ -2566,7 +2583,7 @@ Horas normais: ${n2(t.hn)} h; extras 50%: ${n2(t.h50)} h; extras 100%: ${n2(t.h1
   return nfTextoHoras(f) + extra;
 }
 function nfTextoHoras(f){
-  const aps = (f.snap?.aps) || fechRows(f.de, f.ate, f.empresa||""), cfg = f.snap?.cfg || state.cfg;
+  const aps = (f.snap?.aps) || fechRows(f.de, f.ate, f.empresa||"", f.profissional||""), cfg = f.snap?.cfg || state.cfg;
   const taxas = [...new Map(aps.map(e=>{ const t = {...rateFor(empOf(e)), ...(e.valorHora!=null?{valorHora:+e.valorHora}:{}), ...(e.extraPct!=null?{extraPct:+e.extraPct}:{}), ...(e.feriadoPct!=null?{feriadoPct:+e.feriadoPct}:{})}; return [JSON.stringify(t), t]; })).values()];
   const T = taxas[0] || rateFor(f.empresa||state.cfg.contratante||"");
   const c = (()=>{ const ap = state.ap, cf = state.cfg; state.ap = aps; state.cfg = {...cf, ...cfg}; holCache = {}; try{ return sumCalc(aps); } finally { state.ap = ap; state.cfg = cf; holCache = {}; } })();
@@ -2788,7 +2805,7 @@ async function importarDados(d, fotos){
     const atuais = new Map(state[KEY[col]].map(x=>[x.id, x]));
     plano[col] = (d[col]||[]).filter(r=>{ if(!r || !r.id || !/^[A-Za-z0-9_-]{1,64}$/.test(r.id)) return false;
       if(atuais.has(r.id)){ mantidos++; return false; }
-      if(col==="fechamentos" && fechConflict(r.de, r.ate, r.empresa||"")){ conflitos++; return false; }
+      if(col==="fechamentos" && fechConflict(r.de, r.ate, r.empresa||"", r.profissional||"")){ conflitos++; return false; }
       novos++; return true; });
   }
   if(!confirm(`Backup de ${d.exportadoEm?new Date(d.exportadoEm).toLocaleString("pt-BR"):"data desconhecida"}:\n• ${novos} registro(s) que não existem hoje serão restaurados\n• ${mantidos} que já existem ficam como estão (não voltam para a versão antiga)${conflitos?`\n• ${conflitos} fechamento(s) ignorado(s): o período já tem outro fechamento`:""}${fotos?`\n• ${fotos.length} foto(s)`:""}\nAntes, uma cópia do estado atual é guardada no servidor. Continuar?`)) return false;
@@ -2912,7 +2929,7 @@ const A = {
       <footer><button type="button" class="btn" data-act="nfCopiar">Copiar texto</button><button class="btn primary" type="submit">Salvar</button></footer>
     </form>`); },
   nfCopiar(){ copyText($("#nf-txt").value); },
-  fechGlosa(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; const aps = (f.snap?.aps)||fechRows(f.de,f.ate,f.empresa||"");
+  fechGlosa(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; const aps = (f.snap?.aps)||fechRows(f.de,f.ate,f.empresa||"",f.profissional||"");
     openModal(`<header><h2>Registrar glosa · ${esc(f.numero)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
     <form class="form" id="glosaForm" data-id="${esc(f.id)}">
       <p class="muted" style="margin:0">Use quando a empresa não aceitar parte do fechamento (OS recusada, horário contestado, acordo). O valor glosado sai do saldo a receber.</p>
@@ -3101,7 +3118,7 @@ const A = {
   cronoNovo(){ state.crIds = null; openModal(cronoForm()); setTimeout(()=>$("#cr-os")?.focus(), 50); },
   async cronoEncerrar(b){ const e = state.ap.find(x=>x.id===b.dataset.id); if(!e) return;
     if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; setTimeout(()=>{ if(b.isConnected){ delete b.dataset.armed; b.textContent="Encerrar"; } }, 4000); return; }
-    const lk = lockOf(e.data, empOf(e)); if(lk){ toast(`Essa OS está num período já fechado (${lk.numero}). ${state.worker?"Peça ao responsável para ajustar.":"Reabra o fechamento para ajustar."}`); return; }
+    const lk = lockOf(e.data, empOf(e), e.profissional); if(lk){ toast(`Essa OS está num período já fechado (${lk.numero}). ${state.worker?"Peça ao responsável para ajustar.":"Reabra o fechamento para ajustar."}`); return; }
     if(e.data!==today()){ const j = state.cfg.jornada[parseYmd(e.data).getDay()]||{}; const fj = j.fim && hm(j.fim)>hm(e.inicio) ? j.fim : "";
       openModal(apForm({...e, fim:fj})); updateApPreview(); toast(`Cronômetro de ${fdate(e.data).slice(0,5)}: confira a hora real de término e salve.`); return; }
     b.disabled = true;
@@ -3121,8 +3138,8 @@ const A = {
     try{ await save("apontamentos", novo); closeModal(); toast(`Desfeito: ${campos.map(k=>(CAMPOS.find(c=>c[0]===k)||[k,k])[1]).join(", ")}.`); }catch(err){ toast(writeErr(err)); } },
   async lixoRestaurar(b){ const x = (state.lixo||[])[+b.dataset.i]; if(!x) return; b.disabled = true;
     const d = {...x.dados, id:x.registro_id}; delete d.excluido; delete d.excluidoEm; delete d.excluidoPor; delete d._v;
-    if(x.tabela==="fechamentos"){ const cf = fechConflict(d.de, d.ate, d.empresa||""); if(cf){ b.disabled = false; toast(`Já existe o fechamento ${cf.numero} para esse período. Não dá para restaurar este.`); return; } }
-    if(["apontamentos","despesas"].includes(x.tabela)){ const lk = lockOf(d.data, x.tabela==="apontamentos" ? empOf(d) : (d.empresa||state.cfg.contratante||"")); if(lk){ b.disabled = false; toast(`Esse item é de um período já fechado (${lk.numero}). Reabra o fechamento para restaurar.`); return; } }
+    if(x.tabela==="fechamentos"){ const cf = fechConflict(d.de, d.ate, d.empresa||"", d.profissional||""); if(cf){ b.disabled = false; toast(`Já existe o fechamento ${cf.numero} para esse período. Não dá para restaurar este.`); return; } }
+    if(["apontamentos","despesas"].includes(x.tabela)){ const lk = lockOf(d.data, x.tabela==="apontamentos" ? empOf(d) : (d.empresa||state.cfg.contratante||""), x.tabela==="apontamentos" ? d.profissional : ""); if(lk){ b.disabled = false; toast(`Esse item é de um período já fechado (${lk.numero}). Reabra o fechamento para restaurar.`); return; } }
     if(x.tabela==="recebimentos" && d.fechId && !state.fech.some(f=>f.id===d.fechId) && !confirm("O fechamento deste recebimento não existe mais. Restaurar mesmo assim?")){ b.disabled = false; return; }
     try{ await save(x.tabela, d); await loadOwner(); toast(`${TAB_LABEL[x.tabela]||"Item"} restaurado.`); carregarLixeira(); }catch(err){ b.disabled = false; toast(writeErr(err)); } },
   async arqEnviar(){ const a = state.arquivo; if(!a) return; try{ await navigator.share({files:[a.file], title:a.filename}); closeModal(); }catch(err){ if(err && err.name==="AbortError") return; baixarBlob(a.blob, a.filename); closeModal(); } },
@@ -3130,7 +3147,7 @@ const A = {
   repWhats(){ const rows=repRows(); if(!rows.length){ toast("Nenhum apontamento nesse período."); return; } const emp = oneOf(rows,"emp"), w = (ficha(emp).whats||"").replace(/\D/g,""); window.open(`https://wa.me/${w?(w.length<=11?"55"+w:w):""}?text=${encodeURIComponent(repText())}`, "_blank"); },
   async osPdf(b){ const os = b.dataset.os, rows = state.ap.filter(e=>(e.os||"(sem nº)")===os).sort((x,y)=>(x.data+x.inicio).localeCompare(y.data+y.inicio)); if(!rows.length) return;
     const saved = clone(state.rep); closeModal();
-    state.rep = {...state.rep, modo:"periodo", de:rows[0].data, ate:rows[rows.length-1].data, f:{prof:ALL,unid:ALL,emp:ALL}, by:"", vazios:false, os, fechNum:"", fotos:true};
+    state.rep = {...state.rep, fechArq:"", modo:"periodo", de:rows[0].data, ate:rows[rows.length-1].data, f:{prof:ALL,unid:ALL,emp:ALL}, by:"", vazios:false, os, fechNum:"", fotos:true};
     try{ await repPdf(); } finally { state.rep = saved; } },
   confAbrir(b){ const d = b.dataset, row = d.a ? {ini:d.a, fim:d.b} : {}; dayOpen(d.d, {row, profs: d.p ? [d.p] : undefined}); },
   async backupZip(b){
