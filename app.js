@@ -118,7 +118,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.06-12";
+const VERSAO = "2026.10.06-13";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -1571,6 +1571,8 @@ document.addEventListener("input", e=>{
   const t = e.target, d = state.day;
   if(t.value==="__outra") return;
   if(t.dataset.f){ const i = +t.closest(".dayrow").dataset.r; d.rows[i][t.dataset.f] = t.type==="checkbox" ? t.checked : t.value; }
+  if(t.dataset.f==="almIni" && t.value){ const i = +t.closest(".dayrow").dataset.r, r = d.rows[i]; if(!r.almFim || r.almAuto){ r.almFim = maisUmaHora(t.value); r.almAuto = true; const v = t.closest(".dayrow").querySelector('[data-f="almFim"]'); if(v) v.value = r.almFim; } }
+  if(t.dataset.f==="almFim"){ const i = +t.closest(".dayrow").dataset.r; d.rows[i].almAuto = false; }
   if(t.id==="d-unid") d.unid = t.value;
   if(t.id==="d-emp") d.emp = t.value;
   if(t.id==="d-orc"){ d.orcId = t.value; const o = orcOpts().find(x=>x.id===d.orcId); if(o && o.cliente){ d.emp = o.cliente; const ie=$("#d-emp"); if(ie) ie.value = o.cliente; } }
@@ -1622,6 +1624,11 @@ async function submitDay(){
     rascunho.limpar(); state.modalDirty = false; closeModal(); state.month = ym(d.data); render(); toast(`${n} apontamento${n>1?"s":""} salvo${n>1?"s":""}`);
   }catch(err){ btn.disabled = false; toast(n ? `${n} salvos, mas parei por um erro. ${writeErr(err)} Toque em Salvar de novo: o que já foi salvo não será duplicado.` : writeErr(err)); }
 }
+// intervalo de almoço é de 1 hora: a volta se preenche sozinha (dá para corrigir)
+const maisUmaHora = v => hhmm((hm(v)+60)%1440);
+document.addEventListener("input", e=>{ const t = e.target;
+  if(t.id==="f-almi" && t.value){ const f = $("#f-almf"); if(f && (!f.value || f.dataset.auto)){ f.value = maisUmaHora(t.value); f.dataset.auto = "1"; } }
+  if(t.id==="f-almf") delete t.dataset.auto; });
 document.addEventListener("input", e=>{ if(e.target.closest("#apForm")) updateApPreview(); });
 document.addEventListener("change", e=>{ if(e.target.id==="f-emerg"){ const b = $("#f-acion"); if(b) b.hidden = !e.target.checked; } if(e.target.id==="cr-emerg"){ const b = $("#cr-acion"); if(b) b.hidden = !e.target.checked; } });
 document.addEventListener("change", e=>{ if(e.target.closest("#apForm")) updateApPreview(); });
