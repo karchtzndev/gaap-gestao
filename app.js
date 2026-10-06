@@ -110,7 +110,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.06-3";
+const VERSAO = "2026.10.06-4";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -607,7 +607,7 @@ function render(){
   const fn = state.worker ? vWorker : ({painel:vPainel, horas:vHoras, relatorios:vRelatorios, orcamentos:vOrcamentos, orcEdit:vOrcEdit, financeiro:vFinanceiro, ajustes:vAjustes, mais:vMais, equipe:vEquipe, equipamentos:vEquipamentos}[state.view] || vPainel);
   try{ v.innerHTML = cronoBar() + fn(); }
   catch(err){ console.error(err); v.innerHTML = `<div class="empty"><b>Não consegui mostrar esta tela.</b>Algum registro está com dado inválido. Toque em Atualizar; se continuar, me avise.<div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" data-act="recarregar">Atualizar</button></div></div>`; }
-  state.rendered = state.view;
+  state.rendered = state.view; document.body.dataset.ajaba = state.view==="ajustes" ? (state.ajAba||"valores") : "";
   if(state.view==="painel") drawChart();
   if(state.view==="relatorios") renderReport();
 }
@@ -2506,14 +2506,15 @@ function vAjustes(){
   const hol = Object.entries(holidays(y)).sort();
   return `<div class="pagehead"><div><span class="eyebrow">Ajustes</span><h1>Empresa, valores e jornada</h1><p class="muted">Valores novos valem para os próximos apontamentos. Os já lançados mantêm o valor da hora da época.</p><p class="muted" style="margin:0;font-size:.8rem">Versão do app: <b>${VERSAO}</b></p></div></div>
   ${state.mode==="local"?`<div class="banner">Os dados estão sendo salvos só neste navegador. Exporte um backup com frequência.</div>`:""}
+  <div class="ajtabs" role="tablist">${[["valores","Valores"],["jornada","Jornada e feriados"],["contratantes","Empresas e unidades"],["empresa","Minha empresa"],["equipe","Equipe e acessos"],["dados","Backup e lixeira"]].map(([k,l])=>`<button type="button" class="chipbtn" role="tab" data-act="ajAba" data-k="${k}" aria-pressed="${(state.ajAba||"valores")===k}">${l}</button>`).join("")}</div>
   <form class="form" id="cfgForm">
-    <div class="panel form"><h3>Valores da hora</h3>
+    <div class="panel form" data-aba="valores"><h3>Valores da hora</h3>
       <div class="grid3"><label class="field"><span>Valor da hora normal, padrão (R$)</span><input id="c-vh" inputmode="decimal" value="${String(c.valorHora).replace(".",",")}"></label>
       <label class="field"><span>Extra dias úteis e sábado (%)</span><input id="c-p50" type="number" min="0" value="${c.extraPct}"></label>
       <label class="field"><span>Domingo e feriado (%)</span><input id="c-p100" type="number" min="0" value="${c.feriadoPct}"></label></div>
       <p class="muted" style="margin:0">Hora normal ${brl(c.valorHora)} · extra ${brl(c.valorHora*(1+c.extraPct/100))} · domingo/feriado ${brl(c.valorHora*(1+c.feriadoPct/100))}</p>
     </div>
-    <div class="panel form"><h3>Jornada normal</h3><p class="muted" style="margin:0">Fora desses horários a hora conta como extra. Deixe em branco o dia sem jornada.</p>
+    <div class="panel form" data-aba="jornada"><h3>Jornada normal</h3><p class="muted" style="margin:0">Fora desses horários a hora conta como extra. Deixe em branco o dia sem jornada.</p>
       <div class="tablewrap"><table><thead><tr><th>Dia</th><th>Entrada</th><th>Saída</th></tr></thead><tbody>
       ${[1,2,3,4,5,6].map(d=>`<tr><td>${WD[d]}</td><td><input type="time" id="j-ini-${d}" value="${esc(c.jornada[d]?.ini||"")}" style="border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:4px 6px"></td><td><input type="time" id="j-fim-${d}" value="${esc(c.jornada[d]?.fim||"")}" style="border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:4px 6px"></td></tr>`).join("")}
       <tr><td>Domingo</td><td colspan="2" class="muted">Sempre extra ${c.feriadoPct}%</td></tr></tbody></table></div>
@@ -2523,13 +2524,13 @@ function vAjustes(){
       <label class="check"><input type="checkbox" id="c-alm" ${c.almoco.ativo?"checked":""}> Não contar o horário de almoço</label>
       <div class="grid3"><label class="field"><span>Almoço início</span><input type="time" id="c-alm-ini" value="${esc(c.almoco.ini)}"></label><label class="field"><span>Almoço fim</span><input type="time" id="c-alm-fim" value="${esc(c.almoco.fim)}"></label></div>
     </div>
-    <div class="panel form"><h3>Feriados</h3><p class="muted" style="margin:0">Feriados nacionais já entram automaticamente. Inclua municipais e estaduais abaixo, um por linha, no formato dd/mm Nome (ou dd/mm/aaaa para um ano só).</p>
+    <div class="panel form" data-aba="jornada"><h3>Feriados</h3><p class="muted" style="margin:0">Feriados nacionais já entram automaticamente. Inclua municipais e estaduais abaixo, um por linha, no formato dd/mm Nome (ou dd/mm/aaaa para um ano só).</p>
       <label class="check"><input type="checkbox" id="c-carn" ${c.feriados.carnaval?"checked":""}> Carnaval (segunda e terça) conta como feriado</label>
       <label class="check"><input type="checkbox" id="c-corp" ${c.feriados.corpus?"checked":""}> Corpus Christi conta como feriado</label>
       <label class="field"><span>Feriados locais</span><textarea id="c-fer" rows="3">${esc(c.feriados.extras)}</textarea></label>
       <details><summary class="muted" style="cursor:pointer">Ver feriados de ${y} (${hol.length})</summary><div class="tablewrap" style="margin-top:8px"><table><tbody>${hol.map(([d,n])=>`<tr><td class="mono">${fdate(d)}</td><td>${WDS[parseYmd(d).getDay()]}</td><td>${esc(n)}</td></tr>`).join("")}</tbody></table></div></details>
     </div>
-    <div class="panel form"><h3>Funcionários, unidades e empresas</h3>
+    <div class="panel form" data-aba="contratantes"><h3>Funcionários, unidades e empresas</h3>
       <div class="grid2"><label class="field"><span>Funcionários (um por linha)</span><textarea id="c-profs" rows="4" placeholder="Ex.: Juliano de Oliveira">${esc(c.profissionais)}</textarea></label>
       <label class="field"><span>Unidades / locais (um por linha)</span><textarea id="c-unids" rows="4" placeholder="Ex.: Uruaçu">${esc(c.unidades)}</textarea></label></div>
       <label class="field"><span>Empresas contratantes (uma por linha; a primeira é a padrão)</span><textarea id="c-emps" rows="3" placeholder="Ex.: Brejeiro">${esc(empresasCfg().join("\n"))}</textarea></label>
@@ -2540,7 +2541,7 @@ function vAjustes(){
       <p class="muted" style="margin:0">Funcionários, unidades e empresas aparecem como filtros e na opção “Separar por” em Horas, Relatórios e Painel. Ao apontar uma OS feita por mais de um funcionário, marque todos e o sistema cria um apontamento para cada.</p>
     </div>
 
-    <div class="panel form"><h3>Custo da equipe e valor da hora por empresa</h3>
+    <div class="panel form" data-aba="valores"><h3>Custo da equipe e valor da hora por empresa</h3>
       <p class="muted" style="margin:0">O custo da equipe é usado só no Painel para mostrar o lucro. Nunca aparece nos relatórios enviados.</p>
       <div class="tablewrap"><table class="inputs"><thead><tr><th>Funcionário</th><th>Como você paga</th><th>Valor (R$)</th></tr></thead><tbody>
       ${profs().map(n=>{ const cu=(c.custos||{})[n]||{}; return `<tr data-cu="${esc(n)}"><td>${esc(n)}</td><td><select class="cu-t" aria-label="Forma de pagamento de ${esc(n)}"><option value="hora" ${cu.tipo!=="mes"?"selected":""}>Por hora</option><option value="mes" ${cu.tipo==="mes"?"selected":""}>Salário mensal</option></select></td><td><input class="cu-v" inputmode="decimal" aria-label="Valor pago a ${esc(n)}" value="${cu.valor!=null?String(cu.valor).replace(".",","):""}" placeholder="0,00"></td></tr>`; }).join("") || `<tr><td colspan="3" class="muted">Cadastre os funcionários acima e salve para preencher os custos.</td></tr>`}
@@ -2552,7 +2553,7 @@ function vAjustes(){
       <div class="row">${empresasCfg().map(n=>`<button type="button" class="btn sm" data-act="reajuste" data-emp="${esc(n)}">Reajustar ${esc(n)}${(c.taxas||{})[n]?.desde?` (desde ${fdate(c.taxas[n].desde)})`:""}</button>`).join("")}</div>
       <p class="muted" style="margin:0">Em branco usa o valor padrão (${brl(c.valorHora)}, ${c.extraPct}% e ${c.feriadoPct}%). Valores novos valem para os próximos lançamentos; os já lançados mantêm o valor da época.</p>
     </div>
-    <div class="panel form"><div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Ficha das contratantes</h3><button type="button" class="btn sm" data-act="novaEmpresa">+ Nova empresa</button></div>
+    <div class="panel form" data-aba="contratantes"><div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Ficha das contratantes</h3><button type="button" class="btn sm" data-act="novaEmpresa">+ Nova empresa</button></div>
       <p class="muted" style="margin:0">Aparece no PDF (razão social, CNPJ e quem assina o visto) e define o período de medição e o prazo de pagamento.</p>
       ${empresasCfg().map(n=>{ const F=(c.contratantes||{})[n]||{}; return `<details class="fichabox" data-ct="${esc(n)}" ${empresasCfg().length===1?"open":""}><summary><b>${esc(n)}</b>${F.cnpj?` <span class="muted">· ${esc(F.cnpj)}</span>`:""}</summary>
         <div class="grid2" style="margin-top:8px">
@@ -2571,15 +2572,15 @@ function vAjustes(){
         <label class="check"><input type="checkbox" class="ct-exos" ${F.exigirOS?"checked":""}> Exigir nº da OS em todo lançamento</label>
       </details>`; }).join("")}
     </div>
-    <div class="panel form"><h3>Dados da empresa (aparecem nos PDFs)</h3>
+    <div class="panel form" data-aba="empresa"><h3>Dados da empresa (aparecem nos PDFs)</h3>
       <div class="grid2"><label class="field"><span>Nome</span><input id="e-nome" value="${esc(E.nome)}"></label><label class="field"><span>CNPJ</span><input id="e-cnpj" value="${esc(E.cnpj)}"></label>
       <label class="field"><span>E-mail</span><input id="e-email" value="${esc(E.email)}"></label><label class="field"><span>Telefone</span><input id="e-tel" value="${esc(E.telefone)}"></label>
       <label class="field"><span>Cidade</span><input id="e-cid" value="${esc(E.cidade)}"></label><label class="field"><span>Responsável técnico (assinatura)</span><input id="e-resp" value="${esc(E.responsavel)}"></label></div>
       <label class="field"><span>Quem somos</span><textarea id="e-sobre" rows="5">${esc(E.sobre)}</textarea></label>
     </div>
-    <div class="row cfg-salvar" style="justify-content:flex-end"><span class="muted cfg-aviso" id="cfg-aviso" hidden>Alterações não salvas</span><button class="btn primary" type="submit">Salvar ajustes</button></div>
+    <div class="row cfg-salvar" data-aba="valores jornada contratantes empresa" style="justify-content:flex-end"><span class="muted cfg-aviso" id="cfg-aviso" hidden>Alterações não salvas</span><button class="btn primary" type="submit">Salvar ajustes</button></div>
   </form>
-  <section class="section" id="equipe-acessos"><header><h2>Equipe e celulares</h2></header>
+  <section class="section" id="equipe-acessos" data-aba="equipe"><header><h2>Equipe e celulares</h2></header>
     ${lembretesHtml()}
     <div class="panel form" id="acessos"><h3>Acessos</h3>
       <p class="muted" style="margin:0">Cada pessoa entra com o próprio e-mail e senha. Quem criar conta aparece aqui como “Aguardando”: escolha qual funcionário é e toque em Liberar. O funcionário só vê as próprias OS, sem valores.</p>
@@ -2593,11 +2594,11 @@ function vAjustes(){
       <p class="muted" style="margin:0">Para a equipe entrar: mande o endereço do sistema; cada um toca em “Criar conta” e aparece aqui para você liberar. Ao liberar, o e-mail da pessoa já fica confirmado (não precisa achar o e-mail do Supabase).</p>
     </div>
   </section>
-  <section class="section" id="lixeira"><header><h2>Lixeira</h2></header>
+  <section class="section" id="lixeira" data-aba="dados"><header><h2>Lixeira</h2></header>
     <div class="panel form"><p class="muted" style="margin:0">Tudo o que foi excluído nos últimos 90 dias, por você ou pelos funcionários. Toque em Restaurar para trazer de volta.</p><div id="lx-list" class="muted">Carregando…</div>
     <div class="row" id="lx-acts" hidden><button type="button" class="btn danger" data-act="lixoEsvaziar">Esvaziar lixeira</button><span class="muted" style="font-size:.85rem">Apaga de vez tudo o que está na lixeira e as fotos dessas OS. Não dá para desfazer.</span></div></div>
   </section>
-  <section class="section" id="backup"><header><h2>Backup</h2></header>
+  <section class="section" id="backup" data-aba="dados"><header><h2>Backup</h2></header>
     <div class="panel form"><h3>Cópia completa para guardar fora (recomendado toda semana)</h3>
       <p class="muted" style="margin:0">Baixa um arquivo .zip com todos os dados <b>e as fotos</b>. Guarde no iCloud Drive, Google Drive ou no computador. Se um dia perder o sistema, é com ele que tudo volta.</p>
       <p style="margin:0">${backupIdade()}</p>
@@ -2781,7 +2782,7 @@ const A = {
   osLancar(b){ const g = osGroups(state.ap.filter(e=>(e.os||"(sem nº)")===b.dataset.os))[0]; const l = g ? g.rows[g.rows.length-1] : {}; closeModal(); dayOpen(today(), {emp:empOf(l)||lastEmp(), orcId:l.orcId||"", row:{os:b.dataset.os==="(sem nº)"?"":b.dataset.os, desc:l.descricao||"", cli:l.cliente||""}}); },
   orcLancar(b){ const o = state.orc.find(x=>x.id===b.dataset.id); if(!o) return; dayOpen(today(), {orcId:o.id, emp:o.cliente?.nome||""}); },
   authModo(b){ state.auth = b.dataset.m; render(); },
-  irAcessos(){ state.view = "ajustes"; state.rendered = null; render(); setTimeout(()=>$("#acessos")?.scrollIntoView({behavior:"smooth"}), 50); },
+  irAcessos(){ state.ajAba = "equipe"; state.view = "ajustes"; state.rendered = null; render(); setTimeout(()=>$("#acessos")?.scrollIntoView({behavior:"smooth"}), 50); },
   async perfilLiberar(b){ const tr = b.closest("tr, .aprovcard"), papel = b.dataset.papel || tr.querySelector(".pf-papel")?.value || "funcionario", nome = (tr.querySelector(".pf-nome")?.value || "").trim(), email = state.perfis.find(p=>p.user_id===b.dataset.uid)?.email || "";
     if(papel==="funcionario" && !nome){ toast("Escreva o nome do funcionário (como aparece nos relatórios)."); tr.querySelector(".pf-nome")?.focus(); return; }
     if(papel==="funcionario" && state.perfis.some(p=>p.user_id!==b.dataset.uid && p.papel==="funcionario" && p.nome===nome)){ toast(`${nome} já está ligado a outro e-mail.`); return; }
@@ -2816,6 +2817,7 @@ const A = {
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("recebimentos", y); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
   async clearExamples(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar: apagar exemplos"; return; } b.disabled=true; try{ for(const r of state.ap.filter(x=>x.exemplo)) await removeAp(r); for(const col of COLS.slice(1)) for(const r of state[KEY[col]].filter(x=>x.exemplo)) await removeDoc(col, r.id); toast("Exemplos apagados. Pode começar a usar."); }catch(err){ toast(writeErr(err)); } },
   recarregar(){ location.reload(); },
+  ajAba(b){ state.ajAba = b.dataset.k; document.body.dataset.ajaba = state.ajAba; document.querySelectorAll('[data-act="ajAba"]').forEach(x=>x.setAttribute("aria-pressed", x===b)); window.scrollTo(0,0); },
   async lixoEsvaziar(b){ const n = (state.lixo||[]).length; if(!n) return;
     if(!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = `Confirmar: apagar ${n} item(ns) de vez`; toast("Tudo o que está na lixeira será apagado para sempre. Toque de novo para confirmar."); setTimeout(()=>{ if(b.isConnected){ delete b.dataset.armed; b.textContent = "Esvaziar lixeira"; } }, 6000); return; }
     b.disabled = true;
@@ -2825,7 +2827,7 @@ const A = {
       if(fotos.length) await sb.storage.from("fotos").remove(fotos).catch(()=>{});
       toast(`Lixeira esvaziada: ${data?.itens||0} item(ns)${fotos.length?` e ${fotos.length} foto(s)`:""} apagados de vez.`); carregarLixeira();
     }catch(err){ b.disabled = false; delete b.dataset.armed; b.textContent = "Esvaziar lixeira"; toast(writeErr(err)); } },
-  irAcessos(){ state.view = "ajustes"; state.rendered = null; render(); voltar.empilhar("tela"); setTimeout(()=>$("#acessos")?.scrollIntoView({block:"start"}), 50); },
+  irAcessos(){ state.ajAba = "equipe"; state.view = "ajustes"; state.rendered = null; render(); voltar.empilhar("tela"); setTimeout(()=>$("#acessos")?.scrollIntoView({block:"start"}), 50); },
   repTerceiros(){ const [de, ate] = repRange(), e = state.rep.f.emp, emp = (e && e!==ALL) ? e : (state.cfg.contratante || "");
     if(!fechRows(de, ate, emp).length){ toast(`Não há OS lançadas de ${fdate(de)} a ${fdate(ate)}${emp?` para ${emp}`:""}. Os meses que vieram das planilhas ficam em “Fechamentos deste período”, logo abaixo.`); return; }
     fechTerceiros({numero:"prévia", de, ate, empresa:emp, competencia:ate.slice(0,7)}, "pdf"); },
@@ -3009,7 +3011,7 @@ const A = {
   },
   async backupAgora(b){ b.disabled = true; const {error} = await sb.rpc("fazer_backup", {p_origem:"manual"}); b.disabled = false; if(error){ toast(writeErr(dbErr(error))); return; } toast("Cópia feita no servidor."); carregarBackups(); },
   async backupBaixar(b){ const {data, error} = await sb.rpc("ler_backup", {p_slot:+b.dataset.slot}); if(error || !data){ toast("Não consegui baixar essa cópia."); return; } offerFile(`backup-gaap-servidor-${(data.exportadoEm||"").slice(0,10)}.json`, JSON.stringify(data, null, 1)); },
-  irBackup(){ state.view = "ajustes"; state.rendered = null; render(); setTimeout(()=>$("#backup")?.scrollIntoView(), 50); },
+  irBackup(){ state.ajAba = "dados"; state.view = "ajustes"; state.rendered = null; render(); setTimeout(()=>$("#backup")?.scrollIntoView(), 50); },
   async renomearProf(b){
     const old = $("#rn-old")?.value || "", novo = ($("#rn-new")?.value || "").trim();
     if(!old || !novo){ toast("Escolha o funcionário e digite o novo nome."); return; }

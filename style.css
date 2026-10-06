@@ -384,3 +384,12 @@ input[type="date"]::-webkit-date-and-time-value,input[type="time"]::-webkit-date
 }
 .banner.aprov-mini{background:#fdecec;border-color:#d23b3b;color:#8a1c1c}
 @media (prefers-color-scheme:dark){.banner.aprov-mini{background:#3a1416;border-color:#e5484d;color:#ffd7d5}}
+/* Ajustes em abas */
+.ajtabs{display:flex;gap:6px;flex-wrap:wrap;padding:2px 0 10px;margin-bottom:6px;position:sticky;top:calc(58px + env(safe-area-inset-top,0px));z-index:6;background:var(--bg)}
+.ajtabs .chipbtn{white-space:nowrap;flex:none}
+body[data-ajaba="valores"] #view [data-aba]:not([data-aba~="valores"]),
+body[data-ajaba="jornada"] #view [data-aba]:not([data-aba~="jornada"]),
+body[data-ajaba="contratantes"] #view [data-aba]:not([data-aba~="contratantes"]),
+body[data-ajaba="empresa"] #view [data-aba]:not([data-aba~="empresa"]),
+body[data-ajaba="equipe"] #view [data-aba]:not([data-aba~="equipe"]),
+body[data-ajaba="dados"] #view [data-aba]:not([data-aba~="dados"]){display:none}
