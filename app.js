@@ -110,7 +110,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.06-8";
+const VERSAO = "2026.10.06-9";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -905,6 +905,11 @@ function vAjuda(){
     T("Lista de OS e unidades da Brejeiro", ["Ajustes → <b>Empresas e unidades</b> → Brejeiro.", "Cole a lista de OS (uma por linha: número;serviço;unidade) e as unidades.", "Para outra empresa: <b>+ Nova empresa</b>."]),
     T("Valores, reajuste e adicional noturno", ["Ajustes → <b>Valores</b>: valor da hora por empresa, extra, domingo/feriado e adicional noturno.", "<b>Reajustar</b>: novo valor com data de início (sugere pelo IPCA) e carta em PDF."]),
     T("Equipe: escala, acerto e documentos", ["Mais → <b>Escala da semana</b>: unidade de cada um por dia.", "Mais → <b>Equipe</b>: quanto pagar a cada um, vales e recibo; documentos com validade (ASO, NR).", "Mais → <b>Quem fez o quê</b>: todas as alterações e quem fez."]),
+    T("Fechamento por funcionário", ["Ao fechar o período, o app cria <b>um fechamento para cada funcionário</b> (nunca mistura dois).", "Cada PDF sai com o nome do funcionário e da empresa no início do arquivo.", "<b>Todos em um PDF</b> junta tudo num arquivo só, com uma capa de resumo.", "No fechamento, <b>Acerto do funcionário</b> abre quanto pagar a ele naquele período."]),
+    T("Banco de horas", ["Ajustes → <b>Valores</b> → marque <b>extras viram folga</b> no funcionário.", "As extras dele passam a ir para o banco (não entram no acerto em dinheiro).", "Mais → Equipe → <b>Folga</b> (desconta horas) ou <b>Pagar horas do banco</b>."]),
+    T("Lucro e documentos por funcionário", ["Mais → <b>Equipe</b> → escolha o período: aparece faturado, custo, lucro e margem de cada um.", "Na tabela de documentos, vermelho é vencido e amarelo vence em 30 dias. Toque em <b>+ incluir</b> para cadastrar."]),
+    T("Relatório anual (contador)", ["Financeiro → fim da página → <b>Relatório anual</b>.", "Escolha o ano e baixe em <b>PDF</b> ou <b>Excel</b>: faturamento, recebimentos, ISS/INSS/IR retidos, despesas e pagamentos."]),
+    T("Backup automático no Google Drive", ["Ajustes → <b>Dados</b> → Backup automático no Google Drive.", "Siga os 4 passos (de preferência no computador) e cole a URL que termina em /exec.", "Toque em <b>Enviar backup agora</b> para testar. Depois vai sozinho todo dia às 03:30 para a pasta “GAAP Backups”."]),
     T("Backup", ["Ajustes → <b>Backup e lixeira</b> → Backup completo (dados + fotos). Faça toda semana e guarde no Drive.", "O servidor também faz uma cópia automática todo dia.", "Excluiu algo sem querer? Ajustes → Backup e lixeira → <b>Restaurar</b>."])
   ];
   return `<div class="pagehead"><div><span class="eyebrow">Ajuda</span><h1>Como usar</h1><p class="muted">Toque em um assunto para ver o passo a passo.</p></div><button class="btn" data-act="nav" data-view="${state.worker?"worker":"mais"}">‹ Voltar</button></div>
