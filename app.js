@@ -110,7 +110,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.06-9";
+const VERSAO = "2026.10.06-10";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -906,6 +906,7 @@ function vAjuda(){
     T("Valores, reajuste e adicional noturno", ["Ajustes → <b>Valores</b>: valor da hora por empresa, extra, domingo/feriado e adicional noturno.", "<b>Reajustar</b>: novo valor com data de início (sugere pelo IPCA) e carta em PDF."]),
     T("Equipe: escala, acerto e documentos", ["Mais → <b>Escala da semana</b>: unidade de cada um por dia.", "Mais → <b>Equipe</b>: quanto pagar a cada um, vales e recibo; documentos com validade (ASO, NR).", "Mais → <b>Quem fez o quê</b>: todas as alterações e quem fez."]),
     T("Fechamento por funcionário", ["Ao fechar o período, o app cria <b>um fechamento para cada funcionário</b> (nunca mistura dois).", "Cada PDF sai com o nome do funcionário e da empresa no início do arquivo.", "<b>Todos em um PDF</b> junta tudo num arquivo só, com uma capa de resumo.", "No fechamento, <b>Acerto do funcionário</b> abre quanto pagar a ele naquele período."]),
+    T("Documentação para a Brejeiro (integração)", ["Mais → <b>Equipe</b> → Documentação exigida · Brejeiro: a lista oficial deles, da empresa e de cada funcionário.", "Toque em <b>+ incluir</b> em cada item e anexe o PDF ou a foto. FGTS e DARF são mensais: renove todo mês.", "Antes de começar um serviço (72 h antes), toque em <b>Montar pacote (.zip)</b>, marque quem vai e depois em <b>E-mail para a integração</b>; anexe o .zip no e-mail.", "Agende a integração de segurança com 24 h de antecedência (terças e quintas, 07h30)."]),
     T("Banco de horas", ["Ajustes → <b>Valores</b> → marque <b>extras viram folga</b> no funcionário.", "As extras dele passam a ir para o banco (não entram no acerto em dinheiro).", "Mais → Equipe → <b>Folga</b> (desconta horas) ou <b>Pagar horas do banco</b>."]),
     T("Lucro e documentos por funcionário", ["Mais → <b>Equipe</b> → escolha o período: aparece faturado, custo, lucro e margem de cada um.", "Na tabela de documentos, vermelho é vencido e amarelo vence em 30 dias. Toque em <b>+ incluir</b> para cadastrar."]),
     T("Relatório anual (contador)", ["Financeiro → fim da página → <b>Relatório anual</b>.", "Escolha o ano e baixe em <b>PDF</b> ou <b>Excel</b>: faturamento, recebimentos, ISS/INSS/IR retidos, despesas e pagamentos."]),
@@ -1001,7 +1002,15 @@ function bancoHoras(nome){
   return {cred, deb, saldo:cred-deb, desde};
 }
 const DOCS_FUNC = ["ASO","NR-10","NR-12","NR-35"];
-const TIPOS_DOC = ["ASO","NR-10","NR-11","NR-12","NR-33","NR-35","Integração na contratante","Ficha de EPI","CND Federal","CND FGTS","CND Trabalhista","CND Estadual","CND Municipal","Alvará","Seguro","Contrato","Outro"];
+/* documentação exigida pela contratante (FORMSESMT 018 da Brejeiro). mensal = vale pela última competência */
+const EXIG_BREJEIRO = {email:"integracao.anapolis@brejeiro.com.br", fones:"(62) 4014-8030 · (62) 99628-4586", antecedencia:72,
+  empresa:[["Cartão CNPJ"],["Comprovante de endereço"],["Inscrição Estadual / Municipal"],["Contrato social (última alteração)"],["FGTS Digital (GFD + comprovante + CRF)",1],["DARF Previdenciário + comprovante + CND",1],["PGR"],["PCMSO"],["Seguro de vida (apólice + comprovante)"],["Contrato de prestação de serviço"]],
+  funcionario:[["Ordem de Serviço de Segurança"],["Carteira de trabalho (registro)"],["ASO"],["Ficha de EPI"],["RG / CPF / CNH"],["NR-06"],["NR-10"],["NR-12"],["NR-33"],["NR-35"],["Integração na contratante"]]};
+function exigencias(emp){ const F = ficha(emp); if(F.exigencias) return F.exigencias; return /brejeiro/i.test(emp||"") ? EXIG_BREJEIRO : null; }
+const DOC_MENSAL = new Set([...EXIG_BREJEIRO.empresa, ...EXIG_BREJEIRO.funcionario].filter(x=>x[1]).map(x=>x[0]));
+// documento mais recente daquele tipo e titular, com situação
+function docAtual(tipo, titular){ const x = state.docs.filter(d=>d.tipo===tipo && (d.titular||"Empresa")===titular).sort((a,b)=>((b.validade||b.emissao||"")).localeCompare(a.validade||a.emissao||""))[0]; return x ? {x, st:docStatus(x)} : null; }
+const TIPOS_DOC = [...EXIG_BREJEIRO.empresa.map(x=>x[0]), ...EXIG_BREJEIRO.funcionario.map(x=>x[0]), "ASO","NR-10","NR-11","NR-12","NR-33","NR-35","Integração na contratante","Ficha de EPI","CND Federal","CND FGTS","CND Trabalhista","CND Estadual","CND Municipal","Alvará","Seguro","Contrato","Outro"].filter((t,i,a)=>a.indexOf(t)===i);
 function acertoDe(nome, de, ate){
   const aps = state.ap.filter(e=>e.profissional===nome && e.data>=de && e.data<=ate && !e.andamento), c = sumCalc(aps);
   // no banco de horas as extras não entram no acerto em dinheiro (viram folga ou são pagas depois)
@@ -1030,7 +1039,8 @@ function vEquipe(){
   ${temCustos()?`<section class="section"><header><h2>Lucro por funcionário (${fdate(q.de)} a ${fdate(q.ate)})</h2></header>
   ${dimTable(state.ap.filter(e=>e.data>=q.de && e.data<=q.ate && !e.orcId && !e.andamento), "prof", {lucro:true}) || `<p class="muted">Precisa de lançamentos de pelo menos dois funcionários no período.</p>`}
   <p class="muted" style="margin:0">Faturado = valor cobrado da empresa pelas horas de cada um. Custo = o que você paga a ele (com as extras). Só você vê.</p></section>`:""}
-  ${ps.length?`<section class="section"><header><h2>Documentos de cada funcionário</h2></header><div class="tablewrap"><table class="docmat"><thead><tr><th>Funcionário</th>${DOCS_FUNC.map(t=>`<th>${t}</th>`).join("")}</tr></thead>
+  ${exigHtml(ps)}
+  ${ps.length && !empresasCfg().some(exigencias)?`<section class="section"><header><h2>Documentos de cada funcionário</h2></header><div class="tablewrap"><table class="docmat"><thead><tr><th>Funcionário</th>${DOCS_FUNC.map(t=>`<th>${t}</th>`).join("")}</tr></thead>
   <tbody>${ps.map(n=>`<tr><td><b>${esc(n)}</b></td>${DOCS_FUNC.map(t=>{ const x = state.docs.filter(d=>d.titular===n && d.tipo===t).sort((a,b)=>(b.validade||"").localeCompare(a.validade||""))[0];
     if(!x) return `<td><button class="btn sm" data-act="docNovo" data-t="${t}" data-p="${esc(n)}">+ incluir</button></td>`; const [cl] = docStatus(x);
     return `<td><button class="pill ${cl||"info"}" style="border:0;cursor:pointer" data-act="docEditar" data-id="${esc(x.id)}">${x.validade?(cl==="bad"?"vencido ":"")+fdate(x.validade):"sem validade"}</button></td>`; }).join("")}</tr>`).join("")}</tbody></table></div>
@@ -1040,6 +1050,34 @@ function vEquipe(){
   </section>`;
 }
 const pagValTxt = x => x.tipo==="folga" ? `${fdec(numIn(x.horas)*60)} h` : x.tipo==="bancoPago" ? `${fdec(numIn(x.horas)*60)} h · ${brl(numIn(x.valor))}` : brl(numIn(x.valor));
+const docCel = (tipo, tit) => { const a = docAtual(tipo, tit); if(!a) return `<button class="btn sm" data-act="docNovo" data-t="${esc(tipo)}" data-p="${esc(tit)}">+ incluir</button>`;
+  const [cl] = a.st; return `<button class="pill ${cl||"info"}" style="border:0;cursor:pointer" data-act="docEditar" data-id="${esc(a.x.id)}">${a.x.validade?(cl==="bad"?"vencido ":"")+fdate(a.x.validade):"ok"}${a.x.arquivo?" 📎":""}</button>`; };
+const docOk = (tipo, tit) => { const a = docAtual(tipo, tit); return !!a && a.st[0]!=="bad"; };
+function exigHtml(ps){
+  return empresasCfg().filter(exigencias).map(emp=>{ const E = exigencias(emp), fe = E.empresa.map(x=>x[0]), ff = E.funcionario.map(x=>x[0]);
+    const okE = fe.filter(t=>docOk(t,"Empresa")).length, okF = ps.map(n=>ff.filter(t=>docOk(t,n)).length);
+    return `<section class="section" id="exig-${slug(emp)}"><header><h2>Documentação exigida · ${esc(emp)}</h2><div class="row"><button class="btn sm primary" data-act="exigZip" data-emp="${esc(emp)}">Montar pacote (.zip)</button><button class="btn sm" data-act="exigEmail" data-emp="${esc(emp)}">E-mail para a integração</button></div></header>
+    <p class="muted" style="margin:0 0 8px">Enviar para <b>${esc(E.email||"")}</b> com pelo menos <b>${E.antecedencia||72} h</b> de antecedência do início do serviço.${E.fones?` Dúvidas: ${esc(E.fones)}.`:""} FGTS e DARF valem só pela última competência: renove todo mês.</p>
+    <h3 style="margin:6px 0">Da empresa <span class="pill ${okE===fe.length?"good":"warn"}">${okE}/${fe.length}</span></h3>
+    <div class="list">${fe.map(t=>`<div class="item" style="cursor:default"><span>${esc(t)}${DOC_MENSAL.has(t)?' <small class="muted">(mensal)</small>':""}</span><span></span><span>${docCel(t,"Empresa")}</span></div>`).join("")}</div>
+    ${ps.length?`<h3 style="margin:12px 0 6px">Dos funcionários</h3><div class="tablewrap"><table class="docmat"><thead><tr><th>Funcionário</th><th>Completo</th>${ff.map(t=>`<th>${esc(t)}</th>`).join("")}</tr></thead>
+    <tbody>${ps.map((n,i)=>`<tr><td><b>${esc(n)}</b></td><td><span class="pill ${okF[i]===ff.length?"good":"warn"}">${okF[i]}/${ff.length}</span></td>${ff.map(t=>`<td>${docCel(t,n)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+    <p class="muted" style="margin:6px 0 0">A integração de segurança é obrigatória para todos: agende com 24 h de antecedência (terças e quintas, chegar entre 07h30 e 08h00 no Departamento de Segurança).</p>`:""}</section>`; }).join("");
+}
+async function exigZip(emp, quem){
+  const E = exigencias(emp); if(!E) return; if(!window.JSZip) await loadScript(JSZIP);
+  const zip = new JSZip(), falta = [], itens = [...E.empresa.map(([t])=>[t,"Empresa"]), ...quem.flatMap(n=>E.funcionario.map(([t])=>[t,n]))];
+  toast("Montando o pacote…");
+  for(const [t, tit] of itens){ const a = docAtual(t, tit);
+    if(!a || !a.x.arquivo || a.st[0]==="bad"){ falta.push(`${tit} - ${t}${a && a.st[0]==="bad"?" (vencido)":a && !a.x.arquivo?" (sem arquivo anexado)":""}`); continue; }
+    const {data, error} = await sb.storage.from("documentos").download(a.x.arquivo); if(error || !data){ falta.push(`${tit} - ${t} (não consegui baixar)`); continue; }
+    const ext = a.x.arquivo.split(".").pop(), pasta = tit==="Empresa" ? "1 - Empresa" : `2 - Funcionarios/${slug(tit)}`;
+    zip.file(`${pasta}/${slug(t)}.${ext}`, data); }
+  zip.file("LEIA-ME.txt", `Documentação ${state.cfg.empresa.nome} para ${emp}\r\nEnviar para: ${E.email}\r\nFuncionários: ${quem.join(", ")}\r\n\r\n${falta.length?`FALTANDO (${falta.length}):\r\n${falta.join("\r\n")}`:"Documentação completa."}\r\n`);
+  const blob = await zip.generateAsync({type:"blob"});
+  await offerFile(`documentacao-${slug(state.cfg.empresa.nome||"gaap")}-${slug(emp)}-${today()}.zip`, blob);
+  if(falta.length) toast(`Pacote montado. Faltam ${falta.length} item(ns): veja o LEIA-ME dentro do zip.`);
+}
 function pagForm(x){
   return `<header><h2>${x.id?"Editar":"Novo"} lançamento da equipe</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
   <form class="form" id="pagForm" data-id="${esc(x.id||"")}">
@@ -2704,6 +2742,8 @@ document.addEventListener("submit", async e=>{
     try{ await save("pagamentos", x); state.pgId = null; state.modalDirty = false; closeModal(); render(); toast(`${TIPOS_PAG[x.tipo][0]} de ${pagValTxt(x)} para ${x.profissional} salvo.`); }catch(err){ toast(writeErr(err)); } }
   if(e.target.id==="docForm"){ e.preventDefault(); const id = e.target.dataset.id, old = state.docs.find(x=>x.id===id) || {}, btn = e.target.querySelector("[type=submit]");
     const x = {...old, id: id || (state.dcId ||= uid()), tipo:$("#dc-tipo").value, titular:$("#dc-tit").value, emissao:$("#dc-emi").value, validade:$("#dc-val").value, obs:$("#dc-obs").value.trim()};
+    // FGTS/DARF valem pela última competência: sem validade informada, vence no fim do mês seguinte à emissão
+    if(DOC_MENSAL.has(x.tipo) && !x.validade){ const d = parseYmd(x.emissao || today()); x.validade = ymd(new Date(d.getFullYear(), d.getMonth()+2, 0)); }
     try{ btn.disabled = true;
       if(state.docArq){ const f = state.docArq, ext = (f.name.split(".").pop()||"pdf").toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,5) || "pdf", path = `docs/${uid()}.${ext}`;
         const {error} = await sb.storage.from("documentos").upload(path, f, {contentType: f.type || "application/pdf"}); if(error) throw {code:"db", message:"Não consegui enviar o arquivo: "+error.message}; x.arquivo = path; }
@@ -3216,6 +3256,16 @@ const A = {
     doc.setFontSize(9.5); doc.splitTextToSize(`Declaro ter recebido de ${state.cfg.empresa.nome} os valores acima referentes aos serviços prestados no período de ${fdate(q.de)} a ${fdate(q.ate)}.`, 182).forEach(l=>{ doc.text(l,14,y); y+=5; });
     signature(doc, y+4, state.cfg.empresa.nome, nome); pdfFooter(doc);
     offerFile(`recibo-${slug(nome)}-${q.de}_a_${q.ate}.pdf`, doc.output("blob")); },
+  exigZip(b){ const emp = b.dataset.emp, ps = profs(); openModal(`<header><h2>Pacote de documentação · ${esc(emp)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+    <div class="form"><p class="muted" style="margin:0">Marque quem vai trabalhar. O pacote leva os documentos da empresa e os desses funcionários, separados em pastas, e um LEIA-ME com o que estiver faltando.</p>
+    ${ps.map(n=>`<label class="check"><input type="checkbox" class="ex-p" value="${esc(n)}" checked> ${esc(n)}</label>`).join("")}
+    <footer><button class="btn" data-act="closeModal">Cancelar</button><button class="btn primary" data-act="exigZipOk" data-emp="${esc(emp)}">Montar .zip</button></footer></div>`); },
+  async exigZipOk(b){ const quem = [...document.querySelectorAll(".ex-p:checked")].map(i=>i.value), emp = b.dataset.emp; b.disabled = true; closeModal(); await exigZip(emp, quem); },
+  exigEmail(b){ const emp = b.dataset.emp, E = exigencias(emp), ps = profs(), falta = [...E.empresa.map(([t])=>[t,"Empresa"]), ...ps.flatMap(n=>E.funcionario.map(([t])=>[t,n]))].filter(([t,n])=>!docOk(t,n));
+    const corpo = `Bom dia,\n\nSegue em anexo a documentação da ${state.cfg.empresa.nome} (CNPJ ${state.cfg.empresa.cnpj||""}) para a realização de serviços terceirizados na ${emp}.\n\nColaboradores:\n${ps.map(n=>"- "+n).join("\n")}\n\nFicamos à disposição para agendar a integração de segurança.\n\nAtenciosamente,\n${state.cfg.empresa.nome}\n${state.cfg.empresa.telefone||""}`;
+    if(falta.length && !confirm(`Ainda faltam ${falta.length} documento(s) (ex.: ${falta.slice(0,3).map(([t,n])=>`${n} - ${t}`).join("; ")}). Abrir o e-mail mesmo assim?`)) return;
+    location.href = `mailto:${E.email}?subject=${encodeURIComponent(`Documentação para serviços terceirizados - ${state.cfg.empresa.nome}`)}&body=${encodeURIComponent(corpo)}`;
+    toast("Anexe o .zip do pacote no e-mail."); },
   docNovo(b){ state.docArq = null; openModal(docForm({tipo:b?.dataset?.t, titular:b?.dataset?.p})); },
   docEditar(b){ const x = state.docs.find(y=>y.id===b.dataset.id); if(x){ state.docArq = null; openModal(docForm(x)); } },
   async docVer(b){ const {data, error} = await sb.storage.from("documentos").createSignedUrl(b.dataset.path, 600); if(error || !data){ toast("Não consegui abrir o arquivo."); return; } window.open(data.signedUrl, "_blank"); },
