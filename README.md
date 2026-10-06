@@ -88,6 +88,7 @@ e cole o conteúdo de cada arquivo no modelo correspondente:
 | `015_adicional_noturno.sql` | Adicional noturno (22h às 5h) por contratante, inclusive nos lançamentos dos funcionários |
 | `016_liberar_acesso.sql` | Liberar acesso em um passo (funcionário ou responsável), já confirmando o e-mail da pessoa |
 | `017_esvaziar_lixeira.sql` | Botão "Esvaziar lixeira" em Ajustes (só responsável) |
+| `018_campo_e_atividade.sql` | Localização ao iniciar OS, lista de OS e escala para o funcionário, registro "Quem fez o quê" |
 
 ## Rotinas automáticas
 
