@@ -110,7 +110,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.06-5";
+const VERSAO = "2026.10.06-6";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -592,7 +592,7 @@ const ICONS = {
   financeiro:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 6.5c-1-1.5-3-2-5-2-2.5 0-4.5 1.2-4.5 3.3 0 4.7 9.5 2.4 9.5 7.2 0 2.2-2.2 3.5-5 3.5-2.2 0-4.3-.8-5.3-2.5"/></svg>'
 };
 const NAV = [["painel","Painel"],["horas","Horas"],["relatorios","Relatórios"],["orcamentos","Orçamentos"],["financeiro","Financeiro"],["mais","Mais"]];
-const MAIS_VIEWS = ["mais","equipe","equipamentos","escala","atividade"];
+const MAIS_VIEWS = ["mais","equipe","equipamentos","escala","atividade","ajuda"];
 function renderNav(){
   if(state.worker){ $("#tabbar").hidden = true; $("#railnav").innerHTML = ""; const g=document.querySelector('.topbar [data-view="ajustes"]'); if(g) g.hidden = true; return; }
   const cur = state.view==="orcEdit" ? "orcamentos" : MAIS_VIEWS.includes(state.view) ? "mais" : state.view;
@@ -607,7 +607,7 @@ function render(){
   if(!state.ready){ v.innerHTML = `<div class="loading">Carregando seus dados…</div>`; return; }
   if(!sessOk()){ document.body.classList.add("locked"); v.innerHTML = vLogin(); state.rendered = "login"; const f = $("#lg-email") || $("#lg-senha"); if(f && window.innerWidth>700) f.focus(); return; }
   document.body.classList.remove("locked");
-  const fn = state.worker ? vWorker : ({painel:vPainel, horas:vHoras, relatorios:vRelatorios, orcamentos:vOrcamentos, orcEdit:vOrcEdit, financeiro:vFinanceiro, ajustes:vAjustes, mais:vMais, escala:vEscala, atividade:vAtividade, equipe:vEquipe, equipamentos:vEquipamentos}[state.view] || vPainel);
+  const fn = state.worker ? (state.view==="ajuda" ? vAjuda : vWorker) : ({painel:vPainel, horas:vHoras, relatorios:vRelatorios, orcamentos:vOrcamentos, orcEdit:vOrcEdit, financeiro:vFinanceiro, ajustes:vAjustes, mais:vMais, ajuda:vAjuda, escala:vEscala, atividade:vAtividade, equipe:vEquipe, equipamentos:vEquipamentos}[state.view] || vPainel);
   try{ v.innerHTML = cronoBar() + fn(); }
   catch(err){ console.error(err); v.innerHTML = `<div class="empty"><b>Não consegui mostrar esta tela.</b>Algum registro está com dado inválido. Toque em Atualizar; se continuar, me avise.<div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" data-act="recarregar">Atualizar</button></div></div>`; }
   state.rendered = state.view; document.body.dataset.ajaba = state.view==="ajustes" ? (state.ajAba||"valores") : "";
@@ -859,6 +859,7 @@ function vWorker(){
     <div class="row">${monthNav()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button><button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
   ${escalaHoje()}
   ${confHtml(conferencia(ymd(addDays(parseYmd(today()),-7)), today(), me), "Faltou lançar?", 5)}
+  <p style="margin:0 0 12px"><button class="btn sm" data-act="nav" data-view="ajuda">📖 Como usar o app</button></p>
   <div class="summary"><span><b>${list.length}</b> OS</span><span><i class="dot d-n"></i>Normal <b>${fdec(c.n)} h</b></span><span><i class="dot d-50"></i>Extra ${pct50()} <b>${fdec(c.e50)} h</b></span><span><i class="dot d-100"></i>Extra ${pct100()} <b>${fdec(c.e100)} h</b></span><span>Total <b>${fdec(c.total)} h</b></span></div>
   ${list.length ? `<div class="list">${Object.keys(byDay).sort().reverse().map(d=>`<div class="dayhead"><span>${WD[parseYmd(d).getDay()]}, ${fdate(d)}</span><span class="mono">${fdec(sumCalc(byDay[d]).total)} h</span></div>${byDay[d].sort((a,b)=>a.inicio.localeCompare(b.inicio)).map(e=>apItem(e,false,overlaps(byDay[d]))).join("")}`).join("")}</div>`
     : `<div class="empty"><b>Nenhuma OS em ${ymLabel(state.month)}</b>Toque em “Lançar OS do dia” para registrar suas ordens de serviço.</div>`}
@@ -874,12 +875,42 @@ function vMais(){
     ${card("equipe","Equipe: acerto e pagamentos","Quanto pagar a cada técnico, vales, recibos")}
     ${card("equipe","Documentos e validades","ASO, NR-10, NR-35, integração, certidões")}
     ${card("equipamentos","Equipamentos e preventivas","Histórico por máquina e plano de preventivas")}
+    ${card("ajuda","📖 Como usar","Passo a passo de cada parte do sistema")}
     ${card("escala","Escala da semana","Quem vai para qual unidade em cada dia")}
     ${card("atividade","Quem fez o quê","Tudo o que foi criado, alterado ou excluído, e por quem")}
     ${card("financeiro","Fechamentos e PDF do fiscal","Abril a setembro e os próximos: PDF e Excel no modelo da Brejeiro")}
     ${card("","Pacote do contador","Planilha do mês e comprovantes", "pacoteContador")}
     ${card("ajustes","Ajustes","Valores, jornada, contratantes, equipe, backup")}
   </div>`;
+}
+/* ---------- COMO USAR ---------- */
+function vAjuda(){
+  const T = (t, passos) => `<details class="panel ajuda"><summary><b>${t}</b></summary><ol>${passos.map(p=>`<li>${p}</li>`).join("")}</ol></details>`;
+  const func = [
+    T("Instalar o app no celular", ["<b>iPhone:</b> abra o endereço no Safari → Compartilhar (quadrado com seta) → <b>Adicionar à Tela de Início</b>.", "<b>Android:</b> no Chrome, toque nos ⋮ → <b>Instalar app</b> (ou use o botão Instalar app, quando aparecer).", "Abra sempre pelo ícone: fica em tela cheia e funciona sem internet."]),
+    T("Iniciar uma OS na hora (cronômetro)", ["Toque em <b>▶ Iniciar OS agora</b>.", "Escolha a OS na lista (o serviço e a unidade se preenchem sozinhos) e toque em Iniciar.", "Ao terminar, toque em <b>Encerrar</b> na faixa do topo (toque duas vezes para confirmar).", "Esqueceu de encerrar? Encerre informando a hora real em que terminou."]),
+    T("Lançar as OS do dia de uma vez", ["Toque em <b>+ Lançar OS do dia</b>.", "Confira a data, a empresa e a unidade de cima (vale para todas as linhas).", "Em cada linha: nº da OS, início, término e o serviço. Use <b>+ Linha</b> para mais OS.", "Fotos: toque em <b>Antes</b>, <b>Durante</b> ou <b>Depois</b> em cada linha.", "Trabalhou no horário do almoço? Marque “Trabalhei no almoço”.", "Toque em <b>Salvar</b>. Se sair sem salvar, o app guarda um rascunho."]),
+    T("Fotos", ["Tire a foto pelo app: ela sai com data, hora, OS e unidade carimbadas.", "Marque se é <b>antes</b>, <b>durante</b> ou <b>depois</b> do serviço."]),
+    T("Sem internet", ["Pode lançar normalmente: aparece “a enviar” no topo.", "Quando a internet voltar, tudo é enviado sozinho. Não saia da conta com itens a enviar."]),
+    T("Emergência", ["Marque <b>Chamado de emergência</b> e informe quem acionou, a hora e o motivo.", "Isso aparece no relatório para o fiscal."]),
+    T("Sua escala e lembretes", ["A escala da semana aparece em <b>Sua escala</b>.", "Ative os lembretes no celular para ser avisado quando faltar lançar OS."])
+  ];
+  const dono = state.worker ? [] : [
+    T("Liberar quem criou conta", ["Quando alguém pede cadastro aparece uma <b>faixa vermelha</b> no Painel.", "Confira o nome e toque em <b>Aprovar como funcionário</b> (ou responsável, que vê tudo)."]),
+    T("Fechar a medição (todo dia 20)", ["No dia 20 aparece <b>Fechar medição</b> em “Para fazer hoje”.", "Confira as pendências mostradas (dias sem lançamento, OS sem número, cronômetro aberto).", "Toque em Fechar: o PDF no modelo do fiscal da Brejeiro abre para conferir.", "Na prévia toque em <b>Enviar</b> (WhatsApp, e-mail) ou <b>Baixar</b>. Também há o Excel."]),
+    T("Conferir a planilha que a Brejeiro devolve", ["Financeiro → no fechamento, toque em <b>Conferir planilha deles</b>.", "Escolha o Excel ou PDF que eles mandaram.", "O app mostra “Tudo confere” ou a OS e o valor que diverge."]),
+    T("Pedir aprovação do cliente", ["No fechamento toque em <b>Pedir aprovação</b>: abre o WhatsApp do aprovador com o link.", "Ele aprova ou contesta OS por OS; a resposta aparece no fechamento."]),
+    T("Receber e nota fiscal", ["Ao receber, toque em <b>Receber</b> no fechamento e informe valor e retenções.", "Em <b>Nota fiscal</b> está o texto pronto para a NFS-e (competência, pedido, código do serviço e ISS).", "A <b>Previsão de recebimentos</b> no Financeiro mostra o que entra em cada semana."]),
+    T("Relatórios e PDFs", ["Relatórios → escolha o período → <b>Baixar PDF</b> ou <b>Excel</b>.", "“Fechamentos deste período” mostra os PDFs do fiscal de cada mês.", "Todo PDF abre numa prévia antes de enviar."]),
+    T("Lista de OS e unidades da Brejeiro", ["Ajustes → <b>Empresas e unidades</b> → Brejeiro.", "Cole a lista de OS (uma por linha: número;serviço;unidade) e as unidades.", "Para outra empresa: <b>+ Nova empresa</b>."]),
+    T("Valores, reajuste e adicional noturno", ["Ajustes → <b>Valores</b>: valor da hora por empresa, extra, domingo/feriado e adicional noturno.", "<b>Reajustar</b>: novo valor com data de início (sugere pelo IPCA) e carta em PDF."]),
+    T("Equipe: escala, acerto e documentos", ["Mais → <b>Escala da semana</b>: unidade de cada um por dia.", "Mais → <b>Equipe</b>: quanto pagar a cada um, vales e recibo; documentos com validade (ASO, NR).", "Mais → <b>Quem fez o quê</b>: todas as alterações e quem fez."]),
+    T("Backup", ["Ajustes → <b>Backup e lixeira</b> → Backup completo (dados + fotos). Faça toda semana e guarde no Drive.", "O servidor também faz uma cópia automática todo dia.", "Excluiu algo sem querer? Ajustes → Backup e lixeira → <b>Restaurar</b>."])
+  ];
+  return `<div class="pagehead"><div><span class="eyebrow">Ajuda</span><h1>Como usar</h1><p class="muted">Toque em um assunto para ver o passo a passo.</p></div><button class="btn" data-act="nav" data-view="${state.worker?"worker":"mais"}">‹ Voltar</button></div>
+  ${state.worker?"":`<h2 style="margin:6px 0 8px">No campo (técnicos)</h2>`}${func.join("")}
+  ${dono.length?`<h2 style="margin:16px 0 8px">Responsável</h2>${dono.join("")}`:""}
+  <p class="muted" style="margin-top:14px">Versão do app: ${VERSAO}</p>`;
 }
 /* ---------- ESCALA da semana ---------- */
 function semanaDe(d){ const t = parseYmd(d); return ymd(addDays(t, -((t.getDay()+6)%7))); }

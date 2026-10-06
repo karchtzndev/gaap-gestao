@@ -398,3 +398,4 @@ body[data-ajaba="dados"] #view [data-aba]:not([data-aba~="dados"]){display:none}
 .esc-dia h3{margin:0 0 6px}.esc-dia.hoje{border-color:var(--green,#1b7a3d);box-shadow:0 0 0 1px var(--green,#1b7a3d)}
 .esc-dia .field{margin-bottom:6px}.esc-dia select{width:100%}
 .prevbar{height:8px;border-radius:99px;background:var(--surface-2);margin:6px 0;overflow:hidden}.prevbar i{display:block;height:100%;background:var(--green,#1b7a3d)}
+.ajuda{margin-bottom:8px}.ajuda summary{cursor:pointer;padding:4px 0;font-size:1rem}.ajuda ol{margin:8px 0 2px 18px;padding:0;display:grid;gap:6px}
