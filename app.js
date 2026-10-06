@@ -118,7 +118,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.06-11";
+const VERSAO = "2026.10.06-12";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -1361,8 +1361,10 @@ function apForm(e){
     ${profField}
     <label class="field"><span>Serviço executado</span><input id="f-desc" value="${esc(e.descricao||"")}" placeholder="Ex.: Troca de rolamento do elevador de canecas 02"></label>
     <div class="grid2">
-      <label class="field"><span>Início</span><span class="timepair"><input type="time" id="f-ini" value="${esc(e.inicio||"")}" required><button type="button" class="btn sm" data-act="now" data-t="f-ini">Agora</button></span></label>
-      <label class="field"><span>Término</span><span class="timepair"><input type="time" id="f-fim" value="${esc(e.fim||"")}" required><button type="button" class="btn sm" data-act="now" data-t="f-fim">Agora</button></span></label>
+      <label class="field"><span>Entrada</span><span class="timepair"><input type="time" id="f-ini" value="${esc(e.inicio||"")}" required><button type="button" class="btn sm" data-act="now" data-t="f-ini">Agora</button></span></label>
+      <label class="field"><span>Saída p/ almoço</span><input type="time" id="f-almi" value="${esc(e.almIni||"")}"></label>
+      <label class="field"><span>Retorno do almoço</span><input type="time" id="f-almf" value="${esc(e.almFim||"")}"></label>
+      <label class="field"><span>Saída</span><span class="timepair"><input type="time" id="f-fim" value="${esc(e.fim||"")}" required><button type="button" class="btn sm" data-act="now" data-t="f-fim">Agora</button></span></label>
     </div>
     <div class="grid2">
       <label class="field"><span>Empresa</span><input id="f-emp" list="emp-list" value="${esc(e.empresa || lastEmp())}" placeholder="Ex.: Brejeiro"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>
@@ -1371,7 +1373,6 @@ function apForm(e){
     ${orcSelect("f-orc", e.orcId)}
     ${eqSelect('id="f-eq"', e.equipId, e.prevId)}
     ${state.worker?"":`<label class="field"><span>Cálculo da hora</span><select id="f-tipo">${Object.entries(TIPOS).map(([k,l])=>`<option value="${k}" ${ (e.tipo||"auto")===k?"selected":""}>${l}</option>`).join("")}</select></label>`}
-    <div class="grid2"><label class="field"><span>Saída para o almoço</span><input type="time" id="f-almi" value="${esc(e.almIni||"")}"></label><label class="field"><span>Volta do almoço</span><input type="time" id="f-almf" value="${esc(e.almFim||"")}"></label></div>
     <p class="muted" style="margin:-4px 0 0;font-size:.85rem">Horário exato do almoço: esse intervalo não conta como hora trabalhada. Deixe em branco se não parou para almoçar nessa OS.</p>
     ${state.cfg.almoco.ativo?`<label class="check"><input type="checkbox" id="f-noalm" ${e.noAlmoco?"checked":""}> Trabalhei no horário de almoço (${esc(state.cfg.almoco.ini)}–${esc(state.cfg.almoco.fim)} conta como extra 50%)</label>`:""}
     <label class="check"><input type="checkbox" id="f-emerg" ${e.emergencia?"checked":""}> Chamado de emergência (fora da escala)</label>
@@ -1391,7 +1392,7 @@ function apForm(e){
       <span class="row">${isNew?"":`<button type="button" class="btn" data-act="dupAp">Duplicar</button>`}<button class="btn primary" type="submit">${isNew?"Salvar apontamento":"Salvar alterações"}</button></span></footer>
   </form>`;
 }
-const CAMPOS = [["data","Data",fdate],["os","OS"],["inicio","Início"],["fim","Término"],["almIni","Saída almoço"],["almFim","Volta almoço"],["descricao","Serviço"],["profissional","Funcionário"],["empresa","Empresa"],["cliente","Unidade"],["tipo","Cálculo",v=>TIPOS[v]||v],["emergencia","Emergência",v=>v?"sim":"não"],["obs","Obs."],["noAlmoco","Trabalhou no almoço",v=>v?"sim":"não"],["orcId","Orçamento",v=>v?orcNum(v):"—"],["excluido","Excluído",v=>v?"sim":"não"]];
+const CAMPOS = [["data","Data",fdate],["os","OS"],["inicio","Início"],["fim","Término"],["almIni","Saída p/ almoço"],["almFim","Retorno almoço"],["descricao","Serviço"],["profissional","Funcionário"],["empresa","Empresa"],["cliente","Unidade"],["tipo","Cálculo",v=>TIPOS[v]||v],["emergencia","Emergência",v=>v?"sim":"não"],["obs","Obs."],["noAlmoco","Trabalhou no almoço",v=>v?"sim":"não"],["orcId","Orçamento",v=>v?orcNum(v):"—"],["excluido","Excluído",v=>v?"sim":"não"]];
 function difHist(a, b){ a = a||{}; b = b||{}; return CAMPOS.filter(([k])=>JSON.stringify(a[k]??"")!==JSON.stringify(b[k]??"")).map(([k,l,f])=>{ const F = f || (v=>v); return `${l}: ${esc(F(a[k])||"—")} → <b>${esc(F(b[k])||"—")}</b>`; }); }
 async function carregarHist(id){
   const box = $("#f-hist-box"); if(!box) return;
@@ -1513,10 +1514,10 @@ function renderDayRows(){
   box.innerHTML = d.rows.map((r,i)=>`<div class="dayrow" data-r="${i}">
     <span class="num">${i+1}</span>
     <label class="field f-os"><span>Nº da OS</span><input data-f="os" list="os-list" inputmode="numeric" value="${esc(r.os)}" placeholder="Ex.: 2165557"></label>
-    <label class="field f-ini"><span>Início</span><input type="time" data-f="ini" value="${esc(r.ini)}"></label>
-    <label class="field f-fim"><span>Término</span><input type="time" data-f="fim" value="${esc(r.fim)}"></label>
-    <label class="field f-almi"><span>Saída almoço</span><input type="time" data-f="almIni" value="${esc(r.almIni||"")}"></label>
-    <label class="field f-almf"><span>Volta almoço</span><input type="time" data-f="almFim" value="${esc(r.almFim||"")}"></label>
+    <label class="field f-ini"><span>Entrada</span><input type="time" data-f="ini" value="${esc(r.ini)}"></label>
+    <label class="field f-almi"><span>Saída p/ almoço</span><input type="time" data-f="almIni" value="${esc(r.almIni||"")}"></label>
+    <label class="field f-almf"><span>Retorno almoço</span><input type="time" data-f="almFim" value="${esc(r.almFim||"")}"></label>
+    <label class="field f-fim"><span>Saída</span><input type="time" data-f="fim" value="${esc(r.fim)}"></label>
     <button type="button" class="iconbtn" data-act="dayDel" data-r="${i}" aria-label="Remover linha ${i+1}" style="align-self:end">✕</button>
     <label class="field f-desc"><span>Serviço executado</span><input data-f="desc" value="${esc(r.desc)}" placeholder="Descrição da OS"></label>
     <label class="field f-cli"><span>Unidade</span>${unidCampo('data-f="cli"', d.emp, r.cli, d.unid ? `Igual à de cima (${d.unid})` : "Igual à de cima")}</label>
