@@ -110,7 +110,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.06-1";
+const VERSAO = "2026.10.06-2";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -199,8 +199,18 @@ function alertasDinheiro(){
   });
   return out;
 }
-function alertasAcesso(){ if(state.worker) return []; const n = state.perfis.filter(p=>p.papel==="pendente");
-  return n.length ? [{nivel:"warn", txt:`${n.length===1 ? n[0].email+" criou conta e" : n.length+" pessoas criaram conta e"} aguarda${n.length>1?"m":""} sua liberação.`, btn:`<button class="btn sm primary" data-act="irAcessos">Liberar</button>`}] : []; }
+function alertasAcesso(){ return []; } // os pedidos de cadastro aparecem na faixa vermelha do Painel (aprovacoesHtml)
+// "alan.cardoso8714@gmail.com" → "Alan Cardoso"
+const nomeDoEmail = e => String(e||"").split("@")[0].replace(/\d+/g," ").split(/[._\-\s]+/).filter(Boolean).map(w=>w[0].toUpperCase()+w.slice(1).toLowerCase()).join(" ");
+function aprovacoesHtml(){
+  if(state.worker) return ""; const ps = state.perfis.filter(p=>p.papel==="pendente"); if(!ps.length) return "";
+  return `<section class="aprovbox" role="alert" aria-live="polite"><h2>⚠️ ${ps.length===1 ? "1 pedido de cadastro precisa da sua aprovação" : `${ps.length} pedidos de cadastro precisam da sua aprovação`}</h2>
+  ${ps.map(p=>`<div class="aprovcard" data-uid="${esc(p.user_id)}"><div><b>${esc(p.email)}</b><br><small>pediu cadastro ${p.criado_em ? `em ${fdate(String(p.criado_em).slice(0,10))} às ${new Date(p.criado_em).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}` : ""}</small></div>
+    <label class="field"><span>Nome</span><input class="pf-nome" list="pf-profs-p" value="${esc(p.nome || nomeDoEmail(p.email))}"></label>
+    <div class="row aprov-acts"><button type="button" class="btn primary" data-act="perfilLiberar" data-papel="funcionario" data-uid="${esc(p.user_id)}">✓ Aprovar como funcionário</button><button type="button" class="btn" data-act="perfilLiberar" data-papel="dono" data-uid="${esc(p.user_id)}">Aprovar como responsável</button><button type="button" class="btn danger" data-act="perfilBloquear" data-uid="${esc(p.user_id)}">Recusar</button></div></div>`).join("")}
+  <datalist id="pf-profs-p">${profs().map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
+  <p class="aprov-dica">Funcionário: lança só as próprias OS, sem ver valores. Responsável: vê tudo, como você.</p></section>`;
+}
 function alertasHtml(){
   const a = [...alertasAcesso(), ...alertasDinheiro(), ...(typeof alertasEquipe==="function" ? alertasEquipe() : [])]; if(!a.length) return "";
   return `<section class="section"><header><h2>Para fazer hoje</h2><span class="pill ${a.some(x=>x.nivel==="bad")?"bad":"warn"}">${a.length}</span></header>
@@ -492,6 +502,10 @@ async function atualizar(){
 }
 document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) atualizar(); });
 setInterval(atualizar, 300000);
+setInterval(async ()=>{ if(document.hidden || !session || perfil?.papel!=="dono" || !state.ready || state.view!=="painel" || !$("#modal").hidden || document.activeElement?.closest?.(".aprovbox")) return;
+  try{ const {data} = await sb.from("perfis").select("*").order("criado_em"); if(!data) return;
+    const pend = l => l.filter(p=>p.papel==="pendente").map(p=>p.user_id).sort().join();
+    if(pend(data)!==pend(state.perfis)){ state.perfis = data; state.rendered = null; render(); } }catch(e){} }, 60000);
 /* fotos no Storage privado: o id é o caminho do arquivo */
 const assets = {
   async upload(blob, {type}){
@@ -601,7 +615,7 @@ function exampleBanner(){
   if(state.worker) return "";
   const pend = state.perfis.filter(p=>p.papel==="pendente").length;
   const bk = state.cfg.backupBaixadoEm, velho = state.ap.length >= 5 && (!bk || Date.now() - new Date(bk).getTime() > 7*86400000);
-  const aviso = (pend ? `<div class="banner"><span>${pend} pessoa${pend>1?"s":""} criou conta e está aguardando você liberar o acesso.</span><button class="btn sm" data-act="irAcessos">Ver acessos</button></div>` : "")
+  const aviso = (pend && state.view!=="painel" ? `<div class="banner aprov-mini"><span>${pend===1 ? "1 pedido de cadastro aguardando sua aprovação." : `${pend} pedidos de cadastro aguardando sua aprovação.`}</span><button class="btn sm primary" data-act="nav" data-view="painel">Aprovar</button></div>` : "")
     + (velho ? `<div class="banner"><span>${bk ? "Faz mais de uma semana que você não baixa" : "Você ainda não baixou"} uma cópia completa dos dados e fotos. Leva um minuto.</span><button class="btn sm" data-act="irBackup">Fazer backup</button></div>` : "");
   const n = state.ap.filter(x=>x.exemplo).length + state.orc.filter(x=>x.exemplo).length + state.rec.filter(x=>x.exemplo).length;
   if(!n) return aviso;
@@ -979,7 +993,7 @@ function vPainel(){
   const taxa = decididos.length ? Math.round(100*decididos.filter(o=>o.status!=="recusado").length/decididos.length) : null;
   const recent = [...state.ap].sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio)).slice(0,5);
   const gear = `<svg class="gear" viewBox="0 0 100 100" fill="#fff"><path d="M43 2h14l2 12 8 3 10-7 10 10-7 10 3 8 12 2v14l-12 2-3 8 7 10-10 10-10-7-8 3-2 12H43l-2-12-8-3-10 7-10-10 7-10-3-8-12-2V43l12-2 3-8-7-10 10-10 10 7 8-3zM50 32a18 18 0 1 0 0 36 18 18 0 1 0 0-36z"/></svg>`;
-  return `${exampleBanner()}
+  return `${aprovacoesHtml()}${exampleBanner()}
   <div class="pagehead"><div><span class="eyebrow">${WD[new Date().getDay()]}, ${fdate(today())}</span><h1>Painel</h1></div><div class="row">${monthNav()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button></div></div>
   <section class="hero">${gear}
     <div><div class="eyebrow">Total a receber</div><div class="big">${brl(t.horas+t.orc)}</div></div>
@@ -2767,7 +2781,7 @@ const A = {
   orcLancar(b){ const o = state.orc.find(x=>x.id===b.dataset.id); if(!o) return; dayOpen(today(), {orcId:o.id, emp:o.cliente?.nome||""}); },
   authModo(b){ state.auth = b.dataset.m; render(); },
   irAcessos(){ state.view = "ajustes"; state.rendered = null; render(); setTimeout(()=>$("#acessos")?.scrollIntoView({behavior:"smooth"}), 50); },
-  async perfilLiberar(b){ const tr = b.closest("tr"), papel = tr.querySelector(".pf-papel")?.value || "funcionario", nome = (tr.querySelector(".pf-nome")?.value || "").trim(), email = state.perfis.find(p=>p.user_id===b.dataset.uid)?.email || "";
+  async perfilLiberar(b){ const tr = b.closest("tr, .aprovcard"), papel = b.dataset.papel || tr.querySelector(".pf-papel")?.value || "funcionario", nome = (tr.querySelector(".pf-nome")?.value || "").trim(), email = state.perfis.find(p=>p.user_id===b.dataset.uid)?.email || "";
     if(papel==="funcionario" && !nome){ toast("Escreva o nome do funcionário (como aparece nos relatórios)."); tr.querySelector(".pf-nome")?.focus(); return; }
     if(papel==="funcionario" && state.perfis.some(p=>p.user_id!==b.dataset.uid && p.papel==="funcionario" && p.nome===nome)){ toast(`${nome} já está ligado a outro e-mail.`); return; }
     if(papel==="dono" && !b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Confirmar"; toast(`${email} vai ver tudo: valores, financeiro e ajustes. Toque em Confirmar.`); return; }
@@ -2776,11 +2790,11 @@ const A = {
       if(papel==="funcionario" && !profs().includes(nome)){ const c = clone(state.cfg); c.profissionais = [...profs(), nome].join("\n"); await saveCfg(c); state.cfg = deepMerge(DEFAULT_CFG, c); } // entra na lista de funcionários
       const {error} = await sb.rpc("liberar_acesso", {p_uid:b.dataset.uid, p_papel:papel, p_nome:nome}); if(error) throw dbErr(error);
       state.perfis = state.perfis.map(p=>p.user_id===b.dataset.uid ? {...p, papel, nome:nome||null} : p);
-      toast(papel==="dono" ? `${email} agora é responsável e já pode entrar.` : `Acesso liberado para ${nome}. Já pode entrar.`); state.rendered=null; render(); $("#acessos")?.scrollIntoView();
+      toast(papel==="dono" ? `${email} agora é responsável e já pode entrar.` : `Acesso liberado para ${nome}. Já pode entrar.`); state.rendered=null; render(); if(state.view==="ajustes") $("#acessos")?.scrollIntoView();
     }catch(err){ b.disabled = false; toast(writeErr(err)); } },
-  async perfilBloquear(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; }
+  async perfilBloquear(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent = b.closest(".aprovcard") ? "Confirmar recusa" : "Confirmar"; return; }
     const {error} = await sb.from("perfis").update({papel:"bloqueado"}).eq("user_id", b.dataset.uid); if(error){ toast(writeErr(dbErr(error))); return; }
-    state.perfis = state.perfis.map(p=>p.user_id===b.dataset.uid ? {...p, papel:"bloqueado"} : p); toast("Acesso bloqueado."); state.rendered=null; render(); $("#acessos")?.scrollIntoView(); },
+    state.perfis = state.perfis.map(p=>p.user_id===b.dataset.uid ? {...p, papel:"bloqueado"} : p); toast(b.closest(".aprovcard") ? "Pedido de cadastro recusado." : "Acesso bloqueado."); state.rendered=null; render(); if(state.view==="ajustes") $("#acessos")?.scrollIntoView(); },
   async reverificar(){ if(session) await boot(); },
   async sair(b){
     const pend = outbox.lista.length + fotosPend.size;

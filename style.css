@@ -371,3 +371,16 @@ input[type="date"],input[type="time"],input[type="month"]{-webkit-appearance:non
 input[type="date"]::-webkit-date-and-time-value,input[type="time"]::-webkit-date-and-time-value{text-align:left}
 .field{min-width:0}
 .pf-box{display:grid;gap:6px;min-width:0}.pf-box select,.pf-box input{width:100%}
+/* pedidos de cadastro: faixa vermelha no topo do Painel */
+.aprovbox{background:#fdecec;border:2px solid #d23b3b;border-radius:14px;padding:14px;margin:0 0 16px;display:grid;gap:10px;color:#5c1010}
+.aprovbox h2{margin:0;font-size:1.05rem;color:#b3261e}
+.aprovcard{background:#fff;border:1px solid #f1b5b2;border-radius:10px;padding:10px 12px;display:grid;gap:8px;min-width:0;color:#1d1d1d}
+.aprovcard b{overflow-wrap:anywhere}.aprovcard small{color:#6b6b6b}
+.aprov-acts{gap:8px;flex-wrap:wrap}.aprov-acts .btn{min-height:44px}
+.aprov-dica{margin:0;font-size:.82rem;color:#7a2a26}
+@media (prefers-color-scheme:dark){
+  .aprovbox{background:#3a1416;border-color:#e5484d;color:#ffd7d5}.aprovbox h2{color:#ff8a85}
+  .aprovcard{background:#241113;border-color:#7a2a2e;color:#f4e6e6}.aprovcard small{color:#c9a9a8}.aprov-dica{color:#ffb4af}
+}
+.banner.aprov-mini{background:#fdecec;border-color:#d23b3b;color:#8a1c1c}
+@media (prefers-color-scheme:dark){.banner.aprov-mini{background:#3a1416;border-color:#e5484d;color:#ffd7d5}}
