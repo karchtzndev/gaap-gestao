@@ -118,7 +118,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.07-1";
+const VERSAO = "2026.10.07-2";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -149,11 +149,13 @@ function overlaps(list){
 }
 
 /* ---------- descrição para relatórios (emergência + observações) ---------- */
-const MEIOS = ["Ligação","WhatsApp","Presencial","Rádio","Outro"];
+const MEIOS = ["Ligação","WhatsApp","Portal","Presencial","Rádio","Outro"];
 function emergTxt(e){ if(!e.emergencia) return ""; const a = e.acion||{};
   return ["EMERGÊNCIA", a.por?`acionado por ${a.por}`:"", a.as?`às ${a.as}`:"", a.meio?`via ${a.meio}`:"", a.motivo?`(${a.motivo})`:""].filter(Boolean).join(" "); }
+// quem assinou a OS (responsável da unidade)
+function assinOS(e){ const m = Object.values(e.fotoMeta||{}).find(x=>x && x.tipo==="assinatura"); return m ? (m.nome || "responsável") : ""; }
 function descRep(e){ const q = e.equipId && eqDe(e.equipId), pl = q && e.prevId && (q.plano||[]).find(x=>x.id===e.prevId);
-  return [e.descricao||"", almTxt(e), q?`Equip. ${q.tag||""}${pl?` (preventiva: ${pl.atividade})`:""}`:"", emergTxt(e), e.obs?`Obs.: ${e.obs}`:""].filter(Boolean).join(" · "); }
+  return [e.descricao||"", almTxt(e), assinOS(e)?`Assinado por ${assinOS(e)}`:"", q?`Equip. ${q.tag||""}${pl?` (preventiva: ${pl.atividade})`:""}`:"", emergTxt(e), e.obs?`Obs.: ${e.obs}`:""].filter(Boolean).join(" · "); }
 function acionadores(){ const m = {}; state.ap.forEach(e=>{ const p = e.acion?.por; if(p) m[p] = (m[p]||0)+1; }); return Object.keys(m).sort((a,b)=>m[b]-m[a]).slice(0,30); }
 /* ---------- ficha da contratante ---------- */
 const ficha = emp => ((state.cfg.contratantes||{})[emp]) || {};
@@ -285,7 +287,7 @@ async function recarregarDoc(col, id){
   const k = KEY[col];
   if(!data || (col==="apontamentos" && data.data?.excluido)) setList(k, state[k].filter(x=>x.id!==id)); else upsertLocal(k, doRow(data));
 }
-const setList = (k, list) => { state[k] = list; if(k==="ap") mmCache.ref = null; try{ snap.agendar(); }catch(e){} };
+const setList = (k, list) => { state[k] = list; if(k==="ap") mmCache.ref = null; try{ snap.agendar(); }catch(e){} try{ portalAgendar(); }catch(e){} };
 function upsertLocal(k, row){ setList(k, [...state[k].filter(x=>x.id!==row.id), row]); }
 async function save(col, obj){
   const id = obj.id || uid(), versao = obj._v || null; const data = semV(obj); delete data._pend;
@@ -480,7 +482,7 @@ async function boot(){
     if(state.worker) state.view = "worker"; else if(state.view==="worker") state.view = "painel";
     if(outbox.lista.length || fotosPend.size) await sincronizar();
     await carregar(); state.offline = false;
-    pushEstado().catch(()=>{});
+    pushEstado().catch(()=>{}); setTimeout(()=>{ carregarChamados(); portalAgendar(); }, 1500);
   }catch(err){
     const s = (err && err.rede) || ehRede(err) ? await snap.ler(session.user.id) : null;
     if(s && s.perfil){ snap.aplicar(s); state.offline = true; reaplicarFila(); toast("Sem internet: mostrando os dados salvos neste aparelho. O que você lançar será enviado quando a conexão voltar."); }
@@ -668,7 +670,7 @@ async function dataDaFoto(file){
   try{ if(!window.exifr) await loadScript(EXIFR); const x = await window.exifr.parse(file, ["DateTimeOriginal","CreateDate"]); const d = x && (x.DateTimeOriginal || x.CreateDate); if(d instanceof Date && !isNaN(d)) return d; }catch(err){}
   return new Date(file.lastModified || Date.now());
 }
-const TIPO_FOTO = {antes:"ANTES", durante:"", depois:"DEPOIS"};
+const TIPO_FOTO = {antes:"ANTES", durante:"", depois:"DEPOIS", assinatura:"ASSINATURA"};
 async function compressImage(file, stamp){
   try{
     const url = URL.createObjectURL(file);
@@ -703,8 +705,8 @@ async function uploadPhotosInt(files, ctx){
     try{ toast(`Enviando foto ${ids.length+1} de ${files.length}…`);
       let stamp = "", em = null;
       if(ctx){ em = await dataDaFoto(f); const dt = `${em.toLocaleDateString("pt-BR")} ${pad(em.getHours())}:${pad(em.getMinutes())}`;
-        if(state.cfg.carimbo!==false) stamp = [TIPO_FOTO[ctx.tipo]||"", ctx.os?`OS ${ctx.os}`:"", ctx.unid||"", dt].filter(Boolean).join(" · "); }
-      const b = await compressImage(f, stamp); const r = await assets.upload(b, {type: ok.includes(b.type) ? b.type : "image/jpeg"}); assetUrls[r.id] = r.url; ids.push(r.id); if(ctx) (state.fotoMetaNovo ||= {})[r.id] = {tipo:ctx.tipo||"durante", em: em ? em.toISOString() : ""}; }
+        if(state.cfg.carimbo!==false && ctx.tipo!=="assinatura") stamp = [TIPO_FOTO[ctx.tipo]||"", ctx.os?`OS ${ctx.os}`:"", ctx.unid||"", dt].filter(Boolean).join(" · "); }
+      const b = await compressImage(f, stamp); const r = await assets.upload(b, {type: ok.includes(b.type) ? b.type : "image/jpeg"}); assetUrls[r.id] = r.url; ids.push(r.id); if(ctx) (state.fotoMetaNovo ||= {})[r.id] = {tipo:ctx.tipo||"durante", em: em ? em.toISOString() : "", ...(ctx.nome?{nome:ctx.nome}:{})}; }
     catch(err){ toast(photoErr(err)); break; }
   }
   if(ids.length) toast(`${ids.length} foto${ids.length>1?"s":""} adicionada${ids.length>1?"s":""}`);
@@ -721,6 +723,74 @@ document.addEventListener("change", async e=>{
   if(/^f-foto/.test(t.id) && t.files.length){ const ids = await uploadPhotos([...t.files], {tipo:t.dataset.tipo||"durante", os:$("#f-os")?.value.trim(), unid:$("#f-cli")?.value.trim()}); state.apFotos = [...(state.apFotos||[]), ...ids]; const box=$("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); t.value=""; }
   if(t.dataset && t.dataset.fotoRow!=null && t.files.length){ const i=+t.dataset.fotoRow, r=state.day.rows[i]; const ids = await uploadPhotos([...t.files], {tipo:t.dataset.tipo||"durante", os:r.os, unid:r.cli||state.day.unid}); r.fotoMeta = {...(r.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; r.fotos = [...(r.fotos||[]), ...ids]; renderDayRows(); updateDay(); const lb=document.querySelector(`label[for="d-foto-${i}"]`); if(lb) lb.textContent = `Fotos (${r.fotos.length})`; t.value=""; }
 });
+/* ---------- assinatura do responsável da unidade (desenhada com o dedo) ---------- */
+function assinPad(row){
+  document.getElementById("assinpad")?.remove();
+  const el = document.createElement("div"); el.id = "assinpad"; el.className = "assinpad"; el.dataset.row = row==null ? "" : row;
+  el.innerHTML = `<div class="assinbox"><h3 style="margin:0">Assinatura do responsável da unidade</h3>
+    <div class="grid2"><label class="field"><span>Nome</span><input id="as-nome" maxlength="80" placeholder="Quem está assinando"></label><label class="field"><span>Cargo (opcional)</span><input id="as-cargo" maxlength="40" placeholder="Ex.: Supervisor"></label></div>
+    <canvas id="as-cv" width="900" height="360" aria-label="Área para assinar"></canvas><p class="muted" style="margin:0;font-size:.85rem">Assine com o dedo no quadro acima. Confirmo que o serviço foi realizado.</p>
+    <div class="row" style="justify-content:space-between"><button type="button" class="btn" data-act="assinLimpar">Limpar</button><span class="row"><button type="button" class="btn" data-act="assinFechar">Cancelar</button><button type="button" class="btn primary" data-act="assinOk">Confirmar assinatura</button></span></div></div>`;
+  document.body.appendChild(el);
+  const cv = el.querySelector("canvas"), g = cv.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0,0,cv.width,cv.height); g.lineWidth = 4; g.lineCap = g.lineJoin = "round"; g.strokeStyle = "#0d1f6b";
+  let des = false; state.assinTracos = 0;
+  const pt = ev => { const r = cv.getBoundingClientRect(); return [(ev.clientX-r.left)*cv.width/r.width, (ev.clientY-r.top)*cv.height/r.height]; };
+  cv.addEventListener("pointerdown", ev=>{ des = true; cv.setPointerCapture(ev.pointerId); const [x,y] = pt(ev); g.beginPath(); g.moveTo(x,y); ev.preventDefault(); });
+  cv.addEventListener("pointermove", ev=>{ if(!des) return; const [x,y] = pt(ev); g.lineTo(x,y); g.stroke(); state.assinTracos++; ev.preventDefault(); });
+  ["pointerup","pointercancel","pointerleave"].forEach(t=>cv.addEventListener(t, ()=>{ des = false; }));
+  setTimeout(()=>$("#as-nome")?.focus(), 50);
+}
+async function assinConfirmar(){
+  const el = $("#assinpad"); if(!el) return; const nome = [$("#as-nome").value.trim(), $("#as-cargo").value.trim()].filter(Boolean).join(" - ");
+  if(!$("#as-nome").value.trim()){ toast("Informe o nome de quem assina."); return; } if((state.assinTracos||0) < 8){ toast("Faça a assinatura no quadro."); return; }
+  const cv = $("#as-cv"), g = cv.getContext("2d"); g.fillStyle = "#555"; g.font = "22px sans-serif"; g.fillText(`${nome} · ${new Date().toLocaleString("pt-BR")}`, 16, cv.height-14);
+  const blob = await new Promise(ok=>cv.toBlob(ok, "image/png")), file = new File([blob], "assinatura.png", {type:"image/png"}), row = el.dataset.row;
+  el.remove();
+  if(row!==""){ const r = state.day.rows[+row]; const ids = await uploadPhotos([file], {tipo:"assinatura", os:r.os, unid:r.cli||state.day.unid, nome});
+    r.fotoMeta = {...(r.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; r.fotos = [...(r.fotos||[]), ...ids]; renderDayRows(); updateDay(); }
+  else { const ids = await uploadPhotos([file], {tipo:"assinatura", os:$("#f-os")?.value.trim(), unid:$("#f-cli")?.value.trim(), nome}); state.apFotos = [...(state.apFotos||[]), ...ids]; const box = $("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); state.modalDirty = true; }
+}
+/* ---------- portal da contratante: retrato da medição publicado para o link só de leitura ---------- */
+const portalEmps = () => state.worker ? [] : empresasCfg().filter(n=>ficha(n).portal);
+function portalSnap(emp){
+  const med = medicao(emp, 0) || [ym(today())+"-01", today()], [de, ate] = med, k = chaveEmp(emp), F = ficha(emp), r2 = v => Math.round(v*100)/100;
+  const rows = state.ap.filter(e=>!e.orcId && e.data>=de && e.data<=ate && chaveEmp(empOf(e))===k && !e.exemplo).sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio));
+  const fe = rows.filter(e=>!e.andamento), t = sumCalc(fe), uni = {};
+  fe.forEach(e=>{ const u = e.cliente||""; const c = calc(e); (uni[u] ||= {unid:u, os:0, total:0, valor:0}); uni[u].os++; uni[u].total += c.total/60; uni[u].valor += c.valor; });
+  const fechs = state.fech.filter(f=>chaveEmp(f.empresa||"")===k).sort((a,b)=>(b.ate||"").localeCompare(a.ate||"")).slice(0,12);
+  return {de, ate, valores: F.portalValores!==false,
+    tot:{os:fe.length, n:r2(t.n/60), e50:r2(t.e50/60), e100:r2(t.e100/60), total:r2(t.total/60), valor:F.portalValores!==false ? r2(t.valor) : 0, emerg:fe.filter(e=>e.emergencia).length, assin:fe.filter(assinOS).length},
+    unidades: Object.values(uni).sort((a,b)=>b.total-a.total).map(u=>({unid:u.unid, os:u.os, total:r2(u.total), valor:F.portalValores!==false ? r2(u.valor) : 0})),
+    os: rows.slice(0,400).map(e=>{ const c = calc(e), q = e.equipId && eqDe(e.equipId); return {data:e.data, os:e.os||"", unid:e.cliente||"", desc:e.descricao||"", prof:e.profissional||"", ini:e.inicio, fim:e.fim||"", alm:e.almIni&&e.almFim?`${e.almIni}–${e.almFim}`:"", horas:e.andamento?0:r2(c.total/60), emerg:!!e.emergencia, andamento:!!e.andamento, assin:assinOS(e), equip:q?`${q.tag||""} ${q.nome||""}`.trim():""}; }),
+    fechs: fechs.map(f=>({numero:f.numero, de:f.de, ate:f.ate, prof:f.profissional||"", horas:r2((+f.horas||0)/60), valor:F.portalValores!==false ? +f.valor||0 : 0, pago:fechSaldo(f)<=0.005}))};
+}
+let portalT = null;
+function portalAgendar(){ if(!state.ready || state.worker || !portalEmps().length) return; clearTimeout(portalT); portalT = setTimeout(portalPublicar, 4000); }
+async function portalPublicar(){ for(const emp of portalEmps()){ try{ await sb.rpc("publicar_portal", {p_emp:emp, p_snap:portalSnap(emp)}); }catch(e){} } }
+const portalUrl = t => `${location.origin}/portal#t=${t}`;
+async function portalModal(emp){
+  const F = ficha(emp); let tok = "";
+  if(F.portal){ const {data} = await sb.rpc("criar_portal", {p_emp:emp}); tok = data || ""; }
+  openModal(`<header><h2>Portal da ${esc(emp)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <div class="form"><p class="muted" style="margin:0">Um link só de leitura para a ${esc(emp)} acompanhar a medição ao vivo (OS, horas por unidade, assinaturas) e <b>abrir chamados de emergência</b> que chegam na hora no celular da equipe.</p>
+  ${tok?`<label class="field"><span>Link do portal</span><input readonly value="${esc(portalUrl(tok))}" id="pt-link"></label>
+    <label class="check"><input type="checkbox" id="pt-val" ${F.portalValores!==false?"checked":""} data-emp="${esc(emp)}"> Mostrar valores (R$) no portal</label>
+    <div class="row"><button class="btn primary" data-act="portalZap" data-emp="${esc(emp)}">Enviar pelo WhatsApp</button><button class="btn" data-act="portalCopiar">Copiar link</button><a class="btn" href="${esc(portalUrl(tok))}" target="_blank" rel="noopener">Abrir</a></div>
+    <div class="row"><button class="btn sm" data-act="portalTrocar" data-emp="${esc(emp)}">Gerar novo link (o antigo para de funcionar)</button><button class="btn sm danger" data-act="portalDesligar" data-emp="${esc(emp)}">Desligar portal</button></div>`
+  :`<div class="row"><button class="btn primary" data-act="portalLigar" data-emp="${esc(emp)}">Ligar portal da ${esc(emp)}</button></div>`}</div>`);
+}
+async function portalSalvarFicha(emp, mud){ const c = clone(state.cfg); c.contratantes = {...(c.contratantes||{})}; c.contratantes[emp] = {...(c.contratantes[emp]||{}), ...mud}; await saveCfg(c); state.cfg = deepMerge(DEFAULT_CFG, c); }
+/* ---------- chamados de emergência ---------- */
+async function carregarChamados(){ if(!session || !state.ready) return; try{ const {data} = await sb.from("chamados").select("*").order("criado_em", {ascending:false}).limit(100); if(data){ const mudou = JSON.stringify(data.filter(c=>c.status==="aberto").map(c=>c.id)) !== JSON.stringify((state.chamados||[]).filter(c=>c.status==="aberto").map(c=>c.id)); state.chamados = data; if(mudou && $("#modal").hidden){ state.rendered = null; render(); } } }catch(e){} }
+setInterval(()=>{ if(!document.hidden) carregarChamados(); }, 60000);
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) carregarChamados(); });
+function chamadosHtml(){
+  const ab = (state.chamados||[]).filter(c=>c.status==="aberto"); if(!ab.length) return "";
+  const min = c => Math.max(0, Math.round((Date.now()-new Date(c.criado_em))/60000));
+  return `<section class="aprovbox chamadobox" role="alert"><h2>🚨 ${ab.length===1?"Chamado de emergência aberto":`${ab.length} chamados de emergência abertos`}</h2>
+  ${ab.map(c=>{ const d = c.data||{}; return `<div class="aprovcard"><div><b>${esc(c.empresa)}${d.unidade?` · ${esc(d.unidade)}`:""}</b>${d.parada?' <span class="pill bad">máquina parada</span>':""}<br>${esc(d.descricao||"")}${d.equipamento?`<br><small>Equipamento: ${esc(d.equipamento)}</small>`:""}<br><small>${d.nome?`${esc(d.nome)} `:""}${d.fone?`· <a href="tel:${esc(d.fone)}">${esc(d.fone)}</a> `:""}· há ${min(c)} min</small></div>
+    <div class="row aprov-acts"><button class="btn primary" data-act="chamadoAtender" data-id="${esc(c.id)}">▶ Atender agora</button>${state.worker?"":`<button class="btn" data-act="chamadoCancelar" data-id="${esc(c.id)}">Cancelar</button>`}</div></div>`; }).join("")}</section>`;
+}
 function apItem(e, showDate, bad){
   const c = calc(e), lk = lockedE(e), nf = (e.fotos||[]).length;
   return `<button class="item" data-act="editAp" data-id="${esc(e.id)}">
@@ -863,7 +933,7 @@ function vWorker(){
   if(!state.pub || !state.pub.cfg) return `<div class="pagehead"><div><span class="eyebrow">Acesso do funcionário</span><h1>Aguardando liberação</h1><p class="muted">Não consegui carregar a configuração. Verifique a conexão e toque em Atualizar.</p><button class="btn primary" data-act="reverificar">Atualizar</button><p></p></div></div>`;
   const mine = state.ap.filter(e=>e.profissional===me), list = mine.filter(e=>ym(e.data)===state.month).sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio));
   const c = sumCalc(list), byDay = {}; list.forEach(e=>(byDay[e.data] ||= []).push(e));
-  return `${pushConvite()}<div class="pagehead"><div><span class="eyebrow">Olá, ${esc(me)}</span><h1>Minhas OS</h1><p class="muted">Lance cada OS com o horário de início e de término.</p></div>
+  return `${chamadosHtml()}${pushConvite()}<div class="pagehead"><div><span class="eyebrow">Olá, ${esc(me)}</span><h1>Minhas OS</h1><p class="muted">Lance cada OS com o horário de início e de término.</p></div>
     <div class="row">${monthNav()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button><button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
   ${escalaHoje()}
   ${confHtml(conferencia(ymd(addDays(parseYmd(today()),-7)), today(), me), "Faltou lançar?", 5)}
@@ -914,6 +984,9 @@ function vAjuda(){
     T("Valores, reajuste e adicional noturno", ["Ajustes → <b>Valores</b>: valor da hora por empresa, extra, domingo/feriado e adicional noturno.", "<b>Reajustar</b>: novo valor com data de início (sugere pelo IPCA) e carta em PDF."]),
     T("Equipe: escala, acerto e documentos", ["Mais → <b>Escala da semana</b>: unidade de cada um por dia.", "Mais → <b>Equipe</b>: quanto pagar a cada um, vales e recibo; documentos com validade (ASO, NR).", "Mais → <b>Quem fez o quê</b>: todas as alterações e quem fez."]),
     T("Fechamento por funcionário", ["Ao fechar o período, o app cria <b>um fechamento para cada funcionário</b> (nunca mistura dois).", "Cada PDF sai com o nome do funcionário e da empresa no início do arquivo.", "<b>Todos em um PDF</b> junta tudo num arquivo só, com uma capa de resumo.", "No fechamento, <b>Acerto do funcionário</b> abre quanto pagar a ele naquele período."]),
+    T("Portal da Brejeiro e chamados de emergência", ["Ajustes → <b>Contratantes</b> → <b>🌐 Portal Brejeiro</b> → Ligar portal → <b>Enviar pelo WhatsApp</b>.", "Pelo link, a Brejeiro acompanha ao vivo as OS, as horas por unidade e as assinaturas (os valores podem ser escondidos).", "Lá ela também abre <b>chamado de emergência</b>: o celular de toda a equipe avisa na hora e aparece uma faixa vermelha no app.", "Toque em <b>▶ Atender agora</b>: o cronômetro começa como emergência e a Brejeiro vê no portal quem atendeu e em quanto tempo."]),
+    T("Assinatura do responsável da unidade", ["Ao terminar a OS, toque em <b>✍ Assinatura</b> (na linha da OS ou ao editar).", "O responsável escreve o nome e assina com o dedo.", "A assinatura sai no PDF de fotos, no portal e nos indicadores."]),
+    T("Indicadores do mês para a Brejeiro", ["Financeiro → no fechamento → <b>📊 Indicadores do mês (PDF)</b>.", "Mostra OS atendidas, horas por unidade, emergências e tempo de resposta, preventivas e % de OS assinadas. Mande junto com o fechamento para a gerência."]),
     T("Documentação para a Brejeiro (integração)", ["Mais → <b>Equipe</b> → Documentação exigida · Brejeiro: a lista oficial deles, da empresa e de cada funcionário.", "Toque em <b>+ incluir</b> em cada item e anexe o PDF ou a foto. FGTS e DARF são mensais: renove todo mês.", "Antes de começar um serviço (72 h antes), toque em <b>Montar pacote (.zip)</b>, marque quem vai e depois em <b>E-mail para a integração</b>; anexe o .zip no e-mail.", "Agende a integração de segurança com 24 h de antecedência (terças e quintas, 07h30)."]),
     T("Banco de horas", ["Ajustes → <b>Valores</b> → marque <b>extras viram folga</b> no funcionário.", "As extras dele passam a ir para o banco (não entram no acerto em dinheiro).", "Mais → Equipe → <b>Folga</b> (desconta horas) ou <b>Pagar horas do banco</b>."]),
     T("Lucro e documentos por funcionário", ["Mais → <b>Equipe</b> → escolha o período: aparece faturado, custo, lucro e margem de cada um.", "Na tabela de documentos, vermelho é vencido e amarelo vence em 30 dias. Toque em <b>+ incluir</b> para cadastrar."]),
@@ -1064,13 +1137,29 @@ const docOk = (tipo, tit) => { const a = docAtual(tipo, tit); return !!a && a.st
 function exigHtml(ps){
   return empresasCfg().filter(exigencias).map(emp=>{ const E = exigencias(emp), fe = E.empresa.map(x=>x[0]), ff = E.funcionario.map(x=>x[0]);
     const okE = fe.filter(t=>docOk(t,"Empresa")).length, okF = ps.map(n=>ff.filter(t=>docOk(t,n)).length);
-    return `<section class="section" id="exig-${slug(emp)}"><header><h2>Documentação exigida · ${esc(emp)}</h2><div class="row"><button class="btn sm primary" data-act="exigZip" data-emp="${esc(emp)}">Montar pacote (.zip)</button><button class="btn sm" data-act="exigEmail" data-emp="${esc(emp)}">E-mail para a integração</button></div></header>
+    return `<section class="section" id="exig-${slug(emp)}"><header><h2>Documentação exigida · ${esc(emp)}</h2><div class="row"><button class="btn sm primary" data-act="exigZip" data-emp="${esc(emp)}">Montar pacote (.zip)</button><button class="btn sm" data-act="exigEmail" data-emp="${esc(emp)}">E-mail para a integração</button><button class="btn sm" data-act="exigDeclaracao" data-emp="${esc(emp)}">Declaração de regularidade (PDF)</button></div></header>
+    ${okE===fe.length && okF.every(v=>v===ff.length) && ps.length?`<div class="banner" style="border-color:var(--good)"><span>✅ <b>Documentação 100% em dia</b>: empresa e ${ps.length} funcionário(s). O selo sai na declaração dentro do pacote.</span></div>`:""}
     <p class="muted" style="margin:0 0 8px">Enviar para <b>${esc(E.email||"")}</b> com pelo menos <b>${E.antecedencia||72} h</b> de antecedência do início do serviço.${E.fones?` Dúvidas: ${esc(E.fones)}.`:""} FGTS e DARF valem só pela última competência: renove todo mês.</p>
     <h3 style="margin:6px 0">Da empresa <span class="pill ${okE===fe.length?"good":"warn"}">${okE}/${fe.length}</span></h3>
     <div class="list">${fe.map(t=>`<div class="item" style="cursor:default"><span>${esc(t)}${DOC_MENSAL.has(t)?' <small class="muted">(mensal)</small>':""}</span><span></span><span>${docCel(t,"Empresa")}</span></div>`).join("")}</div>
     ${ps.length?`<h3 style="margin:12px 0 6px">Dos funcionários</h3><div class="tablewrap"><table class="docmat"><thead><tr><th>Funcionário</th><th>Completo</th>${ff.map(t=>`<th>${esc(t)}</th>`).join("")}</tr></thead>
     <tbody>${ps.map((n,i)=>`<tr><td><b>${esc(n)}</b></td><td><span class="pill ${okF[i]===ff.length?"good":"warn"}">${okF[i]}/${ff.length}</span></td>${ff.map(t=>`<td>${docCel(t,n)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
     <p class="muted" style="margin:6px 0 0">A integração de segurança é obrigatória para todos: agende com 24 h de antecedência (terças e quintas, chegar entre 07h30 e 08h00 no Departamento de Segurança).</p>`:""}</section>`; }).join("");
+}
+async function declaracaoPdf(emp, quem){
+  const E = exigencias(emp); if(!E) return null; const doc = pdfDoc(); if(!doc) return null;
+  const itens = [...E.empresa.map(([t])=>[t,"Empresa"]), ...quem.flatMap(n=>E.funcionario.map(([t])=>[t,n]))];
+  const linhas = itens.map(([t,n])=>{ const a = docAtual(t,n); const ok = !!a && a.st[0]!=="bad"; return {ok, row:[n, t, a ? (a.x.validade ? fdate(a.x.validade) : "sem validade") : "-", !a ? "FALTA" : a.st[0]==="bad" ? "VENCIDO" : a.st[0]==="warn" ? "VENCE EM BREVE" : "EM DIA"]}; });
+  const tudo = linhas.every(l=>l.ok);
+  let y = pdfHeader(doc, "DECLARAÇÃO DE REGULARIDADE", [`Documentação para ${emp}`, `Emitida em ${fdate(today())}`]);
+  if(tudo){ const W = pw(doc); doc.setDrawColor(...GREEN); doc.setLineWidth(1.2); doc.roundedRect(W/2-55, y, 110, 22, 4, 4); doc.setTextColor(...GREEN); doc.setFont("helvetica","bold"); doc.setFontSize(15); doc.text("DOCUMENTAÇÃO 100% EM DIA", W/2, y+10, {align:"center"}); doc.setFontSize(8.5); doc.setFont("helvetica","normal"); doc.text(`${quem.length} colaborador(es) · ${linhas.length} documentos conferidos`, W/2, y+17, {align:"center"}); y += 30; }
+  else { doc.setTextColor(180,40,30); doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.text(`Pendências: ${linhas.filter(l=>!l.ok).length} documento(s)`, 14, y+4); y += 10; }
+  doc.setTextColor(...INK); doc.setFont("helvetica","normal"); doc.setFontSize(9.5);
+  doc.splitTextToSize(`${state.cfg.empresa.nome}${state.cfg.empresa.cnpj?`, CNPJ ${state.cfg.empresa.cnpj}`:""}, declara que a documentação abaixo, exigida pela ${emp} para a realização de serviços terceirizados, foi conferida nesta data, com a situação indicada.`, pw(doc)-28).forEach(l=>{ doc.text(l, 14, y); y += 5; });
+  doc.autoTable({startY:y+2, theme:"grid", margin:{left:14, right:14}, head:[["De quem","Documento","Validade","Situação"]], body:linhas.map(l=>l.row), styles:{fontSize:8.5, cellPadding:1.4, textColor:INK}, headStyles:{fillColor:GREEN},
+    didParseCell:d=>{ if(d.section==="body" && d.column.index===3){ const v = d.cell.raw; d.cell.styles.fontStyle = "bold"; d.cell.styles.textColor = v==="EM DIA" ? GREEN : v==="VENCE EM BREVE" ? [180,120,20] : [180,40,30]; } }});
+  signature(doc, doc.lastAutoTable.finalY + 16, state.cfg.empresa.nome, ""); pdfFooter(doc);
+  return {nome:`declaracao-regularidade-${slug(emp)}-${today()}.pdf`, blob:doc.output("blob"), tudo};
 }
 async function exigZip(emp, quem){
   const E = exigencias(emp); if(!E) return; if(!window.JSZip) await loadScript(JSZIP);
@@ -1081,6 +1170,7 @@ async function exigZip(emp, quem){
     const {data, error} = await sb.storage.from("documentos").download(a.x.arquivo); if(error || !data){ falta.push(`${tit} - ${t} (não consegui baixar)`); continue; }
     const ext = a.x.arquivo.split(".").pop(), pasta = tit==="Empresa" ? "1 - Empresa" : `2 - Funcionarios/${slug(tit)}`;
     zip.file(`${pasta}/${slug(t)}.${ext}`, data); }
+  const dec = await declaracaoPdf(emp, quem); if(dec) zip.file(`0 - ${dec.nome}`, dec.blob);
   zip.file("LEIA-ME.txt", `Documentação ${state.cfg.empresa.nome} para ${emp}\r\nEnviar para: ${E.email}\r\nFuncionários: ${quem.join(", ")}\r\n\r\n${falta.length?`FALTANDO (${falta.length}):\r\n${falta.join("\r\n")}`:"Documentação completa."}\r\n`);
   const blob = await zip.generateAsync({type:"blob"});
   await offerFile(`documentacao-${slug(state.cfg.empresa.nome||"gaap")}-${slug(emp)}-${today()}.zip`, blob);
@@ -1194,7 +1284,7 @@ function vPainel(){
   const taxa = decididos.length ? Math.round(100*decididos.filter(o=>o.status!=="recusado").length/decididos.length) : null;
   const recent = [...state.ap].sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio)).slice(0,5);
   const gear = `<svg class="gear" viewBox="0 0 100 100" fill="#fff"><path d="M43 2h14l2 12 8 3 10-7 10 10-7 10 3 8 12 2v14l-12 2-3 8 7 10-10 10-10-7-8 3-2 12H43l-2-12-8-3-10 7-10-10 7-10-3-8-12-2V43l12-2 3-8-7-10 10-10 10 7 8-3zM50 32a18 18 0 1 0 0 36 18 18 0 1 0 0-36z"/></svg>`;
-  return `${aprovacoesHtml()}${pushConvite()}${exampleBanner()}
+  return `${chamadosHtml()}${aprovacoesHtml()}${pushConvite()}${exampleBanner()}
   <div class="pagehead"><div><span class="eyebrow">${WD[new Date().getDay()]}, ${fdate(today())}</span><h1>Painel</h1></div><div class="row">${monthNav()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button></div></div>
   <section class="hero">${gear}
     <div><div class="eyebrow">Total a receber</div><div class="big">${brl(t.horas+t.orc)}</div></div>
@@ -1384,7 +1474,7 @@ function apForm(e){
       <datalist id="acion-list">${acionadores().map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
     </div>
     <label class="field"><span>Observações</span><textarea id="f-obs" rows="2" placeholder="Peças trocadas, pendências, quem solicitou…">${esc(e.obs||"")}</textarea></label>
-    ${assets?`<div class="field"><span>Fotos do serviço</span><div class="thumbs" id="f-thumbs">${thumbs(state.apFotos, true)}</div><div class="row"><label class="btn sm" for="f-foto-antes">+ Antes</label><label class="btn sm" for="f-foto">+ Durante</label><label class="btn sm" for="f-foto-depois">+ Depois</label>
+    ${assets?`<div class="field"><span>Fotos do serviço</span><div class="thumbs" id="f-thumbs">${thumbs(state.apFotos, true)}</div><div class="row"><label class="btn sm" for="f-foto-antes">+ Antes</label><label class="btn sm" for="f-foto">+ Durante</label><label class="btn sm" for="f-foto-depois">+ Depois</label><button type="button" class="btn sm" data-act="assinar">✍ Assinatura do responsável</button>
       <input type="file" id="f-foto-antes" data-tipo="antes" accept="image/*" multiple hidden><input type="file" id="f-foto" data-tipo="durante" accept="image/*" multiple hidden><input type="file" id="f-foto-depois" data-tipo="depois" accept="image/*" multiple hidden></div></div>`:""}
     <div id="f-prev" class="preview"></div>
     ${!isNew && !state.worker?`<details class="fichabox" id="f-hist" data-id="${esc(e.id)}"><summary>Histórico de alterações</summary><div class="muted" id="f-hist-box">Carregando…</div></details>`:""}
@@ -1529,7 +1619,7 @@ function renderDayRows(){
       <label class="field"><span>Acionado às</span><input type="time" data-f="acAs" value="${esc(r.acAs||"")}"></label>
       <label class="field"><span>Como</span><select data-f="acMeio"><option value="">—</option>${MEIOS.map(m=>`<option ${r.acMeio===m?"selected":""}>${m}</option>`).join("")}</select></label>
       <label class="field"><span>Motivo / equipamento</span><input data-f="acMot" value="${esc(r.acMot||"")}" placeholder="Ex.: elevador 02 parado"></label></div>`:""}
-    ${assets?`<span class="fotos"><span class="muted" style="font-size:.8rem">Fotos:</span>${["antes","durante","depois"].map(tp=>`<label class="btn sm" for="d-foto-${i}-${tp}">${tp[0].toUpperCase()+tp.slice(1)}</label><input type="file" id="d-foto-${i}-${tp}" data-foto-row="${i}" data-tipo="${tp}" accept="image/*" multiple hidden>`).join("")}${(r.fotos||[]).length?`<span class="thumbs mini">${thumbs(r.fotos,false)}</span>`:""}</span>`:""}
+    ${assets?`<span class="fotos"><span class="muted" style="font-size:.8rem">Fotos:</span>${["antes","durante","depois"].map(tp=>`<label class="btn sm" for="d-foto-${i}-${tp}">${tp[0].toUpperCase()+tp.slice(1)}</label><input type="file" id="d-foto-${i}-${tp}" data-foto-row="${i}" data-tipo="${tp}" accept="image/*" multiple hidden>`).join("")}<button type="button" class="btn sm" data-act="assinar" data-row="${i}">✍ Assinatura</button>${(r.fotos||[]).length?`<span class="thumbs mini">${thumbs(r.fotos,false)}</span>`:""}</span>`:""}
     <div class="info" id="d-info-${i}"></div>
   </div>`).join("");
 }
@@ -1991,11 +2081,11 @@ function cronoForm(pre={}){
     <p class="muted" style="margin:0">O início fica marcado agora (${nowHM()}). Quando terminar, toque em <b>Encerrar</b> na faixa do topo${pre.troca?"":" ou em <b>Trocar de OS</b> para passar direto para a próxima"}.</p>
     <div class="grid2"><label class="field"><span>Nº da OS</span><input id="cr-os" list="os-list" inputmode="numeric" placeholder="Ex.: 2165557"></label>
     <label class="field"><span>Unidade</span>${unidCampo('id="cr-unid"', pre.emp||lastEmp(), pre.unid, "Selecione a unidade")}</label></div>
-    <label class="field"><span>Serviço</span><input id="cr-desc" placeholder="Pode completar depois"></label>
+    <label class="field"><span>Serviço</span><input id="cr-desc" placeholder="Pode completar depois" value="${esc(pre.desc||"")}"></label>
     ${state.worker?"":`<label class="field"><span>Empresa</span><input id="cr-emp" list="emp-list" value="${esc(pre.emp||lastEmp())}"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>`}
     ${ps.length && !state.worker?`<div class="field"><span>Quem está na OS</span><div class="filters" style="margin:0">${ps.map(n=>`<label class="chipcheck"><input type="checkbox" name="cr-prof" value="${esc(n)}" ${quem.includes(n)?"checked":""}><span>${esc(n)}</span></label>`).join("")}</div></div>`:""}
     <label class="check"><input type="checkbox" id="cr-emerg" ${pre.emerg?"checked":""}> Chamado de emergência</label>
-    <div class="grid2 emergbox" id="cr-acion" ${pre.emerg?"":"hidden"}><label class="field"><span>Quem acionou</span><input id="cr-ac-por" list="acion-list"></label><label class="field"><span>Como</span><select id="cr-ac-meio"><option value="">—</option>${MEIOS.map(m=>`<option>${m}</option>`).join("")}</select></label><label class="field" style="grid-column:1/-1"><span>Motivo / equipamento</span><input id="cr-ac-mot"></label></div>
+    <div class="grid2 emergbox" id="cr-acion" ${pre.emerg?"":"hidden"}><label class="field"><span>Quem acionou</span><input id="cr-ac-por" list="acion-list" value="${esc(pre.acPor||"")}"></label><label class="field"><span>Como</span><select id="cr-ac-meio"><option value="">—</option>${MEIOS.map(m=>`<option ${pre.acMeio===m?"selected":""}>${m}</option>`).join("")}</select></label><label class="field" style="grid-column:1/-1"><span>Motivo / equipamento</span><input id="cr-ac-mot"></label></div>
     <datalist id="acion-list">${acionadores().map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
     <datalist id="os-list">${Object.entries(used).slice(0,80).map(([o,ds])=>`<option value="${esc(o)}">${esc(ds)}</option>`).join("")}</datalist>
     <footer><button type="button" class="btn" data-act="closeModal">Cancelar</button><button class="btn primary" type="submit">▶ Iniciar agora</button></footer>
@@ -2022,13 +2112,14 @@ async function submitCrono(){
   const agora = nowHM(), data = today(), lk = lockOf(data, emp); if(lk){ toast(lockMsg(lk)); return; }
   const em = $("#cr-emerg").checked;
   const base = {...(state.worker ? {} : rateFor(emp, data)), data, inicio:agora, fim:"", andamento:true, tipo:"auto", os, descricao:$("#cr-desc").value.trim(), cliente:$("#cr-unid").value.trim(), empresa:emp, emergencia:em, criadoEm:new Date().toISOString(),
-    ...(em?{acion:{por:$("#cr-ac-por").value.trim(), as:agora, meio:$("#cr-ac-meio").value, motivo:$("#cr-ac-mot").value.trim()}}:{})};
+    ...(em?{acion:{por:$("#cr-ac-por").value.trim(), as:state.chamadoAt?.as || agora, meio:$("#cr-ac-meio").value, motivo:$("#cr-ac-mot").value.trim()}}:{})};
   const geo = await localizacao(); if(geo) base.geo = geo;
   try{
     const velhos = state.ap.filter(x=>x.andamento && x.data!==data && quem.includes(x.profissional||""));
     if(velhos.length){ const v = velhos[0]; toast(`A OS ${v.os||"s/n"} ficou aberta desde ${fdate(v.data).slice(0,5)} às ${v.inicio}. Encerre ela primeiro (faixa do topo) informando a hora real de término.`); return; }
     for(const pr of quem){ for(const r of state.ap.filter(x=>x.andamento && x.profissional===pr)) await encerrarOS(r, agora);
       await save("apontamentos", {...base, id: (state.crIds ||= {})[pr||"_"] ||= uid(), profissional:pr}); }
+    if(state.chamadoAt){ const ch = state.chamadoAt; state.chamadoAt = null; await sb.rpc("atender_chamado", {p_id:ch.id, p_os:os}).catch(()=>{}); carregarChamados(); }
     state.crIds = null; try{ if(quem[0]) localStorage.setItem("gaap-last-prof", JSON.stringify(quem)); }catch(err){}
     state.modalDirty = false; closeModal(); render(); toast(`OS ${os||"s/n"} iniciada às ${agora}.`);
   }catch(err){ toast(writeErr(err)); }
@@ -2569,7 +2660,7 @@ function fechCard(f){
     ${f.aprovacao?`<p style="margin:0">${f.aprovacao.aprovado?`<span class="pill good">Aprovado por ${esc(f.aprovacao.nome||"aprovador")}${f.aprovacao.cargo?` (${esc(f.aprovacao.cargo)})`:""} ${f.aprovacao.em?` em ${fdate(f.aprovacao.em.slice(0,10))}`:""}</span>`:`<span class="pill bad">Contestado: ${(f.aprovacao.contestadas||[]).length} OS · ${esc(f.aprovacao.nome||"")}</span>`}</p>`:f.aprovPedida?`<p class="muted" style="margin:0;font-size:.85rem">Aprovação pedida em ${fdate(f.aprovPedida)}, aguardando resposta.</p>`:""}
     ${ult?`<p class="muted" style="margin:0;font-size:.85rem">Última cobrança em ${fdate(ult)}${(f.cobrancas||[]).length>1?` (${f.cobrancas.length} no total)`:""}.</p>`:""}
     ${f.itens?`<p class="muted" style="margin:0;font-size:.85rem"><span class="pill info">Planilha importada</span> ${f.itens.length} OS lançadas pela planilha aprovada${f.pedido?` · pedido ${esc(f.pedido)}`:""}.</p>`:""}
-    <div class="row fc-acts">${f.itens?"":`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}">PDF enviado</button>`}<button class="btn sm" data-act="terceirosPdf" data-id="${esc(f.id)}">Fechamento p/ fiscal (PDF)</button><button class="btn sm" data-act="terceirosXlsx" data-id="${esc(f.id)}">Excel</button>${f.profissional && fechIrmaos(f).length>1?`<button class="btn sm" data-act="fechJuntos" data-id="${esc(f.id)}">Todos do período em 1 PDF (${fechIrmaos(f).length})</button>`:""}${f.profissional?`<button class="btn sm" data-act="fechAcerto" data-id="${esc(f.id)}">Acerto do funcionário</button>`:""}<button class="btn sm" data-act="fechConferir" data-id="${esc(f.id)}">Conferir planilha deles</button>${fechAlterado(f)?`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}" data-atual="1">PDF atual</button>`:""}
+    <div class="row fc-acts">${f.itens?"":`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}">PDF enviado</button>`}<button class="btn sm" data-act="terceirosPdf" data-id="${esc(f.id)}">Fechamento p/ fiscal (PDF)</button><button class="btn sm" data-act="terceirosXlsx" data-id="${esc(f.id)}">Excel</button>${f.profissional && fechIrmaos(f).length>1?`<button class="btn sm" data-act="fechJuntos" data-id="${esc(f.id)}">Todos do período em 1 PDF (${fechIrmaos(f).length})</button>`:""}${f.profissional?`<button class="btn sm" data-act="fechAcerto" data-id="${esc(f.id)}">Acerto do funcionário</button>`:""}${f.itens?"":`<button class="btn sm" data-act="indicadoresPdf" data-id="${esc(f.id)}">📊 Indicadores do mês (PDF)</button>`}<button class="btn sm" data-act="fechConferir" data-id="${esc(f.id)}">Conferir planilha deles</button>${fechAlterado(f)?`<button class="btn sm" data-act="fechPdfBtn" data-id="${esc(f.id)}" data-atual="1">PDF atual</button>`:""}
       ${sd>0.005?`<button class="btn sm primary" data-act="newRec" data-o="fech" data-id="${esc(f.id)}" data-v="${sd}">Receber</button><button class="btn sm" data-act="fechCobrar" data-id="${esc(f.id)}">Cobrar</button>`:""}
       <button class="btn sm" data-act="fechNF" data-id="${esc(f.id)}">Nota fiscal / vencimento</button>${f.snap?`<button class="btn sm" data-act="fechAprov" data-id="${esc(f.id)}">${f.aprovacao?"Ver aprovação":"Pedir aprovação"}</button>`:""}${sd>0.005?`<button class="btn sm" data-act="fechGlosa" data-id="${esc(f.id)}">Glosa</button>`:""}
       <button class="btn sm danger" data-act="fechReabrir" data-id="${esc(f.id)}">Reabrir</button></div>
@@ -2640,6 +2731,44 @@ function vFinanceiro(){
   <tbody>${recs.map(r=>`<tr><td class="mono">${fdate(r.data)}</td><td>${r.origem==="fech"?`Fechamento ${esc(state.fech.find(f=>f.id===r.fechId)?.numero||"(reaberto)")}${r.empresa?` · ${esc(r.empresa)}`:""}`:r.origem==="horas"?`Horas · <span style="text-transform:capitalize">${ymLabel(r.competencia||"2000-01")}</span>${multiEmp?` · ${esc(recEmp(r))}`:""}`:`Orçamento ${esc(state.orc.find(o=>o.id===r.orcId)?.numero||"(excluído)")}`}${r.exemplo?' <span class="pill">Exemplo</span>':""}</td><td class="hs">${esc(r.obs||"")}</td><td class="r mono">${brl(numIn(r.valor))}</td><td><button class="btn sm danger" data-act="delRec" data-id="${esc(r.id)}">Excluir</button></td></tr>`).join("")}</tbody></table></div>`
   :`<div class="empty"><b>Nenhum recebimento registrado</b>Use “Registrar recebimento” quando a empresa ou o cliente pagar.</div>`}</section>`;
 }
+/* ---------- indicadores do mês para a gerência da contratante ---------- */
+async function indicadoresPdf(f){
+  const fs = f.profissional && fechIrmaos(f).length ? fechIrmaos(f) : [f], emp = f.empresa || state.cfg.contratante || "";
+  const rows = fs.flatMap(x=>x.snap?.aps || fechRows(x.de, x.ate, x.empresa||"", x.profissional||"")).filter(e=>!e.andamento && !e.orcId);
+  if(!rows.length){ toast("Esse fechamento não tem OS lançadas no app."); return; }
+  const doc = pdfDoc(); if(!doc) return; const W = pw(doc), t = sumCalc(rows), H = m => fdec(m);
+  let y = pdfHeader(doc, "INDICADORES DO MÊS", [emp, `${fdate(f.de)} a ${fdate(f.ate)}`]);
+  const emerg = rows.filter(e=>e.emergencia), resp = emerg.map(e=>e.acion?.as ? ((hm(e.inicio)-hm(e.acion.as))+1440)%1440 : null).filter(v=>v!=null && v<720);
+  const chs = (state.chamados||[]).filter(c=>chaveEmp(c.empresa)===chaveEmp(emp) && c.status==="atendido" && c.criado_em.slice(0,10)>=f.de && c.criado_em.slice(0,10)<=f.ate);
+  const tChs = chs.map(c=>Math.round((new Date(c.atendido_em)-new Date(c.criado_em))/60000));
+  const tResp = [...tChs, ...resp], media = tResp.length ? Math.round(tResp.reduce((a,b)=>a+b,0)/tResp.length) : null;
+  const prev = rows.filter(e=>e.prevId), assin = rows.filter(assinOS), osN = new Set(rows.map(e=>e.os||e.id)).size;
+  const kpis = [["OS atendidas", String(osN)], ["Horas trabalhadas", H(t.total)+" h"], ["Horas normais", t.total ? Math.round(100*t.n/t.total)+"%" : "-"], ["Emergências", String(emerg.length)],
+    ["Tempo médio de resposta", media==null ? "-" : media<60 ? `${media} min` : `${Math.floor(media/60)}h${pad(media%60)}`], ["Preventivas realizadas", String(prev.length)], ["OS assinadas pela unidade", rows.length ? Math.round(100*assin.length/rows.length)+"%" : "-"]];
+  const bw = (W-28-6*3)/4;
+  kpis.forEach(([l,v],i)=>{ const x = 14 + (i%4)*(bw+3), yy = y + Math.floor(i/4)*24; doc.setFillColor(240,246,242); doc.roundedRect(x, yy, bw, 21, 2, 2, "F");
+    doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(...GREY); doc.text(l.toUpperCase(), x+3, yy+6); doc.setFont("helvetica","bold"); doc.setFontSize(15); doc.setTextColor(...INK); doc.text(v, x+3, yy+16); });
+  y += 52;
+  const uni = {}; rows.forEach(e=>{ const u = e.cliente||"(sem unidade)", c = calc(e); (uni[u] ||= {os:new Set(), m:0}); uni[u].os.add(e.os||e.id); uni[u].m += c.total; });
+  const us = Object.entries(uni).sort((a,b)=>b[1].m-a[1].m), mx = Math.max(...us.map(u=>u[1].m), 1);
+  doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(...NAVY); doc.text("Horas por unidade", 14, y); y += 3;
+  doc.autoTable({startY:y, theme:"plain", margin:{left:14, right:14}, head:[["Unidade","OS","Horas","%",""]], body:us.map(([u,v])=>[u, String(v.os.size), H(v.m), Math.round(100*v.m/(t.total||1))+"%", ""]),
+    styles:{fontSize:8.5, cellPadding:1.4, textColor:INK}, headStyles:{textColor:GREY, fontStyle:"bold"}, columnStyles:{0:{cellWidth:62}, 1:{halign:"right", cellWidth:14}, 2:{halign:"right", cellWidth:20}, 3:{halign:"right", cellWidth:14}},
+    didDrawCell:d=>{ if(d.section==="body" && d.column.index===4){ const v = us[d.row.index][1].m; doc.setFillColor(...GREEN); doc.rect(d.cell.x+2, d.cell.y+1.6, (d.cell.width-4)*v/mx, d.cell.height-3.2, "F"); } }});
+  y = doc.lastAutoTable.finalY + 8;
+  const eqs = {}; rows.filter(e=>e.equipId).forEach(e=>{ const q = eqDe(e.equipId); const k = q ? `${q.tag||""} ${q.nome||""}`.trim() : e.equipId; (eqs[k] ||= {n:0, m:0}); eqs[k].n++; eqs[k].m += calc(e).total; });
+  const top = Object.entries(eqs).sort((a,b)=>b[1].m-a[1].m).slice(0,10);
+  if(top.length){ if(y > ph(doc)-60){ doc.addPage(); y = 20; } doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(...NAVY); doc.text("Equipamentos com mais horas", 14, y); y += 3;
+    doc.autoTable({startY:y, theme:"striped", margin:{left:14, right:14}, head:[["Equipamento","OS","Horas"]], body:top.map(([k,v])=>[k, String(v.n), H(v.m)]), styles:{fontSize:8.5, cellPadding:1.4, textColor:INK}, headStyles:{fillColor:GREEN}, columnStyles:{1:{halign:"right"},2:{halign:"right"}}}); y = doc.lastAutoTable.finalY + 8; }
+  if(emerg.length){ if(y > ph(doc)-60){ doc.addPage(); y = 20; } doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(...NAVY); doc.text("Emergências atendidas", 14, y); y += 3;
+    doc.autoTable({startY:y, theme:"striped", margin:{left:14, right:14}, head:[["Data","OS","Unidade","Motivo","Acionado","Início","Resposta"]],
+      body:emerg.map(e=>{ const r = e.acion?.as ? ((hm(e.inicio)-hm(e.acion.as))+1440)%1440 : null; return [fdate(e.data), e.os||"-", e.cliente||"", e.acion?.motivo||e.descricao||"", e.acion?.as||"-", e.inicio, r==null||r>=720 ? "-" : `${r} min`]; }),
+      styles:{fontSize:8, cellPadding:1.3, textColor:INK}, headStyles:{fillColor:GREEN}}); y = doc.lastAutoTable.finalY + 8; }
+  const atras = state.eq.filter(q=>!q.inativo && chaveEmp(q.empresa||emp)===chaveEmp(emp)).flatMap(q=>prevStatus(q).filter(s=>s.nivel==="bad").map(s=>[`${q.tag||""} ${q.nome||""}`.trim(), s.pl.atividade||"", s.ult?fdate(s.ult):"nunca", fdate(s.prox)]));
+  if(prev.length || atras.length){ if(y > ph(doc)-60){ doc.addPage(); y = 20; } doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(...NAVY); doc.text(`Preventivas: ${prev.length} realizada(s) no período${atras.length?`, ${atras.length} pendente(s)`:""}`, 14, y); y += 3;
+    if(atras.length){ doc.autoTable({startY:y, theme:"striped", margin:{left:14, right:14}, head:[["Equipamento","Atividade","Última","Prevista"]], body:atras, styles:{fontSize:8, cellPadding:1.3, textColor:INK}, headStyles:{fillColor:[180,120,20]}}); y = doc.lastAutoTable.finalY + 8; } }
+  pdfFooter(doc); await offerFile(`indicadores-${slug(emp)}-${(f.ate||"").slice(0,7)}.pdf`, doc.output("blob"));
+}
 /* ---------- relatório anual para o contador ---------- */
 function anualDados(ano){
   const r2 = v => Math.round(v*100)/100;
@@ -2663,6 +2792,7 @@ function anualHtml(){
   <tfoot><tr><th>Total ${ano}</th>${ANUAL_COLS.map(([k])=>`<th class="r mono">${brl(tot(k))}</th>`).join("")}</tr></tfoot></table></div>
   <p class="muted" style="margin:0">Faturado pela competência do fechamento; recebido, retenções, despesas e pagamentos pela data em que aconteceram.</p></section>`;
 }
+document.addEventListener("change", async e=>{ if(e.target.id==="pt-val"){ await portalSalvarFicha(e.target.dataset.emp, {portalValores:e.target.checked}); portalPublicar(); toast(e.target.checked ? "Valores aparecem no portal." : "Valores escondidos do portal."); } });
 document.addEventListener("change", e=>{ if(e.target.id==="anual-ano"){ state.anual = e.target.value; state.rendered = null; render(); } });
 async function anualRel(fmt){
   const ano = anoAnual(), ds = anualDados(ano), tot = k => Math.round(ds.reduce((s,o)=>s+anualVal(o,k),0)*100)/100, nome = `relatorio-anual-${slug(state.cfg.empresa.nome||"gaap")}-${ano}`;
@@ -2876,7 +3006,7 @@ function vAjustes(){
       <div class="row">${empresasCfg().map(n=>`<button type="button" class="btn sm" data-act="reajuste" data-emp="${esc(n)}">Reajustar ${esc(n)}${(c.taxas||{})[n]?.desde?` (desde ${fdate(c.taxas[n].desde)})`:""}</button>`).join("")}</div>
       <p class="muted" style="margin:0">Em branco usa o valor padrão (${brl(c.valorHora)}, ${c.extraPct}% e ${c.feriadoPct}%). Valores novos valem para os próximos lançamentos; os já lançados mantêm o valor da época.</p>
     </div>
-    <div class="panel form" data-aba="contratantes"><div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Ficha das contratantes</h3><button type="button" class="btn sm" data-act="novaEmpresa">+ Nova empresa</button></div>
+    <div class="panel form" data-aba="contratantes"><div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">Ficha das contratantes</h3><span class="row">${empresasCfg().map(n=>`<button type="button" class="btn sm" data-act="portalAbrir" data-emp="${esc(n)}">🌐 Portal ${esc(n)}${ficha(n).portal?" (ligado)":""}</button>`).join("")}<button type="button" class="btn sm" data-act="novaEmpresa">+ Nova empresa</button></span></div>
       <p class="muted" style="margin:0">Aparece no PDF (razão social, CNPJ e quem assina o visto) e define o período de medição e o prazo de pagamento.</p>
       ${empresasCfg().map(n=>{ const F=(c.contratantes||{})[n]||{}; return `<details class="fichabox" data-ct="${esc(n)}" ${empresasCfg().length===1?"open":""}><summary><b>${esc(n)}</b>${F.cnpj?` <span class="muted">· ${esc(F.cnpj)}</span>`:""}</summary>
         <div class="grid2" style="margin-top:8px">
@@ -2960,7 +3090,7 @@ function backupIdade(){
   return `<span class="pill ${dias>7?"warn":"good"}">Última cópia completa: ${new Date(b).toLocaleDateString("pt-BR")} (${dias===0?"hoje":dias===1?"ontem":`há ${dias} dias`})</span>`;
 }
 // chave que só o seu script conhece (fica na URL salva no servidor)
-function driveChave(){ let k = state.cfg.driveChave; if(!k){ k = state.cfg.driveChave = Array.from(crypto.getRandomValues(new Uint8Array(18)), b=>b.toString(16).padStart(2,"0")).join(""); save("config", {...state.cfg}).catch(()=>{}); } return k; }
+function driveChave(){ let k = state.cfg.driveChave; if(!k){ k = state.cfg.driveChave = Array.from(crypto.getRandomValues(new Uint8Array(18)), b=>b.toString(16).padStart(2,"0")).join(""); saveCfg(clone(state.cfg)).catch(()=>{}); } return k; }
 function driveScript(){ return `// GAAP Gestão - backup automático no Google Drive
 const CHAVE = "${state.cfg.driveChave || "(abra esta tela de novo para gerar a chave)"}";
 const PASTA = "GAAP Backups", MANTER = 60;
@@ -3029,7 +3159,7 @@ async function submitCfg(){
   const cuOld = c.custos || {}; c.custos = {}; document.querySelectorAll("[data-cu]").forEach(tr=>{ const v = numIn(tr.querySelector(".cu-v").value), bco = !!tr.querySelector(".cu-b")?.checked, o = cuOld[tr.dataset.cu] || {};
     if(v>0 || bco) c.custos[tr.dataset.cu] = {tipo:tr.querySelector(".cu-t").value, valor:v, ...(bco?{banco:true, bancoDesde:o.banco && o.bancoDesde ? o.bancoDesde : today()}:{})}; });
   c.contratantes = {}; document.querySelectorAll("[data-ct]").forEach(el=>{ const q = k=>el.querySelector(k);
-    c.contratantes[el.dataset.ct] = {razao:q(".ct-razao").value.trim(), cnpj:q(".ct-cnpj").value.trim(), aprovador:q(".ct-apr").value.trim(), cargo:q(".ct-cargo").value.trim(), whats:q(".ct-whats").value.trim(), email:q(".ct-email").value.trim(), corte:Math.min(28,Math.max(0,+q(".ct-corte").value||0)), prazo:Math.max(0,+q(".ct-prazo").value||0), exigirOS:q(".ct-exos").checked, unidades:lines(q(".ct-unids").value).join("\n"), codigo:q(".ct-cod").value.trim(), nomeFech:q(".ct-nomef").value.trim(), osLista:lines(q(".ct-oslista").value).join("\n")}; });
+    c.contratantes[el.dataset.ct] = {...((state.cfg.contratantes||{})[el.dataset.ct]||{}), razao:q(".ct-razao").value.trim(), cnpj:q(".ct-cnpj").value.trim(), aprovador:q(".ct-apr").value.trim(), cargo:q(".ct-cargo").value.trim(), whats:q(".ct-whats").value.trim(), email:q(".ct-email").value.trim(), corte:Math.min(28,Math.max(0,+q(".ct-corte").value||0)), prazo:Math.max(0,+q(".ct-prazo").value||0), exigirOS:q(".ct-exos").checked, unidades:lines(q(".ct-unids").value).join("\n"), codigo:q(".ct-cod").value.trim(), nomeFech:q(".ct-nomef").value.trim(), osLista:lines(q(".ct-oslista").value).join("\n")}; });
   const txAnt = c.taxas || {}; c.taxas = {}; document.querySelectorAll("[data-tx]").forEach(tr=>{ const q = k=>tr.querySelector(k).value.trim(), a = txAnt[tr.dataset.tx] || {}, t = {}; if(q(".tx-v")) t.valorHora = numIn(q(".tx-v")); if(q(".tx-p50")!=="") t.extraPct = +q(".tx-p50"); if(q(".tx-p100")!=="") t.feriadoPct = +q(".tx-p100"); if(q(".tx-not")!=="") t.noturnoPct = +q(".tx-not");
     if(a.desde){ t.desde = a.desde; t.historico = a.historico || []; } // a vigência do reajuste continua valendo
     if(Object.keys(t).length) c.taxas[tr.dataset.tx] = t; });
@@ -3292,7 +3422,7 @@ const A = {
     <footer><button class="btn" data-act="closeModal">Cancelar</button><button class="btn primary" data-act="exigZipOk" data-emp="${esc(emp)}">Montar .zip</button></footer></div>`); },
   async exigZipOk(b){ const quem = [...document.querySelectorAll(".ex-p:checked")].map(i=>i.value), emp = b.dataset.emp; b.disabled = true; closeModal(); await exigZip(emp, quem); },
   exigEmail(b){ const emp = b.dataset.emp, E = exigencias(emp), ps = profs(), falta = [...E.empresa.map(([t])=>[t,"Empresa"]), ...ps.flatMap(n=>E.funcionario.map(([t])=>[t,n]))].filter(([t,n])=>!docOk(t,n));
-    const corpo = `Bom dia,\n\nSegue em anexo a documentação da ${state.cfg.empresa.nome} (CNPJ ${state.cfg.empresa.cnpj||""}) para a realização de serviços terceirizados na ${emp}.\n\nColaboradores:\n${ps.map(n=>"- "+n).join("\n")}\n\nFicamos à disposição para agendar a integração de segurança.\n\nAtenciosamente,\n${state.cfg.empresa.nome}\n${state.cfg.empresa.telefone||""}`;
+    const corpo = `Bom dia,\n\nSegue em anexo a documentação da ${state.cfg.empresa.nome} (CNPJ ${state.cfg.empresa.cnpj||""}) para a realização de serviços terceirizados na ${emp}.${falta.length?"":" Toda a documentação está em dia, conforme a declaração de regularidade anexa."}\n\nColaboradores:\n${ps.map(n=>"- "+n).join("\n")}\n\nFicamos à disposição para agendar a integração de segurança.\n\nAtenciosamente,\n${state.cfg.empresa.nome}\n${state.cfg.empresa.telefone||""}`;
     if(falta.length && !confirm(`Ainda faltam ${falta.length} documento(s) (ex.: ${falta.slice(0,3).map(([t,n])=>`${n} - ${t}`).join("; ")}). Abrir o e-mail mesmo assim?`)) return;
     location.href = `mailto:${E.email}?subject=${encodeURIComponent(`Documentação para serviços terceirizados - ${state.cfg.empresa.nome}`)}&body=${encodeURIComponent(corpo)}`;
     toast("Anexe o .zip do pacote no e-mail."); },
@@ -3311,6 +3441,24 @@ const A = {
     if(temDados && !b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar descarte"; setTimeout(()=>{ if(b.isConnected){ delete b.dataset.armed; b.textContent="Descartar"; } }, 4000); return; }
     const copia = d ? clone(d) : null; rascunho.limpar(); closeModal();
     if(temDados) toastAcao("Lançamento descartado.", "Desfazer", ()=>{ state.day = copia; openModal(dayForm(), "wide"); state.modalDirty = true; renderDayRows(); updateDay(); }); },
+  assinar(b){ assinPad(b.dataset.row!=null ? +b.dataset.row : null); },
+  assinLimpar(){ const cv = $("#as-cv"); if(!cv) return; const g = cv.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0,0,cv.width,cv.height); state.assinTracos = 0; },
+  assinFechar(){ $("#assinpad")?.remove(); },
+  assinOk(){ assinConfirmar(); },
+  portalAbrir(b){ portalModal(b.dataset.emp); },
+  async portalLigar(b){ const emp = b.dataset.emp; b.disabled = true; try{ await portalSalvarFicha(emp, {portal:true}); await sb.rpc("criar_portal", {p_emp:emp}); await portalPublicar(); portalModal(emp); toast("Portal ligado."); }catch(err){ b.disabled = false; toast(writeErr(err)); } },
+  async portalDesligar(b){ if(!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Confirmar: desligar"; return; } const emp = b.dataset.emp; await sb.rpc("desligar_portal", {p_emp:emp}); await portalSalvarFicha(emp, {portal:false}); closeModal(); toast("Portal desligado: o link parou de funcionar."); },
+  async portalTrocar(b){ if(!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Confirmar: gerar novo link"; return; } const emp = b.dataset.emp; await sb.rpc("trocar_portal", {p_emp:emp}); await portalPublicar(); portalModal(emp); toast("Novo link gerado. Envie de novo para a contratante."); },
+  async portalCopiar(){ const v = $("#pt-link")?.value; try{ await navigator.clipboard.writeText(v); toast("Link copiado."); }catch(e){ $("#pt-link")?.select(); } },
+  portalZap(b){ const emp = b.dataset.emp, F = ficha(emp), v = $("#pt-link")?.value; const txt = `Olá! Este é o portal de serviços da ${state.cfg.empresa.nome} para a ${emp}.\n\nPor ele vocês acompanham ao vivo as ordens de serviço, as horas por unidade e as assinaturas, e podem abrir um *chamado de emergência*: a nossa equipe é avisada no celular na hora.\n\n${v}`;
+    window.open(`https://wa.me/${(F.whats||"").replace(/\D/g,"") ? "55"+(F.whats||"").replace(/\D/g,"").replace(/^55/,"") : ""}?text=${encodeURIComponent(txt)}`, "_blank"); },
+  chamadoAtender(b){ const c = (state.chamados||[]).find(x=>x.id===b.dataset.id); if(!c) return; const d = c.data||{}, cr = new Date(c.criado_em);
+    state.chamadoAt = {id:c.id, as:hhmm(cr.getHours()*60+cr.getMinutes())}; state.crIds = null;
+    openModal(cronoForm({emp:c.empresa, unid:d.unidade, emerg:true, desc:[d.equipamento, d.descricao].filter(Boolean).join(" - "), acPor:d.nome||"", acMeio:"Portal"}));
+    const mot = $("#cr-ac-mot"); if(mot) mot.value = d.descricao||""; },
+  async chamadoCancelar(b){ if(!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Confirmar cancelamento"; return; } await sb.rpc("cancelar_chamado", {p_id:b.dataset.id}); await carregarChamados(); state.rendered = null; render(); },
+  indicadoresPdf(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(f) indicadoresPdf(f); },
+  exigDeclaracao(b){ declaracaoPdf(b.dataset.emp, profs()).then(r=>r && offerFile(r.nome, r.blob)); },
   pushDepois(){ try{ localStorage.setItem("gaap-push-depois", today()); }catch(e){} state.rendered = null; render(); },
   async pushAtivar(b){
     b.disabled = true;

@@ -403,3 +403,11 @@ body[data-ajaba="dados"] #view [data-aba]:not([data-aba~="dados"]){display:none}
 .ajuda{margin-bottom:8px}.ajuda summary{cursor:pointer;padding:4px 0;font-size:1rem}.ajuda ol{margin:8px 0 2px 18px;padding:0;display:grid;gap:6px}
 .codebox{white-space:pre-wrap;word-break:break-all;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;background:var(--soft,rgba(127,127,127,.08));padding:10px;border-radius:8px;max-height:260px;overflow:auto;margin:6px 0 0}
 .docmat td,.docmat th{text-align:center;white-space:nowrap}.docmat td:first-child,.docmat th:first-child{text-align:left}
+.assinpad{position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:12px}
+.assinbox{background:var(--bg);border-radius:14px;padding:14px;display:grid;gap:10px;width:min(720px,100%);max-height:100%;overflow:auto}
+.assinbox canvas{width:100%;height:auto;aspect-ratio:900/360;background:#fff;border:2px dashed var(--line);border-radius:10px;touch-action:none}
+.portal-top{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center}
+.btn.big{font-size:1.05rem;padding:14px 18px}
+.chamadobox{animation:pisca 1.6s ease-in-out 3}
+@keyframes pisca{50%{box-shadow:0 0 0 6px rgba(210,59,59,.35)}}
+.portal .btn.danger{background:var(--bad);border-color:var(--bad);color:#fff}

@@ -124,6 +124,16 @@ Deno.serve(async (req) => {
 
   if (req.headers.get("x-cron-token") !== S.cron_token) return json({ erro: "proibido" }, 403);
 
+  // chamado de emergência aberto pela contratante no portal: avisa toda a equipe na hora
+  if (body?.chamado) {
+    const { data: ch } = await sb.from("chamados").select("*").eq("id", String(body.chamado)).maybeSingle();
+    if (!ch) return json({ erro: "chamado" }, 404);
+    const { data: ps } = await sb.from("perfis").select("user_id").in("papel", ["dono", "funcionario"]);
+    const d = ch.data ?? {};
+    const n = await enviar((ps ?? []).map((p: any) => p.user_id), { title: `🚨 Chamado de emergência · ${ch.empresa}`, body: `${d.unidade ? d.unidade + ": " : ""}${d.descricao ?? ""}${d.parada ? " (máquina parada)" : ""}${d.nome ? ` — ${d.nome}` : ""}`.slice(0, 220), url: "/#chamados" });
+    return json({ acao: "chamado", enviados: n });
+  }
+
   let { dia, dow, min } = agoraBrasilia();
   if (body?.simular && /^\d{4}-\d{2}-\d{2}$/.test(body?.dia ?? "")) { dia = body.dia; dow = new Date(dia + "T12:00:00Z").getUTCDay(); }
   const { data: cfgRow } = await sb.from("config").select("data").eq("id", "main").maybeSingle();
