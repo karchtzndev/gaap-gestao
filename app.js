@@ -118,7 +118,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.06-14";
+const VERSAO = "2026.10.07-1";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -863,7 +863,7 @@ function vWorker(){
   if(!state.pub || !state.pub.cfg) return `<div class="pagehead"><div><span class="eyebrow">Acesso do funcionário</span><h1>Aguardando liberação</h1><p class="muted">Não consegui carregar a configuração. Verifique a conexão e toque em Atualizar.</p><button class="btn primary" data-act="reverificar">Atualizar</button><p></p></div></div>`;
   const mine = state.ap.filter(e=>e.profissional===me), list = mine.filter(e=>ym(e.data)===state.month).sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio));
   const c = sumCalc(list), byDay = {}; list.forEach(e=>(byDay[e.data] ||= []).push(e));
-  return `<div class="pagehead"><div><span class="eyebrow">Olá, ${esc(me)}</span><h1>Minhas OS</h1><p class="muted">Lance cada OS com o horário de início e de término.</p></div>
+  return `${pushConvite()}<div class="pagehead"><div><span class="eyebrow">Olá, ${esc(me)}</span><h1>Minhas OS</h1><p class="muted">Lance cada OS com o horário de início e de término.</p></div>
     <div class="row">${monthNav()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button><button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
   ${escalaHoje()}
   ${confHtml(conferencia(ymd(addDays(parseYmd(today()),-7)), today(), me), "Faltou lançar?", 5)}
@@ -1194,7 +1194,7 @@ function vPainel(){
   const taxa = decididos.length ? Math.round(100*decididos.filter(o=>o.status!=="recusado").length/decididos.length) : null;
   const recent = [...state.ap].sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio)).slice(0,5);
   const gear = `<svg class="gear" viewBox="0 0 100 100" fill="#fff"><path d="M43 2h14l2 12 8 3 10-7 10 10-7 10 3 8 12 2v14l-12 2-3 8 7 10-10 10-10-7-8 3-2 12H43l-2-12-8-3-10 7-10-10 7-10-3-8-12-2V43l12-2 3-8-7-10 10-10 10 7 8-3zM50 32a18 18 0 1 0 0 36 18 18 0 1 0 0-36z"/></svg>`;
-  return `${aprovacoesHtml()}${exampleBanner()}
+  return `${aprovacoesHtml()}${pushConvite()}${exampleBanner()}
   <div class="pagehead"><div><span class="eyebrow">${WD[new Date().getDay()]}, ${fdate(today())}</span><h1>Painel</h1></div><div class="row">${monthNav()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button></div></div>
   <section class="hero">${gear}
     <div><div class="eyebrow">Total a receber</div><div class="big">${brl(t.horas+t.orc)}</div></div>
@@ -1945,7 +1945,22 @@ function b64u(s){ const p = "=".repeat((4 - s.length % 4) % 4), b = atob((s + p)
 async function pushEstado(){
   if(!pushSuportado()) return;
   try{ const reg = await navigator.serviceWorker.register("/sw.js"); const sub = await reg.pushManager.getSubscription(); state.pushOn = false;
-    if(sub){ const {data} = await sb.from("push_inscricoes").select("endpoint").eq("endpoint", sub.endpoint).maybeSingle(); state.pushOn = !!data; } }catch(err){}
+    if(sub){ const {data} = await sb.from("push_inscricoes").select("endpoint").eq("endpoint", sub.endpoint).maybeSingle(); state.pushOn = !!data; }
+    // permissão já dada neste aparelho: ativa sozinho, sem precisar tocar em nada
+    if(!state.pushOn && Notification.permission==="granted" && window.GAAP_CONFIG?.vapidPublica){
+      const s2 = sub || await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64u(window.GAAP_CONFIG.vapidPublica)});
+      const {error} = await sb.from("push_inscricoes").upsert({endpoint:s2.endpoint, sub:s2.toJSON(), aparelho:navigator.userAgent.slice(0,140)});
+      if(!error){ state.pushOn = true; } }
+    if(state.view==="painel" || state.worker){ state.rendered = null; render(); }
+  }catch(err){}
+}
+// faixa no início: um toque para ativar os lembretes (o celular exige o toque da pessoa)
+function pushConvite(){
+  let fora = ""; try{ fora = localStorage.getItem("gaap-push-depois")||""; }catch(e){}
+  if(state.pushOn || fora===today()) return "";
+  if(!pushSuportado()) return ehIOS() && !instalado() ? `<div class="banner"><span>🔔 Para receber os lembretes no iPhone, instale o app: Safari → <b>Compartilhar</b> → <b>Adicionar à Tela de Início</b>, e abra por lá.</span><button class="btn sm" data-act="pushDepois">Agora não</button></div>` : "";
+  if(Notification.permission!=="default") return "";
+  return `<div class="banner"><span>🔔 <b>Ative os lembretes neste celular</b> para ser avisado ${state.worker?"quando faltar lançar OS ou ficar cronômetro aberto":"do resumo do dia, do fechamento do dia 20 e de documentos vencendo"}.</span><div class="row"><button class="btn sm primary" data-act="pushAtivar">Ativar</button><button class="btn sm" data-act="pushDepois">Agora não</button></div></div>`;
 }
 function lembretesHtml(){
   let corpo;
@@ -3296,6 +3311,7 @@ const A = {
     if(temDados && !b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar descarte"; setTimeout(()=>{ if(b.isConnected){ delete b.dataset.armed; b.textContent="Descartar"; } }, 4000); return; }
     const copia = d ? clone(d) : null; rascunho.limpar(); closeModal();
     if(temDados) toastAcao("Lançamento descartado.", "Desfazer", ()=>{ state.day = copia; openModal(dayForm(), "wide"); state.modalDirty = true; renderDayRows(); updateDay(); }); },
+  pushDepois(){ try{ localStorage.setItem("gaap-push-depois", today()); }catch(e){} state.rendered = null; render(); },
   async pushAtivar(b){
     b.disabled = true;
     try{
