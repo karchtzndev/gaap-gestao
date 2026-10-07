@@ -118,7 +118,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.07-3";
+const VERSAO = "2026.10.07-4";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -817,6 +817,57 @@ function osLista(emp){
 // ID do TracOS já usado antes nessa mesma OS (a OS pode durar vários dias)
 function tracosDe(os){ os = String(os||"").trim(); if(!os) return ""; const e = [...state.ap].filter(x=>x.os===os && x.tracos).sort((a,b)=>(b.data||"").localeCompare(a.data||""))[0]; return e ? e.tracos : ""; }
 const limpaTracos = v => String(v||"").replace(/[^\w.-]/g,"").slice(0,40);
+/* ---------- ler o papel da OS pela foto (nº da OS e ID do TracOS), no próprio celular ---------- */
+const TESS = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+let tessWorker = null;
+async function ocrImagem(file){
+  if(!window.Tesseract) await loadScript(TESS);
+  tessWorker ||= await window.Tesseract.createWorker("por", 1, {workerPath:"https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js", corePath:"https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1", langPath:"https://cdn.jsdelivr.net/npm/@tesseract.js-data/por@1.0.0/4.0.0_best_int"});
+  // reduz e passa para tons de cinza: mais rápido e lê melhor
+  const img = await createImageBitmap(file), k = Math.min(1, 1800/Math.max(img.width, img.height)), cv = document.createElement("canvas");
+  cv.width = Math.round(img.width*k); cv.height = Math.round(img.height*k); const g = cv.getContext("2d"); g.filter = "grayscale(1) contrast(1.4)"; g.drawImage(img, 0, 0, cv.width, cv.height);
+  const {data} = await tessWorker.recognize(cv); return data.text || "";
+}
+function lerNumeros(txt){
+  const t = String(txt||"").replace(/[|]/g, "1").replace(/[Oo](?=\d)|(?<=\d)[Oo]/g, "0");
+  const pega = re => { const m = t.match(re); return m ? m[1].replace(/\D/g, "") : ""; };
+  const os = pega(/(?:ordem\s*de\s*servi[cç]o|\bO\.?\s?S\.?\b|n[º°o]\.?\s*(?:da\s*)?o\.?s)\s*[:#nº°.\-]*\s*(\d[\d .]{2,})/i);
+  const tid = pega(/(?:\bid\b|trac\s*-?\s*os|tractian)\s*(?:tracos|trac\s*os)?\s*[:#nº°.\-]*\s*(\d[\d .]{1,})/i);
+  const nums = [...new Set((t.match(/\d{3,}/g)||[]))].slice(0, 12);
+  return {os, tid, nums};
+}
+function papelUI(alvo, file, r){
+  document.getElementById("papelbox")?.remove();
+  const el = document.createElement("div"); el.id = "papelbox"; el.className = "assinpad"; state.papel = {alvo, file};
+  el.innerHTML = `<div class="assinbox"><h3 style="margin:0">Papel da OS</h3>
+    <img src="${URL.createObjectURL(file)}" alt="Foto do papel" style="max-height:220px;object-fit:contain;width:100%;border-radius:8px;background:#000">
+    <div class="grid2"><label class="field"><span>Nº da OS</span><input id="pp-os" inputmode="numeric" value="${esc(r.os)}"></label><label class="field"><span>ID TracOS</span><input id="pp-tid" inputmode="numeric" value="${esc(r.tid)}"></label></div>
+    ${r.nums.length?`<div class="field"><span>Números encontrados (toque para colocar no campo selecionado)</span><div class="row">${r.nums.map(n=>`<button type="button" class="btn sm" data-act="papelNum" data-n="${esc(n)}">${esc(n)}</button>`).join("")}</div></div>`:`<p class="muted" style="margin:0">Não consegui ler números nesta foto. Digite acima ou tire outra foto com mais luz e o papel reto.</p>`}
+    <p class="muted" style="margin:0;font-size:.85rem">Confira antes de usar. ${!r.os||!r.tid?"Algum número não foi reconhecido com certeza.":""}</p>
+    ${assets?`<label class="check"><input type="checkbox" id="pp-anexar" checked> Anexar a foto do papel na OS</label>`:""}
+    <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-act="papelFechar">Cancelar</button><button type="button" class="btn primary" data-act="papelUsar">Usar estes números</button></div></div>`;
+  document.body.appendChild(el); state.papelCampo = r.os ? "pp-tid" : "pp-os";
+  el.addEventListener("focusin", e=>{ if(e.target.id==="pp-os" || e.target.id==="pp-tid") state.papelCampo = e.target.id; });
+}
+async function papelLer(alvo, file){
+  toast("Lendo o papel… (na primeira vez demora um pouco)");
+  let r = {os:"", tid:"", nums:[]};
+  try{ r = lerNumeros(await ocrImagem(file)); }catch(err){ toast("Não consegui ler a foto. Digite os números."); }
+  papelUI(alvo, file, r);
+}
+async function papelAplicar(){
+  const p = state.papel; if(!p) return; const os = $("#pp-os").value.replace(/\D/g,""), tid = limpaTracos($("#pp-tid").value), anexar = $("#pp-anexar")?.checked;
+  $("#papelbox")?.remove(); state.papel = null;
+  const pôr = (osEl, tidEl) => { if(tidEl){ tidEl.value = tid; tidEl.dispatchEvent(new Event("input", {bubbles:true})); } if(osEl){ osEl.value = os; osEl.dispatchEvent(new Event("input", {bubbles:true})); osEl.dispatchEvent(new Event("change", {bubbles:true})); } };
+  if(p.alvo.row!=null){ const row = document.querySelector(`.dayrow[data-r="${p.alvo.row}"]`); pôr(row?.querySelector('[data-f="os"]'), row?.querySelector('[data-f="tid"]'));
+    if(anexar){ const r = state.day.rows[p.alvo.row]; const ids = await uploadPhotos([p.file], {tipo:"antes", os, unid:r.cli||state.day.unid}); r.fotoMeta = {...(r.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; r.fotos = [...(r.fotos||[]), ...ids]; renderDayRows(); updateDay(); } }
+  else if(p.alvo.form==="cr") pôr($("#cr-os"), $("#cr-tid"));
+  else { pôr($("#f-os"), $("#f-tid")); if(anexar){ const ids = await uploadPhotos([p.file], {tipo:"antes", os, unid:$("#f-cli")?.value.trim()}); state.apFotos = [...(state.apFotos||[]), ...ids]; const box = $("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); state.modalDirty = true; } }
+  toast(`OS ${os||"?"} · ID TracOS ${tid||"?"} preenchidos.`);
+}
+document.addEventListener("change", e=>{ const t = e.target; if(t.dataset?.papel==null || !t.files?.length) return; const f = t.files[0]; t.value = "";
+  papelLer(t.dataset.papel==="ap" ? {form:"ap"} : t.dataset.papel==="cr" ? {form:"cr"} : {row:+t.dataset.papel}, f); });
+const papelBtn = alvo => `<label class="btn sm papelbtn" title="Tirar foto do papel da OS">📷 Ler papel<input type="file" accept="image/*" capture="environment" data-papel="${alvo}" hidden></label>`;
 function osSugestoes(used){ const m = osLista(); m.forEach((v,k)=>{ if(!(k in used)) used[k] = [v.desc, v.unid].filter(Boolean).join(" · "); }); return used; }
 // escolheu uma OS da lista: completa serviço e unidade (se estiverem vazios)
 function osPreencher(os, descEl, unidEl){ const x = osLista().get(String(os||"").trim()); if(!x) return false;
@@ -1452,6 +1503,7 @@ function apForm(e){
       <label class="field"><span>Data</span><input type="date" id="f-data" value="${esc(e.data)}" required></label>
       <label class="field"><span>Nº da ordem de serviço</span><input id="f-os" list="os-list-ap" inputmode="numeric" value="${esc(e.os||"")}" placeholder="Ex.: 48213"><datalist id="os-list-ap">${[...osLista().entries()].slice(0,300).map(([o,x])=>`<option value="${esc(o)}">${esc([x.desc,x.unid].filter(Boolean).join(" · "))}</option>`).join("")}</datalist></label>
       <label class="field"><span>ID TracOS</span><input id="f-tid" inputmode="numeric" maxlength="40" value="${esc(e.tracos||"")}" placeholder="Nº do ID impresso no papel"></label>
+      <div class="field" style="grid-column:1/-1">${papelBtn("ap")}<small class="muted"> Tire a foto do papel e o app preenche o nº da OS e o ID.</small></div>
     </div>
     ${profField}
     <label class="field"><span>Serviço executado</span><input id="f-desc" value="${esc(e.descricao||"")}" placeholder="Ex.: Troca de rolamento do elevador de canecas 02"></label>
@@ -1610,6 +1662,7 @@ function renderDayRows(){
     <span class="num">${i+1}</span>
     <label class="field f-os"><span>Nº da OS</span><input data-f="os" list="os-list" inputmode="numeric" value="${esc(r.os)}" placeholder="Ex.: 2165557"></label>
     <label class="field f-tid"><span>ID TracOS</span><input data-f="tid" inputmode="numeric" maxlength="40" value="${esc(r.tid||"")}" placeholder="ID do papel"></label>
+    <div class="f-papel">${papelBtn(i)}</div>
     <label class="field f-ini"><span>Entrada</span><input type="time" data-f="ini" value="${esc(r.ini)}"></label>
     <label class="field f-almi"><span>Saída p/ almoço</span><input type="time" data-f="almIni" value="${esc(r.almIni||"")}"></label>
     <label class="field f-almf"><span>Retorno almoço</span><input type="time" data-f="almFim" value="${esc(r.almFim||"")}"></label>
@@ -1966,7 +2019,7 @@ function repFileTag(){
   const r = state.rep, f = Object.keys(DIMS).filter(k=>r.f[k]!==ALL).map(k=>slug(r.f[k]));
   return [...f, r.by?`por-${slug(DIMS[r.by].label)}`:"", r.modo==="dia"?r.dia:`${r.de}_a_${r.ate}`].filter(Boolean).join("-");
 }
-const SRI = {"https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js": "sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e", "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js": "sha384-SnzOobpRMLXZ52iJvZm/C0fYw0OQemTXzTjIsdsfMcrCtCEe9qgzxTd3RSklO5x2", "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js": "sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw", "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js": "sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG", "https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/lite.umd.js": "sha384-KRanV2NRwHPanp7iM6nlLQC5jPCTscSYMko30dLJHzNXJaUNtcucWv+SOi3jV3PE"};
+const SRI = {"https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js": "sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F", "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js": "sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e", "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js": "sha384-SnzOobpRMLXZ52iJvZm/C0fYw0OQemTXzTjIsdsfMcrCtCEe9qgzxTd3RSklO5x2", "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js": "sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw", "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js": "sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG", "https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/lite.umd.js": "sha384-KRanV2NRwHPanp7iM6nlLQC5jPCTscSYMko30dLJHzNXJaUNtcucWv+SOi3jV3PE"};
 function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement("script"); s.src=src; if(SRI[src]){ s.integrity = SRI[src]; s.crossOrigin = "anonymous"; } s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
 function xlsxSheet(X, rows){
   const days = repDays(rows), cfg = state.cfg, C = repCols(rows), t = sumCalc(rows);
@@ -2085,7 +2138,7 @@ function cronoForm(pre={}){
   return `<header><h2>${pre.troca?"Trocar de OS":"Iniciar OS agora"}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
   <form class="form" id="cronoForm">
     <p class="muted" style="margin:0">O início fica marcado agora (${nowHM()}). Quando terminar, toque em <b>Encerrar</b> na faixa do topo${pre.troca?"":" ou em <b>Trocar de OS</b> para passar direto para a próxima"}.</p>
-    <div class="grid2"><label class="field"><span>Nº da OS</span><input id="cr-os" list="os-list" inputmode="numeric" placeholder="Ex.: 2165557"></label><label class="field"><span>ID TracOS</span><input id="cr-tid" inputmode="numeric" maxlength="40" placeholder="ID do papel"></label>
+    <div class="grid2"><label class="field"><span>Nº da OS</span><input id="cr-os" list="os-list" inputmode="numeric" placeholder="Ex.: 2165557"></label><label class="field"><span>ID TracOS</span><input id="cr-tid" inputmode="numeric" maxlength="40" placeholder="ID do papel"></label><div class="field" style="grid-column:1/-1">${papelBtn("cr")}</div>
     <label class="field"><span>Unidade</span>${unidCampo('id="cr-unid"', pre.emp||lastEmp(), pre.unid, "Selecione a unidade")}</label></div>
     <label class="field"><span>Serviço</span><input id="cr-desc" placeholder="Pode completar depois" value="${esc(pre.desc||"")}"></label>
     ${state.worker?"":`<label class="field"><span>Empresa</span><input id="cr-emp" list="emp-list" value="${esc(pre.emp||lastEmp())}"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>`}
@@ -3465,6 +3518,9 @@ const A = {
   async chamadoCancelar(b){ if(!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Confirmar cancelamento"; return; } await sb.rpc("cancelar_chamado", {p_id:b.dataset.id}); await carregarChamados(); state.rendered = null; render(); },
   indicadoresPdf(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(f) indicadoresPdf(f); },
   exigDeclaracao(b){ declaracaoPdf(b.dataset.emp, profs()).then(r=>r && offerFile(r.nome, r.blob)); },
+  papelFechar(){ $("#papelbox")?.remove(); state.papel = null; },
+  papelUsar(){ papelAplicar(); },
+  papelNum(b){ const el = $("#"+(state.papelCampo||"pp-os")); if(el){ el.value = b.dataset.n; state.papelCampo = state.papelCampo==="pp-os" ? "pp-tid" : "pp-os"; } },
   pushDepois(){ try{ localStorage.setItem("gaap-push-depois", today()); }catch(e){} state.rendered = null; render(); },
   async pushAtivar(b){
     b.disabled = true;

@@ -18,7 +18,7 @@
         },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://pxuzidkfwbjscpkegsno.supabase.co; connect-src 'self' https://pxuzidkfwbjscpkegsno.supabase.co wss://pxuzidkfwbjscpkegsno.supabase.co https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://api.bcb.gov.br blob: data:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+          "value": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://pxuzidkfwbjscpkegsno.supabase.co; connect-src 'self' https://pxuzidkfwbjscpkegsno.supabase.co wss://pxuzidkfwbjscpkegsno.supabase.co https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://api.bcb.gov.br blob: data:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
         },
         {
           "key": "Permissions-Policy",
