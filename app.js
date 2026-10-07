@@ -118,7 +118,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.07-2";
+const VERSAO = "2026.10.07-3";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -155,7 +155,7 @@ function emergTxt(e){ if(!e.emergencia) return ""; const a = e.acion||{};
 // quem assinou a OS (responsável da unidade)
 function assinOS(e){ const m = Object.values(e.fotoMeta||{}).find(x=>x && x.tipo==="assinatura"); return m ? (m.nome || "responsável") : ""; }
 function descRep(e){ const q = e.equipId && eqDe(e.equipId), pl = q && e.prevId && (q.plano||[]).find(x=>x.id===e.prevId);
-  return [e.descricao||"", almTxt(e), assinOS(e)?`Assinado por ${assinOS(e)}`:"", q?`Equip. ${q.tag||""}${pl?` (preventiva: ${pl.atividade})`:""}`:"", emergTxt(e), e.obs?`Obs.: ${e.obs}`:""].filter(Boolean).join(" · "); }
+  return [e.descricao||"", e.tracos?`ID TracOS ${e.tracos}`:"", almTxt(e), assinOS(e)?`Assinado por ${assinOS(e)}`:"", q?`Equip. ${q.tag||""}${pl?` (preventiva: ${pl.atividade})`:""}`:"", emergTxt(e), e.obs?`Obs.: ${e.obs}`:""].filter(Boolean).join(" · "); }
 function acionadores(){ const m = {}; state.ap.forEach(e=>{ const p = e.acion?.por; if(p) m[p] = (m[p]||0)+1; }); return Object.keys(m).sort((a,b)=>m[b]-m[a]).slice(0,30); }
 /* ---------- ficha da contratante ---------- */
 const ficha = emp => ((state.cfg.contratantes||{})[emp]) || {};
@@ -761,7 +761,7 @@ function portalSnap(emp){
   return {de, ate, valores: F.portalValores!==false,
     tot:{os:fe.length, n:r2(t.n/60), e50:r2(t.e50/60), e100:r2(t.e100/60), total:r2(t.total/60), valor:F.portalValores!==false ? r2(t.valor) : 0, emerg:fe.filter(e=>e.emergencia).length, assin:fe.filter(assinOS).length},
     unidades: Object.values(uni).sort((a,b)=>b.total-a.total).map(u=>({unid:u.unid, os:u.os, total:r2(u.total), valor:F.portalValores!==false ? r2(u.valor) : 0})),
-    os: rows.slice(0,400).map(e=>{ const c = calc(e), q = e.equipId && eqDe(e.equipId); return {data:e.data, os:e.os||"", unid:e.cliente||"", desc:e.descricao||"", prof:e.profissional||"", ini:e.inicio, fim:e.fim||"", alm:e.almIni&&e.almFim?`${e.almIni}–${e.almFim}`:"", horas:e.andamento?0:r2(c.total/60), emerg:!!e.emergencia, andamento:!!e.andamento, assin:assinOS(e), equip:q?`${q.tag||""} ${q.nome||""}`.trim():""}; }),
+    os: rows.slice(0,400).map(e=>{ const c = calc(e), q = e.equipId && eqDe(e.equipId); return {data:e.data, os:e.os||"", tracos:e.tracos||"", unid:e.cliente||"", desc:e.descricao||"", prof:e.profissional||"", ini:e.inicio, fim:e.fim||"", alm:e.almIni&&e.almFim?`${e.almIni}–${e.almFim}`:"", horas:e.andamento?0:r2(c.total/60), emerg:!!e.emergencia, andamento:!!e.andamento, assin:assinOS(e), equip:q?`${q.tag||""} ${q.nome||""}`.trim():""}; }),
     fechs: fechs.map(f=>({numero:f.numero, de:f.de, ate:f.ate, prof:f.profissional||"", horas:r2((+f.horas||0)/60), valor:F.portalValores!==false ? +f.valor||0 : 0, pago:fechSaldo(f)<=0.005}))};
 }
 let portalT = null;
@@ -795,7 +795,7 @@ function apItem(e, showDate, bad){
   const c = calc(e), lk = lockedE(e), nf = (e.fotos||[]).length;
   return `<button class="item" data-act="editAp" data-id="${esc(e.id)}">
     <span class="t">${showDate?`${fdate(e.data).slice(0,5)}<br>`:""}${esc(e.inicio)}–${e.andamento?"…":esc(e.fim)}${e.almIni&&e.almFim?`<br><small class="muted">alm. ${esc(e.almIni)}–${esc(e.almFim)}</small>`:""}</span>
-    <span class="main"><b>${e.os?`OS ${esc(e.os)}`:"Sem nº de OS"}${e.andamento?' <span class="pill info">Em andamento</span>':""}${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.exemplo?' <span class="pill">Exemplo</span>':""}${e._pend?' <span class="pill warn" title="Será enviado quando a internet voltar">⏳ a enviar</span>':""}${e.geo && !state.worker?` <span class="pill" role="link" data-act="abrirMapa" data-lat="${esc(e.geo.lat)}" data-lng="${esc(e.geo.lng)}" title="Onde estava ao iniciar (precisão ${e.geo.acc||"?"} m)">📍 local</span>`:""}</b>
+    <span class="main"><b>${e.os?`OS ${esc(e.os)}`:"Sem nº de OS"}${e.tracos?` <span class="pill">TracOS ${esc(e.tracos)}</span>`:""}${e.andamento?' <span class="pill info">Em andamento</span>':""}${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.exemplo?' <span class="pill">Exemplo</span>':""}${e._pend?' <span class="pill warn" title="Será enviado quando a internet voltar">⏳ a enviar</span>':""}${e.geo && !state.worker?` <span class="pill" role="link" data-act="abrirMapa" data-lat="${esc(e.geo.lat)}" data-lng="${esc(e.geo.lng)}" title="Onde estava ao iniciar (precisão ${e.geo.acc||"?"} m)">📍 local</span>`:""}</b>
       <span class="sub">${esc(e.descricao||"")}</span>
       <span class="sub" style="display:block">${[empOf(e), e.cliente].filter(Boolean).map(esc).join(" · ")}</span>
       ${e.profissional && !state.worker?`<span class="sub" style="display:block"><b style="display:inline;font-weight:600;color:var(--fg)">${esc(e.profissional)}</b></span>`:""}
@@ -814,6 +814,9 @@ function osLista(emp){
     const os = (p[0]||"").replace(/\D/g,""); if(os) out.set(os, {desc:p[1]||"", unid:p.slice(2).join(" - ")}); }));
   return out;
 }
+// ID do TracOS já usado antes nessa mesma OS (a OS pode durar vários dias)
+function tracosDe(os){ os = String(os||"").trim(); if(!os) return ""; const e = [...state.ap].filter(x=>x.os===os && x.tracos).sort((a,b)=>(b.data||"").localeCompare(a.data||""))[0]; return e ? e.tracos : ""; }
+const limpaTracos = v => String(v||"").replace(/[^\w.-]/g,"").slice(0,40);
 function osSugestoes(used){ const m = osLista(); m.forEach((v,k)=>{ if(!(k in used)) used[k] = [v.desc, v.unid].filter(Boolean).join(" · "); }); return used; }
 // escolheu uma OS da lista: completa serviço e unidade (se estiverem vazios)
 function osPreencher(os, descEl, unidEl){ const x = osLista().get(String(os||"").trim()); if(!x) return false;
@@ -821,9 +824,10 @@ function osPreencher(os, descEl, unidEl){ const x = osLista().get(String(os||"")
   if(unidEl && !unidEl.value && x.unid){ unidValor(unidEl, x.unid); unidEl.dispatchEvent(new Event("input", {bubbles:true})); }
   return true; }
 document.addEventListener("change", e=>{ const t = e.target, os = (t.value||"").trim(); if(!os) return;
-  if(t.id==="f-os") osPreencher(os, $("#f-desc"), $("#f-cli"));
-  else if(t.id==="cr-os") osPreencher(os, $("#cr-desc"), $("#cr-unid"));
-  else if(t.dataset && t.dataset.f==="os" && t.closest(".dayrow")){ const row = t.closest(".dayrow"); osPreencher(os, row.querySelector('[data-f="desc"]'), row.querySelector('[data-f="cli"]')); }
+  const tid = (el)=>{ if(el && !el.value.trim()){ const v = tracosDe(os); if(v){ el.value = v; el.dispatchEvent(new Event("input", {bubbles:true})); } } };
+  if(t.id==="f-os"){ tid($("#f-tid")); osPreencher(os, $("#f-desc"), $("#f-cli")); }
+  else if(t.id==="cr-os"){ tid($("#cr-tid")); osPreencher(os, $("#cr-desc"), $("#cr-unid")); }
+  else if(t.dataset && t.dataset.f==="os" && t.closest(".dayrow")){ const row = t.closest(".dayrow"); tid(row.querySelector('[data-f="tid"]')); osPreencher(os, row.querySelector('[data-f="desc"]'), row.querySelector('[data-f="cli"]')); }
   else return;
   const l = osLista(); if(l.size && !l.has(os.replace(/\D/g,""))) toast(`A OS ${os} não está na lista da contratante. Confira o número.`); });
 const unidsEmp = emp => lines(ficha(emp || state.cfg.contratante || "").unidades);
@@ -1447,6 +1451,7 @@ function apForm(e){
     <div class="grid2">
       <label class="field"><span>Data</span><input type="date" id="f-data" value="${esc(e.data)}" required></label>
       <label class="field"><span>Nº da ordem de serviço</span><input id="f-os" list="os-list-ap" inputmode="numeric" value="${esc(e.os||"")}" placeholder="Ex.: 48213"><datalist id="os-list-ap">${[...osLista().entries()].slice(0,300).map(([o,x])=>`<option value="${esc(o)}">${esc([x.desc,x.unid].filter(Boolean).join(" · "))}</option>`).join("")}</datalist></label>
+      <label class="field"><span>ID TracOS</span><input id="f-tid" inputmode="numeric" maxlength="40" value="${esc(e.tracos||"")}" placeholder="Nº do ID impresso no papel"></label>
     </div>
     ${profField}
     <label class="field"><span>Serviço executado</span><input id="f-desc" value="${esc(e.descricao||"")}" placeholder="Ex.: Troca de rolamento do elevador de canecas 02"></label>
@@ -1482,7 +1487,7 @@ function apForm(e){
       <span class="row">${isNew?"":`<button type="button" class="btn" data-act="dupAp">Duplicar</button>`}<button class="btn primary" type="submit">${isNew?"Salvar apontamento":"Salvar alterações"}</button></span></footer>
   </form>`;
 }
-const CAMPOS = [["data","Data",fdate],["os","OS"],["inicio","Início"],["fim","Término"],["almIni","Saída p/ almoço"],["almFim","Retorno almoço"],["descricao","Serviço"],["profissional","Funcionário"],["empresa","Empresa"],["cliente","Unidade"],["tipo","Cálculo",v=>TIPOS[v]||v],["emergencia","Emergência",v=>v?"sim":"não"],["obs","Obs."],["noAlmoco","Trabalhou no almoço",v=>v?"sim":"não"],["orcId","Orçamento",v=>v?orcNum(v):"—"],["excluido","Excluído",v=>v?"sim":"não"]];
+const CAMPOS = [["data","Data",fdate],["os","OS"],["tracos","ID TracOS"],["inicio","Início"],["fim","Término"],["almIni","Saída p/ almoço"],["almFim","Retorno almoço"],["descricao","Serviço"],["profissional","Funcionário"],["empresa","Empresa"],["cliente","Unidade"],["tipo","Cálculo",v=>TIPOS[v]||v],["emergencia","Emergência",v=>v?"sim":"não"],["obs","Obs."],["noAlmoco","Trabalhou no almoço",v=>v?"sim":"não"],["orcId","Orçamento",v=>v?orcNum(v):"—"],["excluido","Excluído",v=>v?"sim":"não"]];
 function difHist(a, b){ a = a||{}; b = b||{}; return CAMPOS.filter(([k])=>JSON.stringify(a[k]??"")!==JSON.stringify(b[k]??"")).map(([k,l,f])=>{ const F = f || (v=>v); return `${l}: ${esc(F(a[k])||"—")} → <b>${esc(F(b[k])||"—")}</b>`; }); }
 async function carregarHist(id){
   const box = $("#f-hist-box"); if(!box) return;
@@ -1508,7 +1513,7 @@ function readApForm(){
   const id = $("#apForm").dataset.id;
   const old = state.ap.find(x=>x.id===id) || {};
   const eqv = $("#f-eq") ? eqSplit($("#f-eq").value) : {equipId:old.equipId, prevId:old.prevId};
-  return {...old, ...eqv, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, almIni:$("#f-almi")?.value||"", almFim:$("#f-almf")?.value||"", cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo: $("#f-tipo") ? $("#f-tipo").value : (old.tipo||"auto"), noAlmoco: $("#f-noalm") ? $("#f-noalm").checked : !!old.noAlmoco, emergencia:$("#f-emerg").checked, acion: $("#f-emerg").checked ? {por:$("#f-ac-por").value.trim(), as:$("#f-ac-as").value, meio:$("#f-ac-meio").value, motivo:$("#f-ac-mot").value.trim()} : undefined, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])], fotoMeta: Object.fromEntries((state.apFotos||[]).map(id=>[id, (old.fotoMeta||{})[id] || state.fotoMetaNovo?.[id]]).filter(([,v])=>v))};
+  return {...old, ...eqv, id: id||undefined, data:$("#f-data").value, os:$("#f-os").value.trim(), descricao:$("#f-desc").value.trim(), inicio:$("#f-ini").value, fim:$("#f-fim").value, tracos:limpaTracos($("#f-tid")?.value), almIni:$("#f-almi")?.value||"", almFim:$("#f-almf")?.value||"", cliente:$("#f-cli").value.trim(), empresa:$("#f-emp").value.trim(), tipo: $("#f-tipo") ? $("#f-tipo").value : (old.tipo||"auto"), noAlmoco: $("#f-noalm") ? $("#f-noalm").checked : !!old.noAlmoco, emergencia:$("#f-emerg").checked, acion: $("#f-emerg").checked ? {por:$("#f-ac-por").value.trim(), as:$("#f-ac-as").value, meio:$("#f-ac-meio").value, motivo:$("#f-ac-mot").value.trim()} : undefined, obs:$("#f-obs").value.trim(), profissional: state.worker ? state.me : $("#f-prof1") ? $("#f-prof1").value : (selProfs()[0] || old.profissional || ""), orcId: $("#f-orc") ? $("#f-orc").value : (old.orcId||""), fotos:[...(state.apFotos||[])], fotoMeta: Object.fromEntries((state.apFotos||[]).map(id=>[id, (old.fotoMeta||{})[id] || state.fotoMetaNovo?.[id]]).filter(([,v])=>v))};
 }
 function lastEmp(){ let v=""; try{ v = localStorage.getItem("gaap-last-emp")||""; }catch(err){} return v || state.cfg.contratante || ""; }
 function selProfs(){ return [...document.querySelectorAll('input[name="f-prof"]:checked')].map(x=>x.value); }
@@ -1604,6 +1609,7 @@ function renderDayRows(){
   box.innerHTML = d.rows.map((r,i)=>`<div class="dayrow" data-r="${i}">
     <span class="num">${i+1}</span>
     <label class="field f-os"><span>Nº da OS</span><input data-f="os" list="os-list" inputmode="numeric" value="${esc(r.os)}" placeholder="Ex.: 2165557"></label>
+    <label class="field f-tid"><span>ID TracOS</span><input data-f="tid" inputmode="numeric" maxlength="40" value="${esc(r.tid||"")}" placeholder="ID do papel"></label>
     <label class="field f-ini"><span>Entrada</span><input type="time" data-f="ini" value="${esc(r.ini)}"></label>
     <label class="field f-almi"><span>Saída p/ almoço</span><input type="time" data-f="almIni" value="${esc(r.almIni||"")}"></label>
     <label class="field f-almf"><span>Retorno almoço</span><input type="time" data-f="almFim" value="${esc(r.almFim||"")}"></label>
@@ -1705,7 +1711,7 @@ async function submitDay(){
   try{
     for(const r of rows) for(const pr of quem){
       const row = d.rows[r.i]; row.ids ||= {}; const id = row.ids[pr||"_"] ||= uid();
-      await save(col, {...base, id, ...eqSplit(r.eq), almIni:r.almIni||"", almFim:r.almFim||"", noAlmoco:!!r.noAlm, obs:(r.obs||"").trim(), ...(r.emerg?{acion:{por:(r.acPor||"").trim(), as:r.acAs||"", meio:r.acMeio||"", motivo:(r.acMot||"").trim()}}:{}), data:d.data, os:r.os.trim(), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], fotoMeta:r.fotoMeta||{}, criadoEm:new Date().toISOString()});
+      await save(col, {...base, id, ...eqSplit(r.eq), almIni:r.almIni||"", almFim:r.almFim||"", noAlmoco:!!r.noAlm, obs:(r.obs||"").trim(), ...(r.emerg?{acion:{por:(r.acPor||"").trim(), as:r.acAs||"", meio:r.acMeio||"", motivo:(r.acMot||"").trim()}}:{}), data:d.data, os:r.os.trim(), tracos:limpaTracos(r.tid), descricao:r.desc.trim(), inicio:r.ini, fim:r.fim, cliente:(r.cli||d.unid).trim(), empresa:(d.emp||"").trim(), emergencia:!!r.emerg, profissional:pr, fotos:r.fotos||[], fotoMeta:r.fotoMeta||{}, criadoEm:new Date().toISOString()});
       n++;
     }
     try{ if(d.profs.length) localStorage.setItem("gaap-last-prof", JSON.stringify(d.profs)); if(d.emp) localStorage.setItem("gaap-last-emp", d.emp); }catch(err){}
@@ -2079,7 +2085,7 @@ function cronoForm(pre={}){
   return `<header><h2>${pre.troca?"Trocar de OS":"Iniciar OS agora"}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
   <form class="form" id="cronoForm">
     <p class="muted" style="margin:0">O início fica marcado agora (${nowHM()}). Quando terminar, toque em <b>Encerrar</b> na faixa do topo${pre.troca?"":" ou em <b>Trocar de OS</b> para passar direto para a próxima"}.</p>
-    <div class="grid2"><label class="field"><span>Nº da OS</span><input id="cr-os" list="os-list" inputmode="numeric" placeholder="Ex.: 2165557"></label>
+    <div class="grid2"><label class="field"><span>Nº da OS</span><input id="cr-os" list="os-list" inputmode="numeric" placeholder="Ex.: 2165557"></label><label class="field"><span>ID TracOS</span><input id="cr-tid" inputmode="numeric" maxlength="40" placeholder="ID do papel"></label>
     <label class="field"><span>Unidade</span>${unidCampo('id="cr-unid"', pre.emp||lastEmp(), pre.unid, "Selecione a unidade")}</label></div>
     <label class="field"><span>Serviço</span><input id="cr-desc" placeholder="Pode completar depois" value="${esc(pre.desc||"")}"></label>
     ${state.worker?"":`<label class="field"><span>Empresa</span><input id="cr-emp" list="emp-list" value="${esc(pre.emp||lastEmp())}"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>`}
@@ -2111,7 +2117,7 @@ async function submitCrono(){
   if(!quem.length){ toast("Marque quem está na OS."); return; }
   const agora = nowHM(), data = today(), lk = lockOf(data, emp); if(lk){ toast(lockMsg(lk)); return; }
   const em = $("#cr-emerg").checked;
-  const base = {...(state.worker ? {} : rateFor(emp, data)), data, inicio:agora, fim:"", andamento:true, tipo:"auto", os, descricao:$("#cr-desc").value.trim(), cliente:$("#cr-unid").value.trim(), empresa:emp, emergencia:em, criadoEm:new Date().toISOString(),
+  const base = {...(state.worker ? {} : rateFor(emp, data)), data, inicio:agora, fim:"", andamento:true, tipo:"auto", os, tracos:limpaTracos($("#cr-tid")?.value), descricao:$("#cr-desc").value.trim(), cliente:$("#cr-unid").value.trim(), empresa:emp, emergencia:em, criadoEm:new Date().toISOString(),
     ...(em?{acion:{por:$("#cr-ac-por").value.trim(), as:state.chamadoAt?.as || agora, meio:$("#cr-ac-meio").value, motivo:$("#cr-ac-mot").value.trim()}}:{})};
   const geo = await localizacao(); if(geo) base.geo = geo;
   try{
