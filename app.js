@@ -118,7 +118,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.08-2";
+const VERSAO = "2026.10.08-3";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -248,10 +248,10 @@ const orcAberto = o => ["aprovado","concluido"].includes(o.status);
 function orcValidade(o){ if(!o.data) return null; return ymd(addDays(parseYmd(o.data), +o.validadeDias||0)); }
 
 /* ---------- dados (Supabase) ---------- */
-const COLS = ["apontamentos","orcamentos","recebimentos","fechamentos","despesas","pagamentos","equipamentos","documentos"];
-const KEY = {apontamentos:"ap",orcamentos:"orc",recebimentos:"rec",fechamentos:"fech",despesas:"desp",pagamentos:"pag",equipamentos:"eq",documentos:"docs"};
+const COLS = ["apontamentos","orcamentos","recebimentos","fechamentos","despesas","pagamentos","equipamentos","documentos","ordens"];
+const KEY = {apontamentos:"ap",orcamentos:"orc",recebimentos:"rec",fechamentos:"fech",despesas:"desp",pagamentos:"pag",equipamentos:"eq",documentos:"docs",ordens:"ord"};
 const state = {
-  ready:false, cfg:clone(DEFAULT_CFG), ap:[], orc:[], rec:[], fech:[], desp:[], pag:[], eq:[], docs:[], perfis:[], worker:false, me:"", pub:null, hmode:"dia", osQ:"",
+  ready:false, cfg:clone(DEFAULT_CFG), ap:[], orc:[], rec:[], fech:[], desp:[], pag:[], eq:[], docs:[], ord:[], perfis:[], worker:false, me:"", pub:null, hmode:"dia", osQ:"",
   view:"painel", month:ym(today()), orcFilter:"todos", orcDraft:null, auth:"entrar",
   rep:{modo:"dia", dia:today(), de:ym(today())+"-01", ate:today(), valores:true, f:{prof:"__all",unid:"__all",emp:"__all"}, by:"", vazios:true, fmt:"dec"},
   hf:{f:{prof:"__all",unid:"__all",emp:"__all"}, by:""}, pby:"prof"
@@ -298,6 +298,13 @@ async function save(col, obj){
 }
 // envio de um registro ao servidor; erro de conexão vem marcado com {rede:true}
 async function saveNet(col, id, data, versao){
+  if(state.worker && col==="ordens"){
+    const {data:ret, error} = await sb.rpc("func_salvar_ordem", {p_id:id, p_data:data});
+    if(error){ if(ehRede(error)) throw {rede:true}; throw dbErr(error); }
+    const [, v] = String(ret||id).split("|"); const old = state.ord.find(x=>x.id===id) || {};
+    const row = {...old, ...data, id, ...(old.recebidaPor?{}:{recebidaPor:state.me}), ...(v?{_v:v}:{})}; if(!data.concluida){ delete row.concluida; delete row.concluidaEm; }
+    upsertLocal("ord", row); scheduleRender(); return id;
+  }
   if(state.worker){
     const {data:ret, error} = await sb.rpc("func_salvar_os", {p_id:id, p_data:{...data, ...(versao?{_v:versao}:{})}});
     if(error){ if(ehRede(error)) throw {rede:true}; const e = dbErr(error); if(e.conflito) await recarregarDoc(col, id).catch(()=>{}); throw e; }
@@ -457,11 +464,12 @@ async function loadOwnerInc(){
 }
 async function loadWorker(){
   const g = state.gen;
-  const [pc, os] = await Promise.all([sb.rpc("pub_config"), sb.rpc("minhas_os")]);
+  const [pc, os, ord] = await Promise.all([sb.rpc("pub_config"), sb.rpc("minhas_os"), sb.rpc("minhas_ordens")]);
   if(pc.error) throw pc.error; if(os.error) throw os.error;
   if(g!==state.gen) return false;
   state.pub = pc.data || {}; state.cfg = deepMerge(DEFAULT_CFG, state.pub.cfg || {}); holCache = {}; calcCache = new WeakMap();
   setList("ap", (os.data||[]).map(r=>({id:r.id, ...r.data})));
+  if(!ord.error) setList("ord", (ord.data||[]).map(r=>({id:r.id, ...r.data, _v:r.atualizado_em})));
   if(outbox.lista.length) reaplicarFila();
   return true;
 }
@@ -617,7 +625,7 @@ function render(){
   if(!state.ready){ v.innerHTML = `<div class="loading">Carregando seus dados…</div>`; return; }
   if(!sessOk()){ document.body.classList.add("locked"); v.innerHTML = vLogin(); state.rendered = "login"; const f = $("#lg-email") || $("#lg-senha"); if(f && window.innerWidth>700) f.focus(); return; }
   document.body.classList.remove("locked");
-  const fn = state.worker ? (state.view==="ajuda" ? vAjuda : vWorker) : ({painel:vPainel, horas:vHoras, relatorios:vRelatorios, orcamentos:vOrcamentos, orcEdit:vOrcEdit, financeiro:vFinanceiro, ajustes:vAjustes, mais:vMais, ajuda:vAjuda, escala:vEscala, atividade:vAtividade, equipe:vEquipe, equipamentos:vEquipamentos}[state.view] || vPainel);
+  const fn = state.worker ? (state.view==="ajuda" ? vAjuda : state.view==="carteira" ? vCarteira : vWorker) : ({carteira:vCarteira, painel:vPainel, horas:vHoras, relatorios:vRelatorios, orcamentos:vOrcamentos, orcEdit:vOrcEdit, financeiro:vFinanceiro, ajustes:vAjustes, mais:vMais, ajuda:vAjuda, escala:vEscala, atividade:vAtividade, equipe:vEquipe, equipamentos:vEquipamentos}[state.view] || vPainel);
   try{ v.innerHTML = cronoBar() + fn(); }
   catch(err){ console.error(err); v.innerHTML = `<div class="empty"><b>Não consegui mostrar esta tela.</b>Algum registro está com dado inválido. Toque em Atualizar; se continuar, me avise.<div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" data-act="recarregar">Atualizar</button></div></div>`; }
   state.rendered = state.view; document.body.dataset.ajaba = state.view==="ajustes" ? (state.ajAba||"valores") : "";
@@ -883,6 +891,11 @@ function lerTracos(txt, opt = {}){
   for(let k = 0; k < N.length && !r.centro; k++){ if(!/^(local vinculado|nome)\b/.test(N[k])) continue;
     for(const l of [linhas[k].replace(/^\S+(\s+vinculado)?\s*:?/i, ""), linhas[k+1]||""]){ const mc = l.match(/^\s*(\d{4})(?:[._ ]?\d{2,4})/); if(mc){ r.centro = mc[1]; break; } } }
   if(!r.centro){ const mc = String(txt).match(/\b(\d{4})[._]\d{3,4}/); if(mc) r.centro = mc[1]; }
+  // vencimento (papel: "Data de Vencimento: 06/11/2026"; tela: rótulo e a data na linha de baixo), prioridade e categoria
+  const iv = N.findIndex(l => /vencimento/.test(l));
+  if(iv >= 0) for(const l of [linhas[iv], linhas[iv+1]||"", linhas[iv+2]||""]){ const md = l.match(/\b([0-3]?\d)\/([01]?\d)\/(20\d\d)\b/); if(md){ r.venc = `${md[3]}-${pad(+md[2])}-${pad(+md[1])}`; break; } }
+  const mp = String(txt).match(/\b([1-5])\s*[-–]?\s*(urgente|emerg\S*|elevad[oa]|alt[oa]|m[eé]di[oa]|baix[oa]|cr[ií]tic[oa])\b/i); if(mp) r.prior = `${mp[1]}-${mp[2][0].toUpperCase()}${mp[2].slice(1).toLowerCase()}`;
+  const mk = String(txt).match(/\b(0\d\d)\s*[-–.]\s*(manut\S*\s+\S+)/i); if(mk) r.cat = `${mk[1]} - ${mk[2].replace(/[|.,;]+$/, "")}`;
   return r;
 }
 const ehNota = v => /^20\d{7}$/.test(v); // nota SAP da Brejeiro: 9 dígitos começando com 20 (ex.: 200186907)
@@ -916,58 +929,171 @@ async function textoPdf(file){
 // nome do arquivo do TracOS: "22316_000002218080_-_000200186907_-_VERIFICAR_BICA_….pdf"
 function lerNomeTracos(nome){ const m = String(nome||"").match(/(?:^|[^\d])(\d{3,8})_(\d{8,14})_-_(\d{8,14})_-_(.+?)\.pdf$/i); if(!m) return null;
   return {id:m[1], os:m[2].replace(/^0+/, ""), nota:m[3].replace(/^0+/, ""), titulo:limparTitulo(m[4].replace(/_/g, " ")), centro:"", tituloFechado:true, conf:{id:0.9, os:0.9, titulo:0.6}}; }
+function juntarExtras(r, b){ if(b) for(const c of ["venc","prior","cat"]) if(!r[c] && b[c]) r[c] = b[c]; return r; }
 async function papelLer(alvo, file){
   const pdf = /\.pdf$/i.test(file.name) || file.type==="application/pdf";
   toast(pdf ? "Lendo o PDF da OS…" : "Lendo o papel… (na primeira vez demora um pouco)");
+  papelUI(alvo, file, await lerPapelArquivo(file), pdf);
+}
+async function lerPapelArquivo(file){
+  const pdf = /\.pdf$/i.test(file.name) || file.type==="application/pdf";
   let r = null, txt = "";
   try{
     if(pdf){ txt = await textoPdf(file); r = lerTracos(txt, {tamId:99}); r = juntarLeituras(r, lerNomeTracos(file.name)); }
     else { const tam = tamIdTracos(); txt = await ocrImagem(file); r = lerTracos(txt, {tamId:tam});
-      if(!leituraBoa(r)){ toast("Conferindo de novo…"); const t2 = await ocrImagem(file, "sombra"); r = juntarLeituras(r, lerTracos(t2, {tamId:tam})); txt += "\n" + t2; } }
+      if(!leituraBoa(r)){ toast("Conferindo de novo…"); const t2 = await ocrImagem(file, "sombra"), r2 = lerTracos(t2, {tamId:tam}); r = juntarExtras(juntarLeituras(r, r2), r2); txt += "\n" + t2; } }
   }catch(err){ toast("Não consegui ler. Confira e digite os números."); }
   r ||= {id:"", os:"", nota:"", titulo:"", centro:"", conf:{}};
-  r.nums = [...new Set((String(txt).replace(/(\d) (\d)/g, "$1$2").match(/\d{4,}/g)||[]).map(x=>x.replace(/^0{3,}/, "")))].filter(x=>x.length>=4).slice(0, 10);
-  papelUI(alvo, file, r, pdf);
+  // números para tocar e corrigir: os soltos e os partidos por um espaço (sem colar dois números diferentes)
+  const brutos = String(txt).match(/\d[\d ]*\d|\d/g) || [], cand = [];
+  brutos.forEach(t=>{ const j = t.replace(/ /g, ""); if(j.length <= 12) cand.push(j); else t.split(" ").forEach(x=>cand.push(x)); });
+  r.nums = [...new Set(cand.map(x=>x.replace(/^0{3,}/, "")).filter(x=>x.length>=4 && x.length<=10))].slice(0, 10);
+  return r;
 }
 function papelUI(alvo, file, r, pdf){
   document.getElementById("papelbox")?.remove();
   const emp = alvo.row!=null ? (state.day?.emp || lastEmp()) : alvo.form==="cr" ? ($("#cr-emp")?.value || lastEmp()) : ($("#f-emp")?.value || lastEmp());
   const us = unidsEmp(emp), unid = r.centro ? (us.find(u=>u.startsWith(r.centro)) || "") : "";
-  const el = document.createElement("div"); el.id = "papelbox"; el.className = "assinpad"; state.papel = {alvo, file, pdf};
+  const el = document.createElement("div"); el.id = "papelbox"; el.className = "assinpad"; state.papel = {alvo, file, pdf, emp};
   const duv = c => (r.conf?.[c]||0) < 0.8 ? ' class="duvida"' : "";
   el.innerHTML = `<div class="assinbox"><h3 style="margin:0">Papel da OS</h3>
     ${pdf?`<p class="muted" style="margin:0">PDF: <b>${esc(file.name)}</b></p>`:`<img src="${URL.createObjectURL(file)}" alt="Foto do papel" style="max-height:200px;object-fit:contain;width:100%;border-radius:8px;background:#000">`}
     <div class="grid2"><label class="field"><span>Nº da OS</span><input id="pp-os" inputmode="numeric" value="${esc(r.os)}"${duv("os")}></label><label class="field"><span>ID TracOS</span><input id="pp-tid" inputmode="numeric" value="${esc(r.id)}"${duv("id")}></label></div>
     <label class="field"><span>Título (vai para "Serviço executado")</span><input id="pp-tit" value="${esc(r.titulo)}"${duv("titulo")}></label>
     <div class="grid2">${us.length?`<label class="field"><span>Unidade</span><select id="pp-unid"><option value="">${r.centro?`(centro ${esc(r.centro)} não cadastrado)`:"— não mudar —"}</option>${us.map(u=>`<option ${u===unid?"selected":""}>${esc(u)}</option>`).join("")}</select></label>`:""}
-</div><input type="hidden" id="pp-nota" value="${esc(r.nota)}">
+<label class="field"><span>Vencimento</span><input type="date" id="pp-venc" value="${esc(r.venc||"")}"></label></div><input type="hidden" id="pp-nota" value="${esc(r.nota)}"><input type="hidden" id="pp-prior" value="${esc(r.prior||"")}"><input type="hidden" id="pp-cat" value="${esc(r.cat||"")}">
     ${(r.nums||[]).length?`<div class="field"><span>Números encontrados (toque para colocar no campo selecionado)</span><div class="row">${r.nums.map(n=>`<button type="button" class="btn sm" data-act="papelNum" data-n="${esc(n)}">${esc(n)}</button>`).join("")}</div></div>`:""}
     <p class="muted" style="margin:0;font-size:.85rem">${!r.os && !r.id && !r.titulo ? "Não consegui ler esta foto. Tire outra com o papel reto e bem iluminado, ou digite acima." : "Confira antes de usar. Campos em amarelo têm menos certeza."}</p>
     ${assets && !pdf?`<label class="check"><input type="checkbox" id="pp-anexar" checked> Anexar a foto do papel na OS</label>`:""}
-    <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-act="papelFechar">Cancelar</button><button type="button" class="btn primary" data-act="papelUsar">Usar estes dados</button></div></div>`;
+    ${alvo.nova ? `<div class="papelacoes"><button type="button" class="btn primary" data-act="papelAcao" data-acao="iniciar">▶ Guardar e iniciar agora</button><button type="button" class="btn" data-act="papelAcao" data-acao="lancar">+ Guardar e lançar horas</button><button type="button" class="btn" data-act="papelAcao" data-acao="proximo">📷 Guardar e fotografar o próximo</button><button type="button" class="btn" data-act="papelAcao" data-acao="guardar">Só guardar na carteira</button><button type="button" class="btn" data-act="papelFechar">Cancelar</button></div>`
+      : `<div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-act="papelFechar">Cancelar</button><button type="button" class="btn primary" data-act="papelUsar">Usar estes dados</button></div>`}</div>`;
   document.body.appendChild(el); state.papelCampo = !r.os ? "pp-os" : !r.id ? "pp-tid" : "pp-os";
   el.addEventListener("focusin", e=>{ if(/^pp-(os|tid)$/.test(e.target.id)) state.papelCampo = e.target.id; });
 }
-async function papelAplicar(){
-  const p = state.papel; if(!p) return;
-  const os = $("#pp-os").value.replace(/\D/g,""), tid = limpaTracos($("#pp-tid").value), tit = $("#pp-tit").value.trim(), unid = $("#pp-unid")?.value || "", nota = $("#pp-nota").value.replace(/\D/g,"").slice(0,14), anexar = $("#pp-anexar")?.checked;
+async function papelAplicar(acao){
+  const p = state.papel; if(!p) return; const v = id => ($("#"+id)?.value||"").trim();
+  const os = v("pp-os").replace(/\D/g,""), tid = limpaTracos(v("pp-tid")), tit = v("pp-tit"), unid = v("pp-unid"), nota = v("pp-nota").replace(/\D/g,"").slice(0,14), venc = v("pp-venc"), prior = v("pp-prior"), cat = v("pp-cat"), anexar = $("#pp-anexar")?.checked;
+  if(p.alvo.nova && !os){ toast("Informe o nº da OS."); $("#pp-os")?.focus(); return; }
   $("#papelbox")?.remove(); state.papel = null;
-  const pôr = (el, v) => { if(el && v){ if(el.tagName==="SELECT") unidValor(el, v); else el.value = v; el.dispatchEvent(new Event("input", {bubbles:true})); } };
+  const pôr = (el, val) => { if(el && val){ if(el.tagName==="SELECT") unidValor(el, val); else el.value = val; el.dispatchEvent(new Event("input", {bubbles:true})); } };
   const aplicar = (osEl, tidEl, descEl, unidEl) => { pôr(tidEl, tid); pôr(descEl, tit); pôr(unidEl, unid); if(osEl){ osEl.value = os; osEl.dispatchEvent(new Event("input", {bubbles:true})); osEl.dispatchEvent(new Event("change", {bubbles:true})); } };
+  const ids = anexar && !p.pdf ? await uploadPhotos([p.file], {tipo:"antes", os, unid}) : [];
+  // todo papel lido entra (ou atualiza) na carteira de OS recebidas
+  let ord = null; if(os) ord = await guardarNaCarteira({os, tracos:tid, titulo:tit, unidade:unid, empresa:p.emp||"", nota, vencimento:venc, prioridade:prior, categoria:cat, foto:ids[0]}).catch(err=>{ toast(writeErr(err)); return null; });
   if(p.alvo.row!=null){ const row = document.querySelector(`.dayrow[data-r="${p.alvo.row}"]`), r = state.day.rows[p.alvo.row];
     aplicar(row?.querySelector('[data-f="os"]'), row?.querySelector('[data-f="tid"]'), row?.querySelector('[data-f="desc"]'), row?.querySelector('[data-f="cli"]'));
-    if(r) r.nota = nota;
-    if(anexar && r){ const ids = await uploadPhotos([p.file], {tipo:"antes", os, unid:r.cli||state.day.unid}); r.fotoMeta = {...(r.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; r.fotos = [...(r.fotos||[]), ...ids]; renderDayRows(); updateDay(); } }
+    if(r){ r.nota = nota; if(ids.length){ r.fotoMeta = {...(r.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; r.fotos = [...(r.fotos||[]), ...ids]; renderDayRows(); updateDay(); } } }
   else if(p.alvo.form==="cr"){ aplicar($("#cr-os"), $("#cr-tid"), $("#cr-desc"), $("#cr-unid")); const h = $("#cr-nota"); if(h) h.value = nota; }
-  else { aplicar($("#f-os"), $("#f-tid"), $("#f-desc"), $("#f-cli")); const h = $("#f-nota"); if(h) h.value = nota;
-    if(anexar){ const ids = await uploadPhotos([p.file], {tipo:"antes", os, unid:$("#f-cli")?.value.trim()}); state.apFotos = [...(state.apFotos||[]), ...ids]; const box = $("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); } state.modalDirty = true; }
-  // o mesmo ID do TracOS já lançado em outra OS? avisa (pode ser erro de leitura ou de digitação)
+  else if(p.alvo.form==="ap"){ aplicar($("#f-os"), $("#f-tid"), $("#f-desc"), $("#f-cli")); const h = $("#f-nota"); if(h) h.value = nota;
+    if(ids.length){ state.apFotos = [...(state.apFotos||[]), ...ids]; const box = $("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); } state.modalDirty = true; }
+  else if(p.alvo.nova && ord){
+    if(acao==="iniciar") ordIniciar(ord); else if(acao==="lancar") ordLancar(ord);
+    else { toast(`OS ${os} guardada na carteira.`); if(state.view==="carteira" || state.view==="painel" || state.worker){ state.rendered = null; render(); } }
+    return;
+  }
   const outro = tid && state.ap.find(e=>e.tracos===tid && e.os && e.os!==os);
   toast(outro ? `Atenção: o ID TracOS ${tid} já foi usado na OS ${outro.os}. Confira.` : `OS ${os||"?"} · ID ${tid||"?"}${tit?` · ${tit.slice(0,40)}`:""}`);
 }
-document.addEventListener("change", e=>{ const t = e.target; if(t.dataset?.papel==null || !t.files?.length) return; const f = t.files[0]; t.value = "";
-  papelLer(t.dataset.papel==="ap" ? {form:"ap"} : t.dataset.papel==="cr" ? {form:"cr"} : {row:+t.dataset.papel}, f); });
+document.addEventListener("change", e=>{ const t = e.target; if(t.dataset?.papel==null || !t.files?.length) return; const fs = [...t.files], tipo = t.dataset.papel; t.value = ""; if(tipo==="proximo") t.remove();
+  if(tipo==="lote" && fs.length > 1) return papelLote(fs);
+  papelLer(tipo==="ap" ? {form:"ap"} : tipo==="cr" ? {form:"cr"} : (tipo==="nova" || tipo==="lote" || tipo==="proximo") ? {nova:true} : {row:+tipo}, fs[0]); });
+const papelNovaBtn = (cls="btn") => `<label class="${cls} papelbtn">📷 Nova OS pelo papel<input type="file" accept="image/*" capture="environment" data-papel="nova" hidden></label>`;
+const papelLoteBtn = () => `<label class="btn papelbtn" title="Escolha uma ou várias fotos/PDFs de OS">📚 Vários papéis / PDF<input type="file" accept="image/*,application/pdf,.pdf" multiple data-papel="lote" hidden></label>`;
 const papelBtn = alvo => `<span class="papelbtns"><label class="btn sm papelbtn" title="Tirar foto do papel da OS">📷 Foto do papel<input type="file" accept="image/*" capture="environment" data-papel="${alvo}" hidden></label><label class="btn sm papelbtn" title="Escolher o PDF da OS ou uma foto da galeria">📄 PDF / galeria<input type="file" accept="image/*,application/pdf,.pdf" data-papel="${alvo}" hidden></label></span>`;
+/* ---------- carteira de OS recebidas (papel/tela do TracOS) ---------- */
+const soDig = v => String(v||"").replace(/\D/g, "");
+function ordemDe(os, emp){ const k = soDig(os); if(!k) return null; return state.ord.find(o=>soDig(o.os)===k && (!emp || !o.empresa || chaveEmp(o.empresa)===chaveEmp(emp))) || null; }
+async function guardarNaCarteira(c){
+  const old = ordemDe(c.os, c.empresa), novo = {}; Object.entries(c).forEach(([k, v])=>{ if(v!=null && String(v).trim()!=="") novo[k] = v; });
+  const o = old ? {...old, ...novo} : {...novo, empresa:c.empresa || state.cfg.contratante || "", recebidaEm:new Date().toISOString(), recebidaPor:state.me || perfil?.nome || nomeDoEmail(session?.user?.email)};
+  o.id = old?.id || uid(); await save("ordens", o); return state.ord.find(x=>x.id===o.id) || o;
+}
+const ST_ORD = {recebida:["Recebida","info"], execucao:["Em execução","warn"], concluida:["Concluída","good"], medida:["Medida","good"]};
+function ordStatus(o){
+  const k = soDig(o.os), aps = state.ap.filter(e=>soDig(e.os)===k && !e.orcId && (!o.empresa || chaveEmp(empOf(e))===chaveEmp(o.empresa)));
+  const feitas = aps.filter(e=>!e.andamento), min = feitas.reduce((s,e)=>s+calc(e).total,0), outros = +o._naps || 0;
+  const st = feitas.length && feitas.every(e=>lockedE(e)) && (o.concluida || !aps.some(e=>e.andamento)) ? "medida" : o.concluida ? "concluida" : (aps.length || outros) ? "execucao" : "recebida";
+  return {st, aps, min, and:aps.some(e=>e.andamento)};
+}
+const vencOrd = o => o.vencimento ? diasEntre(today(), o.vencimento) : null;
+const ordAberta = st => st==="recebida" || st==="execucao";
+function vencChip(o, st){ const d = vencOrd(o); if(d==null) return ""; if(!ordAberta(st)) return `<span class="muted">venc. ${fdate(o.vencimento)}</span>`;
+  return d < 0 ? `<span class="pill bad">vencida há ${-d} dia${d<-1?"s":""}</span>` : d <= 3 ? `<span class="pill warn">${d===0?"vence hoje":`vence em ${d} dia${d>1?"s":""}`}</span>` : `<span class="muted">vence ${fdate(o.vencimento)}</span>`; }
+function carteiraResumo(){
+  const ls = state.ord.map(o=>({o, ...ordStatus(o)})), n = st => ls.filter(x=>x.st===st).length, venc = ls.filter(x=>ordAberta(x.st) && vencOrd(x.o)!=null && vencOrd(x.o)<=3).length;
+  if(!state.ord.length) return `<div class="banner"><span>📋 <b>Carteira de OS:</b> fotografe o papel (ou a tela do TracOS) de cada OS que a Brejeiro passar. O app guarda e acompanha até a medição.</span><div class="row">${papelNovaBtn("btn sm primary")}<button class="btn sm" data-act="nav" data-view="carteira">Abrir</button></div></div>`;
+  return `<div class="banner ${venc?"warn":""}"><span>📋 <b>Carteira de OS:</b> ${n("recebida")} recebida(s) · ${n("execucao")} em execução${venc?` · <b>${venc} vencendo</b>`:""}</span><div class="row">${papelNovaBtn("btn sm primary")}<button class="btn sm" data-act="nav" data-view="carteira">Ver carteira</button></div></div>`;
+}
+function vCarteira(){
+  const f = state.cartF || "abertas", q = (state.cartQ||"").toLowerCase();
+  const ls = state.ord.map(o=>({o, ...ordStatus(o), d:vencOrd(o)})), cont = {recebida:0, execucao:0, concluida:0, medida:0}; ls.forEach(x=>cont[x.st]++);
+  const urg = x => ordAberta(x.st) && x.d!=null && x.d<=3 ? 0 : 1;
+  const vis = ls.filter(x=>(f==="todas" || (f==="abertas" ? ordAberta(x.st) : x.st===f)) && (!q || `${x.o.os} ${x.o.tracos||""} ${x.o.titulo||""} ${x.o.unidade||""}`.toLowerCase().includes(q)))
+    .sort((a,b)=>urg(a)-urg(b) || (a.d??9999)-(b.d??9999) || String(b.o.recebidaEm||"").localeCompare(String(a.o.recebidaEm||"")));
+  const chip = (k, l, n) => `<button class="chipbtn" data-act="cartFiltro" data-f="${k}" aria-pressed="${f===k}">${l}${n!=null?` (${n})`:""}</button>`;
+  return `<div class="pagehead"><div><span class="eyebrow">Carteira de OS</span><h1>OS recebidas</h1><p class="muted">Cada papel ou tela do TracOS fotografado vira uma OS da carteira, de recebida até medida no fechamento.</p></div><div class="row"><button class="btn" data-act="nav" data-view="${state.worker?"painel":"mais"}">‹ Voltar</button></div></div>
+  <div class="row" style="margin-bottom:10px">${papelNovaBtn("btn primary")}${papelLoteBtn()}<button class="btn" data-act="ordNova">+ Digitar OS</button></div>
+  <div class="filters" role="group" aria-label="Situação">${chip("abertas","Abertas", cont.recebida+cont.execucao)}${chip("recebida","Recebidas", cont.recebida)}${chip("execucao","Em execução", cont.execucao)}${chip("concluida","Concluídas", cont.concluida)}${chip("medida","Medidas", cont.medida)}${chip("todas","Todas", ls.length)}</div>
+  ${ls.length>6?`<div class="panel" style="margin:8px 0"><label class="field"><span>Buscar</span><input id="cart-q" value="${esc(state.cartQ||"")}" placeholder="Nº da OS, ID, título, unidade…"></label></div>`:""}
+  ${vis.length?`<div class="fechlist">${vis.map(x=>{ const o = x.o, [l, cl] = ST_ORD[x.st]; return `<div class="fechcard ordcard">
+    <div class="fc-top"><span><b class="mono">OS ${esc(o.os)}</b>${o.tracos?` · <span class="mono">#${esc(o.tracos)}</span>`:""}</span><span class="pill ${cl}">${l}${x.and?" · ▶":""}</span></div>
+    ${o.titulo?`<p style="margin:0"><b>${esc(o.titulo)}</b></p>`:""}
+    <p class="muted" style="margin:0;font-size:.85rem">${[o.unidade, o.categoria, o.prioridade].filter(Boolean).map(esc).join(" · ")}</p>
+    <p class="muted" style="margin:0;font-size:.85rem">${vencChip(o, x.st)} ${o.recebidaEm?`· recebida ${fdate(String(o.recebidaEm).slice(0,10))}${o.recebidaPor?` por ${esc(o.recebidaPor)}`:""}`:""}${x.min?` · <b>${fdec(x.min)} h</b> lançadas`:""}${o.concluida && o.concluidaEm?` · concluída ${fdate(String(o.concluidaEm).slice(0,10))}`:""}</p>
+    <div class="row fc-acts">${x.st!=="medida"?`<button class="btn sm primary" data-act="ordIniciar" data-id="${esc(o.id)}">▶ Iniciar</button><button class="btn sm" data-act="ordLancar" data-id="${esc(o.id)}">+ Lançar horas</button>`:""}
+      ${x.st==="medida"?"":o.concluida?`<button class="btn sm" data-act="ordConcluir" data-id="${esc(o.id)}" data-v="0">↺ Reabrir</button>`:`<button class="btn sm" data-act="ordConcluir" data-id="${esc(o.id)}" data-v="1">✓ Concluir</button>`}
+      ${o.foto?`<button class="btn sm" data-act="fotoVer" data-id="${esc(o.foto)}">📷 Papel</button>`:""}${state.worker?"":`<button class="btn sm" data-act="ordEditar" data-id="${esc(o.id)}">Editar</button>`}</div></div>`; }).join("")}</div>`
+  :`<div class="empty"><b>${ls.length?"Nada nesta situação":"Nenhuma OS na carteira"}</b>${ls.length?"Escolha outra situação acima.":"Toque em <b>📷 Nova OS pelo papel</b> e fotografe o papel ou a tela do TracOS."}</div>`}`;
+}
+function ordIniciar(o){ state.crIds = null; openModal(cronoForm({emp:o.empresa, unid:o.unidade, desc:o.titulo}));
+  const pôr = (id, v) => { const el = $("#"+id); if(el && v) el.value = v; }; pôr("cr-os", o.os); pôr("cr-tid", o.tracos); pôr("cr-nota", o.nota); setTimeout(()=>$("#cronoForm [type=submit]")?.focus(), 50); }
+function ordLancar(o){ A.newDay(); const d = state.day; if(!d) return;
+  let i = d.rows.findIndex(r=>!r.os && !r.desc && !r.fim); if(i < 0){ A.dayAdd(); i = d.rows.length - 1; }
+  const row = document.querySelector(`.dayrow[data-r="${i}"]`); if(!row) return; const r = d.rows[i];
+  const pôr = (sel, v) => { const el = row.querySelector(sel); if(el && v){ if(el.tagName==="SELECT") unidValor(el, v); else el.value = v; el.dispatchEvent(new Event("input", {bubbles:true})); } };
+  pôr('[data-f="tid"]', o.tracos); pôr('[data-f="desc"]', o.titulo); pôr('[data-f="cli"]', o.unidade); pôr('[data-f="os"]', o.os); r.nota = o.nota || "";
+  setTimeout(()=>row.querySelector('[data-f="ini"]')?.focus(), 80); }
+function ordForm(o){
+  return `<header><h2>${o.id?"Editar":"Nova"} OS da carteira</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
+  <form class="form" id="ordForm" data-id="${esc(o.id||"")}">
+    <div class="grid2"><label class="field"><span>Nº da OS</span><input id="od-os" inputmode="numeric" required value="${esc(o.os||"")}"></label><label class="field"><span>ID TracOS</span><input id="od-tid" inputmode="numeric" value="${esc(o.tracos||"")}"></label></div>
+    <label class="field"><span>Título</span><input id="od-tit" value="${esc(o.titulo||"")}"></label>
+    <div class="grid2"><label class="field"><span>Empresa</span><input id="od-emp" list="emp-list" value="${esc(o.empresa||lastEmp())}"><datalist id="emp-list">${dimVals("emp").map(v=>`<option value="${esc(v)}">`).join("")}</datalist></label>
+    <label class="field"><span>Unidade</span>${unidCampo('id="od-unid"', o.empresa||lastEmp(), o.unidade, "Selecione a unidade")}</label>
+    <label class="field"><span>Vencimento</span><input type="date" id="od-venc" value="${esc(o.vencimento||"")}"></label><label class="field"><span>Prioridade</span><input id="od-prior" value="${esc(o.prioridade||"")}" placeholder="Ex.: 2-Elevado"></label></div>
+    <label class="field"><span>Observação</span><input id="od-obs" value="${esc(o.obs||"")}"></label>
+    <footer>${o.id && !state.worker?`<button type="button" class="btn danger" data-act="ordExcluir" data-id="${esc(o.id)}">Excluir</button>`:"<span></span>"}<button class="btn primary" type="submit">Salvar</button></footer>
+  </form>`;
+}
+/* várias fotos/PDFs de uma vez: lê tudo e mostra uma lista para conferir antes de guardar */
+async function papelLote(files){
+  const out = [];
+  for(const [i, f] of files.entries()){ toast(`Lendo ${i+1} de ${files.length}…`); let r = {}; try{ r = await lerPapelArquivo(f); }catch(e){} out.push({f, r, pdf:/\.pdf$/i.test(f.name) || f.type==="application/pdf"}); }
+  state.lote = out; loteUI();
+}
+function loteUI(){
+  document.getElementById("papelbox")?.remove(); const L = state.lote || [], emp = state.cfg.contratante || lastEmp(), us = unidsEmp(emp);
+  const el = document.createElement("div"); el.id = "papelbox"; el.className = "assinpad";
+  el.innerHTML = `<div class="assinbox"><h3 style="margin:0">${L.length} papéis lidos</h3><p class="muted" style="margin:0">Confira cada um. Os campos em amarelo têm menos certeza.</p>
+    <div class="lotelista">${L.map(({f, r, pdf}, i)=>{ const unid = r.centro ? (us.find(u=>u.startsWith(r.centro)) || "") : "", ja = ordemDe(r.os, emp), duv = c => (r.conf?.[c]||0) < 0.8 ? ' class="duvida"' : "";
+      return `<div class="loteitem" data-i="${i}"><label class="lotehead"><input type="checkbox" class="lt-ok" ${r.os?"checked":""}><span><b>${i+1}.</b> ${esc(f.name.length>30?f.name.slice(0,28)+"…":f.name)} ${ja?'<span class="pill info">já na carteira</span>':""}${!r.os?'<span class="pill bad">sem nº</span>':""}</span></label>
+        ${pdf?"":`<img src="${URL.createObjectURL(f)}" alt="" class="lotefoto">`}
+        <div class="grid2"><label class="field"><span>Nº da OS</span><input class="lt-os" inputmode="numeric" value="${esc(r.os||"")}"${duv("os")}></label><label class="field"><span>ID TracOS</span><input class="lt-tid" inputmode="numeric" value="${esc(r.id||"")}"${duv("id")}></label></div>
+        <label class="field"><span>Título</span><input class="lt-tit" value="${esc(r.titulo||"")}"${duv("titulo")}></label>
+        <div class="grid2">${us.length?`<label class="field"><span>Unidade</span><select class="lt-unid"><option value="">—</option>${us.map(u=>`<option ${u===unid?"selected":""}>${esc(u)}</option>`).join("")}</select></label>`:""}<label class="field"><span>Vencimento</span><input type="date" class="lt-venc" value="${esc(r.venc||"")}"></label></div></div>`; }).join("")}</div>
+    ${assets?`<label class="lotehead"><input type="checkbox" id="lt-anexar" checked><span>Guardar a foto de cada papel</span></label>`:""}
+    <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-act="papelFechar">Cancelar</button><button type="button" class="btn primary" data-act="loteSalvar">Guardar na carteira</button></div></div>`;
+  document.body.appendChild(el);
+}
+async function loteSalvar(b){
+  const L = state.lote || [], emp = state.cfg.contratante || lastEmp(), anexar = $("#lt-anexar")?.checked; let n = 0, falha = 0; b.disabled = true;
+  const itens = [...document.querySelectorAll("#papelbox .loteitem")].map(el=>({el, x:L[+el.dataset.i]})).filter(({el})=>el.querySelector(".lt-ok").checked);
+  for(const {el, x} of itens){ const v = c => (el.querySelector(c)?.value||"").trim(), os = v(".lt-os").replace(/\D/g,""); if(!os) continue;
+    try{ const ids = anexar && !x.pdf ? await uploadPhotos([x.f], {tipo:"antes", os, unid:v(".lt-unid")}) : [];
+      await guardarNaCarteira({os, tracos:limpaTracos(v(".lt-tid")), titulo:v(".lt-tit"), unidade:v(".lt-unid"), empresa:emp, nota:x.r.nota||"", vencimento:v(".lt-venc"), prioridade:x.r.prior||"", categoria:x.r.cat||"", foto:ids[0]}); n++; }
+    catch(err){ falha++; } }
+  $("#papelbox")?.remove(); state.lote = null; toast(`${n} OS guardada(s) na carteira${falha?` · ${falha} com erro`:""}.`); state.view = "carteira"; state.rendered = null; render();
+}
 function osSugestoes(used){ const m = osLista(); m.forEach((v,k)=>{ if(!(k in used)) used[k] = [v.desc, v.unid].filter(Boolean).join(" · "); }); return used; }
 // escolheu uma OS da lista: completa serviço e unidade (se estiverem vazios)
 function osPreencher(os, descEl, unidEl){ const x = osLista().get(String(os||"").trim()); if(!x) return false;
@@ -1089,7 +1215,8 @@ function vWorker(){
   const mine = state.ap.filter(e=>e.profissional===me), list = mine.filter(e=>ym(e.data)===state.month).sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio));
   const c = sumCalc(list), byDay = {}; list.forEach(e=>(byDay[e.data] ||= []).push(e));
   return `${chamadosHtml()}${pushConvite()}<div class="pagehead"><div><span class="eyebrow">Olá, ${esc(me)}</span><h1>Minhas OS</h1><p class="muted">Lance cada OS com o horário de início e de término.</p></div>
-    <div class="row">${monthNav()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button><button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
+    <div class="row">${monthNav()}${papelNovaBtn()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button><button class="btn primary" data-act="newDay">+ Lançar OS do dia</button></div></div>
+  ${carteiraResumo()}
   ${escalaHoje()}
   ${confHtml(conferencia(ymd(addDays(parseYmd(today()),-7)), today(), me), "Faltou lançar?", 5)}
   <p style="margin:0 0 12px"><button class="btn sm" data-act="nav" data-view="ajuda">📖 Como usar o app</button></p>
@@ -1105,9 +1232,10 @@ function vMais(){
   return `<div class="pagehead"><div><span class="eyebrow">Mais</span><h1>Ferramentas</h1></div></div>
   ${instalarHtml()}
   <div class="maisgrid">
+    ${card("carteira","📋 OS recebidas (carteira)","Papéis e telas do TracOS: recebidas, em execução, concluídas e medidas")}
     ${card("equipe","Equipe: acerto e pagamentos","Quanto pagar a cada técnico, vales, recibos")}
     ${card("equipe","Documentos e validades","ASO, NR-10, NR-35, integração, certidões")}
-    ${card("equipamentos","Equipamentos e preventivas","Histórico por máquina e plano de preventivas")}
+    ${state.cfg.preventivas?card("equipamentos","Equipamentos e preventivas","Histórico por máquina e plano de preventivas"):""}
     ${card("ajuda","📖 Como usar","Passo a passo de cada parte do sistema")}
     ${card("escala","Escala da semana","Quem vai para qual unidade em cada dia")}
     ${card("atividade","Quem fez o quê","Tudo o que foi criado, alterado ou excluído, e por quem")}
@@ -1121,6 +1249,7 @@ function vAjuda(){
   const T = (t, passos) => `<details class="panel ajuda"><summary><b>${t}</b></summary><ol>${passos.map(p=>`<li>${p}</li>`).join("")}</ol></details>`;
   const func = [
     T("Instalar o app no celular", ["<b>iPhone:</b> abra o endereço no Safari → Compartilhar (quadrado com seta) → <b>Adicionar à Tela de Início</b>.", "<b>Android:</b> no Chrome, toque nos ⋮ → <b>Instalar app</b> (ou use o botão Instalar app, quando aparecer).", "Abra sempre pelo ícone: fica em tela cheia e funciona sem internet."]),
+    T("OS pelo papel do TracOS", ["Toque em <b>📷 Nova OS pelo papel</b> e fotografe o papel (ou a tela do TracOS).", "Confira os números e toque em <b>▶ Guardar e iniciar agora</b>: o cronômetro já começa com a OS certa.", "Em <b>Ver carteira</b> você vê as OS recebidas e marca <b>✓ Concluir</b> quando terminar."]),
     T("Iniciar uma OS na hora (cronômetro)", ["Toque em <b>▶ Iniciar OS agora</b>.", "Escolha a OS na lista (o serviço e a unidade se preenchem sozinhos) e toque em Iniciar.", "Ao terminar, toque em <b>Encerrar</b> na faixa do topo (toque duas vezes para confirmar).", "Esqueceu de encerrar? Encerre informando a hora real em que terminou."]),
     T("Lançar as OS do dia de uma vez", ["Toque em <b>+ Lançar OS do dia</b>.", "Confira a data, a empresa e a unidade de cima (vale para todas as linhas).", "Em cada linha: nº da OS, início, término e o serviço. Use <b>+ Linha</b> para mais OS.", "Fotos: toque em <b>Antes</b>, <b>Durante</b> ou <b>Depois</b> em cada linha.", "Trabalhou no horário do almoço? Marque “Trabalhei no almoço”.", "Toque em <b>Salvar</b>. Se sair sem salvar, o app guarda um rascunho."]),
     T("Fotos", ["Tire a foto pelo app: ela sai com data, hora, OS e unidade carimbadas.", "Marque se é <b>antes</b>, <b>durante</b> ou <b>depois</b> do serviço."]),
@@ -1139,6 +1268,7 @@ function vAjuda(){
     T("Valores, reajuste e adicional noturno", ["Ajustes → <b>Valores</b>: valor da hora por empresa, extra, domingo/feriado e adicional noturno.", "<b>Reajustar</b>: novo valor com data de início (sugere pelo IPCA) e carta em PDF."]),
     T("Equipe: escala, acerto e documentos", ["Mais → <b>Escala da semana</b>: unidade de cada um por dia.", "Mais → <b>Equipe</b>: quanto pagar a cada um, vales e recibo; documentos com validade (ASO, NR).", "Mais → <b>Quem fez o quê</b>: todas as alterações e quem fez."]),
     T("Fechamento por funcionário", ["Ao fechar o período, o app cria <b>um fechamento para cada funcionário</b> (nunca mistura dois).", "Cada PDF sai com o nome do funcionário e da empresa no início do arquivo.", "<b>Todos em um PDF</b> junta tudo num arquivo só, com uma capa de resumo.", "No fechamento, <b>Acerto do funcionário</b> abre quanto pagar a ele naquele período."]),
+    T("Carteira de OS (papel ou tela do TracOS)", ["Toque em <b>📷 Nova OS pelo papel</b> (Painel ou Mais → OS recebidas) e fotografe o papel ou a tela do TracOS.", "Confira nº da OS, ID, título, unidade e vencimento e escolha: <b>▶ Guardar e iniciar agora</b>, <b>+ Guardar e lançar horas</b>, <b>📷 Guardar e fotografar o próximo</b> ou só guardar.", "Na carteira cada OS aparece como <b>Recebida → Em execução → Concluída → Medida</b> (quando entra no fechamento). As que vencem em até 3 dias ficam em destaque.", "Vários papéis de uma vez: <b>📚 Vários papéis / PDF</b> e escolha as fotos ou PDFs; o app lê todos e mostra a lista para conferir."]),
     T("Portal da Brejeiro e chamados de emergência", ["Ajustes → <b>Contratantes</b> → <b>🌐 Portal Brejeiro</b> → Ligar portal → <b>Enviar pelo WhatsApp</b>.", "Pelo link, a Brejeiro acompanha ao vivo as OS, as horas por unidade e as assinaturas (os valores podem ser escondidos).", "Lá ela também abre <b>chamado de emergência</b>: o celular de toda a equipe avisa na hora e aparece uma faixa vermelha no app.", "Toque em <b>▶ Atender agora</b>: o cronômetro começa como emergência e a Brejeiro vê no portal quem atendeu e em quanto tempo."]),
     T("Assinatura do responsável da unidade", ["Ao terminar a OS, toque em <b>✍ Assinatura</b> (na linha da OS ou ao editar).", "O responsável escreve o nome e assina com o dedo.", "A assinatura sai no PDF de fotos, no portal e nos indicadores."]),
     T("Indicadores do mês para a Brejeiro", ["Financeiro → no fechamento → <b>📊 Indicadores do mês (PDF)</b>.", "Mostra OS atendidas, horas por unidade, emergências e tempo de resposta, preventivas e % de OS assinadas. Mande junto com o fechamento para a gerência."]),
@@ -1365,7 +1495,7 @@ function alertasEquipe(){
   if(state.worker) return [];
   const out = [];
   state.docs.forEach(x=>{ const [cl, st] = docStatus(x); if(cl==="bad" || cl==="warn") out.push({nivel:cl, txt:`${x.tipo} de ${x.titular||"Empresa"}: ${st}`, btn:`<button class="btn sm" data-act="docEditar" data-id="${esc(x.id)}">Ver</button>`}); });
-  state.eq.filter(q=>!q.inativo).forEach(q=>prevStatus(q).forEach(s=>{ if(s.nivel!=="good") out.push({nivel:s.nivel, txt:`Preventiva ${q.tag}: ${s.pl.atividade} ${!s.ult?"nunca feita":s.d<0?`atrasada ${-s.d} dia(s)`:s.d===0?"vence hoje":`vence em ${s.d} dia(s)`}`, btn:`<button class="btn sm" data-act="eqVer" data-id="${esc(q.id)}">Ver</button>`}); }));
+  if(state.cfg.preventivas) state.eq.filter(q=>!q.inativo).forEach(q=>prevStatus(q).forEach(s=>{ if(s.nivel!=="good") out.push({nivel:s.nivel, txt:`Preventiva ${q.tag}: ${s.pl.atividade} ${!s.ult?"nunca feita":s.d<0?`atrasada ${-s.d} dia(s)`:s.d===0?"vence hoje":`vence em ${s.d} dia(s)`}`, btn:`<button class="btn sm" data-act="eqVer" data-id="${esc(q.id)}">Ver</button>`}); }));
   return out;
 }
 function vEquipamentos(){
@@ -1440,7 +1570,8 @@ function vPainel(){
   const recent = [...state.ap].sort((a,b)=>(b.data+b.inicio).localeCompare(a.data+a.inicio)).slice(0,5);
   const gear = `<svg class="gear" viewBox="0 0 100 100" fill="#fff"><path d="M43 2h14l2 12 8 3 10-7 10 10-7 10 3 8 12 2v14l-12 2-3 8 7 10-10 10-10-7-8 3-2 12H43l-2-12-8-3-10 7-10-10 7-10-3-8-12-2V43l12-2 3-8-7-10 10-10 10 7 8-3zM50 32a18 18 0 1 0 0 36 18 18 0 1 0 0-36z"/></svg>`;
   return `${chamadosHtml()}${aprovacoesHtml()}${pushConvite()}${exampleBanner()}
-  <div class="pagehead"><div><span class="eyebrow">${WD[new Date().getDay()]}, ${fdate(today())}</span><h1>Painel</h1></div><div class="row">${monthNav()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button></div></div>
+  <div class="pagehead"><div><span class="eyebrow">${WD[new Date().getDay()]}, ${fdate(today())}</span><h1>Painel</h1></div><div class="row">${monthNav()}${papelNovaBtn()}<button class="btn" data-act="cronoNovo">▶ Iniciar OS agora</button></div></div>
+  ${carteiraResumo()}
   <section class="hero">${gear}
     <div><div class="eyebrow">Total a receber</div><div class="big">${brl(t.horas+t.orc)}</div></div>
     <div class="split"><span>Horas trabalhadas <b>${brl(t.horas)}</b></span><span>Orçamentos aprovados <b>${brl(t.orc)}</b></span></div>
@@ -1651,7 +1782,7 @@ async function carregarHist(id){
     return `<div class="item" style="cursor:default;grid-template-columns:1fr auto"><span><small class="muted">${new Date(h.quando).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"})} · ${esc(h.quem_nome||"")}</small><br>${dif.join("<br>")||"Sem mudança nos campos principais"}</span>${h.acao!=="insert"&&h.antes?`<button type="button" class="btn sm" data-act="histVoltar" data-i="${i}">Desfazer esta</button>`:""}</div>`; }).join("")}</div>` : "Nenhuma alteração registrada.";
 }
 document.addEventListener("toggle", e=>{ if(e.target.id==="f-hist" && e.target.open) carregarHist(e.target.dataset.id); }, true);
-const TAB_LABEL = {apontamentos:"OS", despesas:"Despesa", recebimentos:"Recebimento", fechamentos:"Fechamento", orcamentos:"Orçamento"};
+const TAB_LABEL = {apontamentos:"OS", despesas:"Despesa", recebimentos:"Recebimento", fechamentos:"Fechamento", orcamentos:"Orçamento", ordens:"OS recebida"};
 async function carregarLixeira(){
   const box = $("#lx-list"); if(!box) return;
   const {data, error} = await sb.rpc("lixeira", {p_dias:90}); if(!$("#lx-list")) return;
@@ -2383,15 +2514,15 @@ const COMPET = ["JANEIRO","FEVEREIRO","MARÇO","ABRIL","MAIO","JUNHO","JULHO","A
 function centroDe(u){ const m = String(u||"").match(/^\s*(\d{2,})\s*[-–]\s*(.+)$/); return m ? {centro:m[1], cidade:m[2].trim().toUpperCase()} : {centro:"", cidade:String(u||"").trim().toUpperCase()}; }
 // linhas por OS: horas e valores por tipo (das OS do fechamento ou das linhas importadas da planilha aprovada)
 function linhasTerceiros(f){
-  if(f.itens) return f.itens.map(x=>({...x, unid:x.unid||f.unidade||""}));
+  if(f.itens) return f.itens.map(x=>({...x, unid:x.unid||f.unidade||"", tracos:x.tracos || ordemDe(x.os, f.empresa)?.tracos || ""}));
   const aps = (f.snap?.aps || fechRows(f.de, f.ate, f.empresa||"", f.profissional||"")).filter(e=>!e.andamento && !e.orcId).slice().sort((a,b)=>(a.data+a.inicio).localeCompare(b.data+b.inicio));
   const g = new Map();
   aps.forEach(e=>{ const k = `${(e.os||"").trim()||"s/n-"+e.id}|${e.cliente||""}`, c = calc(e);
-    const o = g.get(k) || {os:(e.os||"").trim(), desc:"", unid:e.cliente||"", hn:0, vn:0, h50:0, v50:0, h100:0, v100:0, not:0, notv:0, total:0};
-    if(!o.desc && e.descricao) o.desc = e.descricao;
+    const o = g.get(k) || {os:(e.os||"").trim(), tracos:"", desc:"", unid:e.cliente||"", hn:0, vn:0, h50:0, v50:0, h100:0, v100:0, not:0, notv:0, total:0};
+    if(!o.desc && e.descricao) o.desc = e.descricao; if(!o.tracos && e.tracos) o.tracos = e.tracos;
     o.hn += c.n/60; o.vn += c.vn; o.h50 += c.e50/60; o.v50 += c.v50; o.h100 += c.e100/60; o.v100 += c.v100; o.not += c.not/60; o.notv += c.vnot; o.total += c.valor; g.set(k, o); });
   const r2 = v => Math.round(v*100)/100;
-  return [...g.values()].map(o=>({...o, desc:(o.desc||"").toUpperCase(), hn:r2(o.hn), vn:r2(o.vn), h50:r2(o.h50), v50:r2(o.v50), h100:r2(o.h100), v100:r2(o.v100), not:r2(o.not), notv:r2(o.notv), total:r2(o.total)}));
+  return [...g.values()].map(o=>({...o, tracos:o.tracos || ordemDe(o.os, f.empresa)?.tracos || "", desc:(o.desc||"").toUpperCase(), hn:r2(o.hn), vn:r2(o.vn), h50:r2(o.h50), v50:r2(o.v50), h100:r2(o.h100), v100:r2(o.v100), not:r2(o.not), notv:r2(o.notv), total:r2(o.total)}));
 }
 function fechIrmaos(f){ return state.fech.filter(x=>x.profissional && x.de===f.de && x.ate===f.ate && chaveEmp(x.empresa||"")===chaveEmp(f.empresa||"")).sort((a,b)=>(a.profissional||"").localeCompare(b.profissional||"")); }
 // todos os funcionários do período num PDF só: capa com o resumo + as folhas de cada um
@@ -2435,16 +2566,16 @@ function terceirosPagina(doc, g, cab, f){
   doc.setFont("helvetica","bold"); doc.setFontSize(12); doc.setTextColor(0); doc.text("FECHAMENTO DE TERCEIROS - HORAS E VALORES", W/2, 12, {align:"center"});
   doc.setFontSize(7.5); const kv = [["NOME DA EMPRESA:", cab.nome], ...(f.profissional?[["FUNCIONÁRIO:", f.profissional.toUpperCase()]]:[]), ["EMPRESA:", cab.codigo], ["COMPETÊNCIA:", `${cab.compet}   ${cab.ano}`], ["CENTRO:", g.centro], ["CIDADE:", g.cidade]];
   kv.forEach(([k,v],i)=>{ doc.setFont("helvetica","bold"); doc.text(k, 34, 18+i*3.6, {align:"right"}); doc.setFont("helvetica","normal"); doc.text(String(v||""), 36, 18+i*3.6); });
-  const z = "0,00", body = g.linhas.map(l=>[l.os||"", l.cargo||"TERCEIRIZADO", l.desc||"", n2(l.dt), n2(l.dtv), n2(l.dc), n2(l.dcv), n2(l.km), n2(l.kmv), n2(l.hn), n2(l.vn), n2(l.h50), n2(l.v50), n2(l.h100), n2(l.v100), n2(l.not), n2(l.notv), n2(l.total)]);
+  const z = "0,00", body = g.linhas.map(l=>[l.os||"", l.tracos ? "#"+l.tracos : "", l.cargo||"TERCEIRIZADO", l.desc||"", n2(l.dt), n2(l.dtv), n2(l.dc), n2(l.dcv), n2(l.km), n2(l.kmv), n2(l.hn), n2(l.vn), n2(l.h50), n2(l.v50), n2(l.h100), n2(l.v100), n2(l.not), n2(l.notv), n2(l.total)]);
   const H = (c, o={}) => ({content:c, ...o, styles:{halign:"center", valign:"middle", fontStyle:"bold"}});
   doc.autoTable({startY:f.profissional?39:36, margin:{left:L, right:8, bottom:8}, theme:"grid", tableWidth:R-L,
-    head:[[H("ORDENS",{rowSpan:2}), H("CARGO",{rowSpan:2}), H("DESCRIÇÃO DO SERVIÇO",{rowSpan:2}), H("DIÁRIAS TRABALHADAS",{colSpan:2}), H("DIÁRIAS DE CUSTO",{colSpan:2}), H("KM RODADO",{colSpan:2}), H("HORAS NORMAIS",{colSpan:2}), H("HORAS EXTRAS 50%",{colSpan:2}), H("HORAS EXTRAS 100%",{colSpan:2}), H("ADICIONAL NOTURNO",{colSpan:2}), H("VALOR TOTAL DA ORDEM",{rowSpan:2})],
+    head:[[H("ORDENS",{rowSpan:2}), H("ID TRACOS",{rowSpan:2}), H("CARGO",{rowSpan:2}), H("DESCRIÇÃO DO SERVIÇO",{rowSpan:2}), H("DIÁRIAS TRABALHADAS",{colSpan:2}), H("DIÁRIAS DE CUSTO",{colSpan:2}), H("KM RODADO",{colSpan:2}), H("HORAS NORMAIS",{colSpan:2}), H("HORAS EXTRAS 50%",{colSpan:2}), H("HORAS EXTRAS 100%",{colSpan:2}), H("ADICIONAL NOTURNO",{colSpan:2}), H("VALOR TOTAL DA ORDEM",{rowSpan:2})],
       ["Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$"].map(x=>H(x))],
-    body, foot:[[{content:"TOTAIS", colSpan:3, styles:{halign:"left"}}, z, z, z, z, z, z, n2(t.hn), n2(t.vn), n2(t.h50), n2(t.v50), n2(t.h100), n2(t.v100), n2(t.not), n2(t.notv), n2(t.total)]],
+    body, foot:[[{content:"TOTAIS", colSpan:4, styles:{halign:"left"}}, z, z, z, z, z, z, n2(t.hn), n2(t.vn), n2(t.h50), n2(t.v50), n2(t.h100), n2(t.v100), n2(t.not), n2(t.notv), n2(t.total)]],
     styles:{font:"helvetica", fontSize:g.linhas.length>32 ? 5.4 : 6, cellPadding:g.linhas.length>32 ? 0.45 : 0.8, textColor:0, lineColor:[150,150,150], lineWidth:0.1, overflow:"ellipsize"},
     headStyles:{fillColor:[235,235,235], textColor:0, fontSize:5.6, lineColor:[150,150,150], lineWidth:0.1, overflow:"linebreak"},
     footStyles:{fillColor:[235,235,235], textColor:0, fontStyle:"bold", halign:"right"},
-    columnStyles:{0:{cellWidth:13, halign:"center"}, 1:{cellWidth:17}, 2:{cellWidth:60}, ...Object.fromEntries(Array.from({length:14},(_,i)=>[i+3, {halign:"right", cellWidth:(R-L-13-17-60-20)/14}])), 17:{halign:"right", cellWidth:20}}});
+    columnStyles:{0:{cellWidth:13, halign:"center"}, 1:{cellWidth:13, halign:"center"}, 2:{cellWidth:15}, 3:{cellWidth:50}, ...Object.fromEntries(Array.from({length:14},(_,i)=>[i+4, {halign:"right", cellWidth:(R-L-13-13-15-50-20)/14}])), 18:{halign:"right", cellWidth:20}}});
   let y = doc.lastAutoTable.finalY + 5; if(y > ph(doc)-44){ doc.addPage(); y = 15; }
   doc.autoTable({startY:y, margin:{left:L+20, right:W/2+10}, theme:"plain", head:[[{content:"RESUMO GERAL", colSpan:3, styles:{halign:"center", fontStyle:"bold", fontSize:8}}]],
     body:[["DIÁRIAS TRABALHADAS", "0,00", "R$ 0,00"], ["DIÁRIAS DE CUSTO", "0,00", "R$ 0,00"], ["KM RODADO", "0,00", "R$ 0,00"], ["HORAS NORMAIS", n2(t.hn), "R$ "+n2(t.vn)], ["HORAS EXTRAS 50%", n2(t.h50), "R$ "+n2(t.v50)], ["HORAS EXTRAS 100%", n2(t.h100), "R$ "+n2(t.v100)], ["ADICIONAL NOTURNO", n2(t.not), "R$ "+n2(t.notv)]],
@@ -2462,15 +2593,16 @@ async function terceirosXlsx(grupos, cab, nome, f){
   for(const g of grupos.values()){
     const t = f.itens && f.totais && grupos1(f) ? f.totais : totaisTerceiros(g.linhas), N = v => Math.round((+v||0)*100)/100;
     const aoa = [["","","","","","","","FECHAMENTO DE TERCEIROS - HORAS E VALORES"], ["NOME DA EMPRESA:", cab.nome], ...(f.profissional?[["FUNCIONÁRIO:", f.profissional.toUpperCase()]]:[]), ["EMPRESA:", cab.codigo], ["COMPETÊNCIA:", cab.compet, cab.ano], ["CENTRO:", g.centro], ["CIDADE:", g.cidade], [],
-      ["ORDENS","CARGO","DESCRIÇÃO DO SERVIÇO","DIÁRIAS TRABALHADAS","","DIÁRIAS DE CUSTO","","KM RODADO","","HORAS NORMAIS","","HORAS EXTRAS 50%","","HORAS EXTRAS 100%","","ADICIONAL NOTURNO","","VALOR TOTAL DA ORDEM"],
-      ["","","","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$",""],
-      ...g.linhas.map(l=>[l.os||"", l.cargo||"TERCEIRIZADO", l.desc||"", N(l.dt), N(l.dtv), N(l.dc), N(l.dcv), N(l.km), N(l.kmv), N(l.hn), N(l.vn), N(l.h50), N(l.v50), N(l.h100), N(l.v100), N(l.not), N(l.notv), N(l.total)]),
-      ["TOTAIS","","",0,0,0,0,0,0,N(t.hn),N(t.vn),N(t.h50),N(t.v50),N(t.h100),N(t.v100),N(t.not),N(t.notv),N(t.total)], [],
+      ["ORDENS","ID TRACOS","CARGO","DESCRIÇÃO DO SERVIÇO","DIÁRIAS TRABALHADAS","","DIÁRIAS DE CUSTO","","KM RODADO","","HORAS NORMAIS","","HORAS EXTRAS 50%","","HORAS EXTRAS 100%","","ADICIONAL NOTURNO","","VALOR TOTAL DA ORDEM"],
+      ["","","","","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$","Qtd","R$",""],
+      ...g.linhas.map(l=>[l.os||"", l.tracos ? "#"+l.tracos : "", l.cargo||"TERCEIRIZADO", l.desc||"", N(l.dt), N(l.dtv), N(l.dc), N(l.dcv), N(l.km), N(l.kmv), N(l.hn), N(l.vn), N(l.h50), N(l.v50), N(l.h100), N(l.v100), N(l.not), N(l.notv), N(l.total)]),
+      ["TOTAIS","","","",0,0,0,0,0,0,N(t.hn),N(t.vn),N(t.h50),N(t.v50),N(t.h100),N(t.v100),N(t.not),N(t.notv),N(t.total)], [],
       ["RESUMO GERAL","","","","","","","","","","","","VALOR TOTAL A PAGAR"], ["DIÁRIAS TRABALHADAS","",0,0,"","","","","","","","",N(t.total)], ["DIÁRIAS DE CUSTO","",0,0], ["KM RODADO","",0,0], ["HORAS NORMAIS","",N(t.hn),N(t.vn)], ["HORAS EXTRAS 50%","",N(t.h50),N(t.v50)], ["HORAS EXTRAS 100%","",N(t.h100),N(t.v100)], ["ADICIONAL NOTURNO","",N(t.not),N(t.notv)]];
     const ws = X.utils.aoa_to_sheet(aoa);
-    ws["!merges"] = [[7,0,8,0],[7,1,8,1],[7,2,8,2],[7,3,7,4],[7,5,7,6],[7,7,7,8],[7,9,7,10],[7,11,7,12],[7,13,7,14],[7,15,7,16],[7,17,8,17]].map(([r1,c1,r2,c2])=>({s:{r:r1,c:c1},e:{r:r2,c:c2}}));
-    ws["!cols"] = [{wch:10},{wch:14},{wch:44},...Array(14).fill({wch:9}),{wch:14}];
-    for(let r=9; r<aoa.length; r++) for(let c=3; c<18; c++){ const cell = ws[X.utils.encode_cell({r,c})]; if(cell && typeof cell.v==="number") cell.z = "#,##0.00"; }
+    const hr = aoa.findIndex(r=>r[0]==="ORDENS"); // a linha "FUNCIONÁRIO:" (fechamento por funcionário) desce o cabeçalho
+    ws["!merges"] = [[0,0],[1,1],[2,2],[3,3]].map(([c])=>[hr,c,hr+1,c]).concat([[4,5],[6,7],[8,9],[10,11],[12,13],[14,15],[16,17]].map(([a,b])=>[hr,a,hr,b]), [[hr,18,hr+1,18]]).map(([r1,c1,r2,c2])=>({s:{r:r1,c:c1},e:{r:r2,c:c2}}));
+    ws["!cols"] = [{wch:10},{wch:10},{wch:14},{wch:44},...Array(14).fill({wch:9}),{wch:14}];
+    for(let r=hr+2; r<aoa.length; r++) for(let c=4; c<19; c++){ const cell = ws[X.utils.encode_cell({r,c})]; if(cell && typeof cell.v==="number") cell.z = "#,##0.00"; }
     X.utils.book_append_sheet(wb, ws, (g.centro || g.cidade || "Fechamento").slice(0,31));
   }
   await offerFile(nome + ".xlsx", new Blob([X.write(wb, {type:"array", bookType:"xlsx"})], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
@@ -2903,7 +3035,7 @@ async function indicadoresPdf(f){
   const tResp = [...tChs, ...resp], media = tResp.length ? Math.round(tResp.reduce((a,b)=>a+b,0)/tResp.length) : null;
   const prev = rows.filter(e=>e.prevId), assin = rows.filter(assinOS), osN = new Set(rows.map(e=>e.os||e.id)).size;
   const kpis = [["OS atendidas", String(osN)], ["Horas trabalhadas", H(t.total)+" h"], ["Horas normais", t.total ? Math.round(100*t.n/t.total)+"%" : "-"], ["Emergências", String(emerg.length)],
-    ["Tempo médio de resposta", media==null ? "-" : media<60 ? `${media} min` : `${Math.floor(media/60)}h${pad(media%60)}`], ["Preventivas realizadas", String(prev.length)], ["OS assinadas pela unidade", rows.length ? Math.round(100*assin.length/rows.length)+"%" : "-"]];
+    ["Tempo médio de resposta", media==null ? "-" : media<60 ? `${media} min` : `${Math.floor(media/60)}h${pad(media%60)}`], ...(state.cfg.preventivas?[["Preventivas realizadas", String(prev.length)]]:[]), ["OS assinadas pela unidade", rows.length ? Math.round(100*assin.length/rows.length)+"%" : "-"]];
   const bw = (W-28-6*3)/4;
   kpis.forEach(([l,v],i)=>{ const x = 14 + (i%4)*(bw+3), yy = y + Math.floor(i/4)*24; doc.setFillColor(240,246,242); doc.roundedRect(x, yy, bw, 21, 2, 2, "F");
     doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(...GREY); doc.text(l.toUpperCase(), x+3, yy+6); doc.setFont("helvetica","bold"); doc.setFontSize(15); doc.setTextColor(...INK); doc.text(v, x+3, yy+16); });
@@ -2924,7 +3056,7 @@ async function indicadoresPdf(f){
       body:emerg.map(e=>{ const r = e.acion?.as ? ((hm(e.inicio)-hm(e.acion.as))+1440)%1440 : null; return [fdate(e.data), e.os||"-", e.cliente||"", e.acion?.motivo||e.descricao||"", e.acion?.as||"-", e.inicio, r==null||r>=720 ? "-" : `${r} min`]; }),
       styles:{fontSize:8, cellPadding:1.3, textColor:INK}, headStyles:{fillColor:GREEN}}); y = doc.lastAutoTable.finalY + 8; }
   const atras = state.eq.filter(q=>!q.inativo && chaveEmp(q.empresa||emp)===chaveEmp(emp)).flatMap(q=>prevStatus(q).filter(s=>s.nivel==="bad").map(s=>[`${q.tag||""} ${q.nome||""}`.trim(), s.pl.atividade||"", s.ult?fdate(s.ult):"nunca", fdate(s.prox)]));
-  if(prev.length || atras.length){ if(y > ph(doc)-60){ doc.addPage(); y = 20; } doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(...NAVY); doc.text(`Preventivas: ${prev.length} realizada(s) no período${atras.length?`, ${atras.length} pendente(s)`:""}`, 14, y); y += 3;
+  if(state.cfg.preventivas && (prev.length || atras.length)){ if(y > ph(doc)-60){ doc.addPage(); y = 20; } doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(...NAVY); doc.text(`Preventivas: ${prev.length} realizada(s) no período${atras.length?`, ${atras.length} pendente(s)`:""}`, 14, y); y += 3;
     if(atras.length){ doc.autoTable({startY:y, theme:"striped", margin:{left:14, right:14}, head:[["Equipamento","Atividade","Última","Prevista"]], body:atras, styles:{fontSize:8, cellPadding:1.3, textColor:INK}, headStyles:{fillColor:[180,120,20]}}); y = doc.lastAutoTable.finalY + 8; } }
   pdfFooter(doc); await offerFile(`indicadores-${slug(emp)}-${(f.ate||"").slice(0,7)}.pdf`, doc.output("blob"));
 }
@@ -3053,6 +3185,12 @@ document.addEventListener("submit", async e=>{
     try{ await save("fechamentos", {...f, glosas:[...(f.glosas||[]), g]}); closeModal(); toast(`Glosa de ${brl(v)} registrada`); }catch(err){ toast(writeErr(err)); } }
   if(e.target.id==="despForm"){ e.preventDefault(); submitDesp(); }
   if(e.target.id==="cronoForm"){ e.preventDefault(); submitCrono(); }
+  if(e.target.id==="ordForm"){ e.preventDefault(); const id = e.target.dataset.id, old = state.ord.find(x=>x.id===id) || {}, os = $("#od-os").value.replace(/\D/g,"");
+    if(!os){ toast("Informe o nº da OS."); return; }
+    const dup = state.ord.find(x=>x.id!==id && soDig(x.os)===os); if(dup){ toast(`A OS ${os} já está na carteira.`); return; }
+    const x = {...old, id: id || uid(), os, tracos:limpaTracos($("#od-tid").value), titulo:$("#od-tit").value.trim(), empresa:$("#od-emp").value.trim(), unidade:$("#od-unid").value.trim(), vencimento:$("#od-venc").value, prioridade:$("#od-prior").value.trim(), obs:$("#od-obs").value.trim()};
+    if(!id){ x.recebidaEm = new Date().toISOString(); x.recebidaPor = state.me || perfil?.nome || nomeDoEmail(session?.user?.email); }
+    try{ await save("ordens", x); state.modalDirty = false; closeModal(); state.rendered = null; render(); toast(`OS ${os} salva na carteira.`); }catch(err){ toast(writeErr(err)); } }
   if(e.target.id==="pagForm"){ e.preventDefault(); const id = e.target.dataset.id, old = state.pag.find(x=>x.id===id) || {};
     const x = {...old, id: id || (state.pgId ||= uid()), profissional:$("#pg-prof").value, tipo:$("#pg-tipo").value, data:$("#pg-data").value, valor:numIn($("#pg-valor").value), obs:$("#pg-obs").value.trim()};
     if(HORAS_PAG.includes(x.tipo)){ x.horas = numIn($("#pg-horas").value); if(!(x.horas>0)){ toast("Informe quantas horas."); return; } if(x.tipo==="folga") x.valor = 0; } else delete x.horas;
@@ -3095,6 +3233,7 @@ document.addEventListener("change", async e=>{ if(e.target.id!=="conf-arq" || !e
   toast("Lendo a planilha…"); try{ const l = await lerPlanilhaFiscal(e.target.files[0]); openModal(conferirHtml(f, l), "wide"); }catch(err){ toast("Não consegui ler esse arquivo. Envie o Excel ou o PDF do fechamento."); } });
 document.addEventListener("change", e=>{ if(e.target.id==="dc-arq" && e.target.files[0]){ state.docArq = e.target.files[0]; const n = $("#dc-arq-nome"); if(n) n.textContent = e.target.files[0].name; }
   if(e.target.id==="eq-de" || e.target.id==="eq-ate"){ state.eqp[e.target.id==="eq-de"?"de":"ate"] = e.target.value; state.rendered = null; render(); } });
+document.addEventListener("input", e=>{ if(e.target.id==="cart-q"){ state.cartQ = e.target.value; clearTimeout(state.cartQT); state.cartQT = setTimeout(()=>{ state.rendered = null; render(); const i = $("#cart-q"); if(i){ i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250); } });
 document.addEventListener("input", e=>{ if(e.target.id==="eq-q"){ state.eqQ = e.target.value; clearTimeout(state.eqQT); state.eqQT = setTimeout(()=>{ render(); const i = $("#eq-q"); if(i){ i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250); } });
 document.addEventListener("change", e=>{ if(e.target.id==="gl-os"){ const op = e.target.selectedOptions[0]; if(op && op.dataset.v) $("#gl-v").value = String(Math.round(+op.dataset.v*100)/100).replace(".",","); } });
 async function submitRec(){
@@ -3185,6 +3324,9 @@ function vAjustes(){
         <label class="check"><input type="checkbox" class="ct-exos" ${F.exigirOS?"checked":""}> Exigir nº da OS em todo lançamento</label>
       </details>`; }).join("")}
     </div>
+    <div class="panel form" data-aba="empresa"><h3>Partes do sistema</h3>
+      <label class="check"><input type="checkbox" id="c-prev" ${c.preventivas?"checked":""}> Mostrar equipamentos e preventivas (deixe desligado se a preventiva é feita pelo time interno da contratante)</label>
+    </div>
     <div class="panel form" data-aba="empresa"><h3>Dados da empresa (aparecem nos PDFs)</h3>
       <div class="grid2"><label class="field"><span>Nome</span><input id="e-nome" value="${esc(E.nome)}"></label><label class="field"><span>CNPJ</span><input id="e-cnpj" value="${esc(E.cnpj)}"></label>
       <label class="field"><span>E-mail</span><input id="e-email" value="${esc(E.email)}"></label><label class="field"><span>Telefone</span><input id="e-tel" value="${esc(E.telefone)}"></label>
@@ -3242,7 +3384,7 @@ function vAjustes(){
     </div>
   </section>`;
 }
-function backupDados(){ return {sistema:"GAAP Gestão de Serviços", versao:2, exportadoEm:new Date().toISOString(), config:state.cfg, apontamentos:state.ap, orcamentos:state.orc, recebimentos:state.rec, fechamentos:state.fech, despesas:state.desp, pagamentos:state.pag, equipamentos:state.eq, documentos:state.docs, perfis:state.perfis||[]}; }
+function backupDados(){ return {sistema:"GAAP Gestão de Serviços", versao:2, exportadoEm:new Date().toISOString(), config:state.cfg, apontamentos:state.ap, orcamentos:state.orc, recebimentos:state.rec, fechamentos:state.fech, despesas:state.desp, pagamentos:state.pag, equipamentos:state.eq, documentos:state.docs, ordens:state.ord, perfis:state.perfis||[]}; }
 function backupIdade(){
   const b = state.cfg.backupBaixadoEm; if(!b) return `<span class="pill warn">Você ainda não baixou nenhuma cópia completa.</span>`;
   const dias = Math.floor((Date.now() - new Date(b).getTime())/86400000);
@@ -3311,7 +3453,7 @@ async function submitCfg(){
   c.valorHora = numIn(g("c-vh")) || 60; c.extraPct = +g("c-p50") || 0; c.feriadoPct = +g("c-p100") || 0;
   [1,2,3,4,5,6].forEach(d=>c.jornada[d] = {ini:g("j-ini-"+d), fim:g("j-fim-"+d)});
   c.almoco = {ativo:$("#c-alm").checked, ini:g("c-alm-ini"), fim:g("c-alm-fim")};
-  c.tolerancia = Math.max(0, +g("c-tol") || 0); c.carimbo = !!$("#c-carimbo")?.checked;
+  c.tolerancia = Math.max(0, +g("c-tol") || 0); c.carimbo = !!$("#c-carimbo")?.checked; c.preventivas = !!$("#c-prev")?.checked;
   c.profissionais = lines(g("c-profs")).join("\n"); c.unidades = lines(g("c-unids")).join("\n");
   c.feriados = {carnaval:$("#c-carn").checked, corpus:$("#c-corp").checked, extras:g("c-fer")};
   c.empresa = {nome:g("e-nome"), cnpj:g("e-cnpj"), email:g("e-email"), telefone:g("e-tel"), cidade:g("e-cid"), responsavel:g("e-resp"), sobre:g("e-sobre"), codServico:g("e-codserv"), issPct:g("e-iss")};
@@ -3620,6 +3762,21 @@ const A = {
   exigDeclaracao(b){ declaracaoPdf(b.dataset.emp, profs()).then(r=>r && offerFile(r.nome, r.blob)); },
   papelFechar(){ $("#papelbox")?.remove(); state.papel = null; },
   papelUsar(){ papelAplicar(); },
+  papelAcao(b){ const acao = b.dataset.acao;
+    if(acao==="proximo"){ // a câmera precisa abrir no mesmo toque (regra do iPhone)
+      const inp = document.createElement("input"); inp.type = "file"; inp.accept = "image/*"; inp.setAttribute("capture", "environment"); inp.dataset.papel = "proximo"; inp.hidden = true; document.body.appendChild(inp); inp.click(); }
+    papelAplicar(acao); },
+  loteSalvar(b){ loteSalvar(b); },
+  cartFiltro(b){ state.cartF = b.dataset.f; state.rendered = null; render(); },
+  ordNova(){ openModal(ordForm({})); },
+  ordEditar(b){ const o = state.ord.find(x=>x.id===b.dataset.id); if(o) openModal(ordForm(o)); },
+  ordIniciar(b){ const o = state.ord.find(x=>x.id===b.dataset.id); if(o) ordIniciar(o); },
+  ordLancar(b){ const o = state.ord.find(x=>x.id===b.dataset.id); if(o) ordLancar(o); },
+  async ordConcluir(b){ const o = state.ord.find(x=>x.id===b.dataset.id); if(!o) return; const fim = b.dataset.v==="1";
+    if(fim && ordStatus(o).and){ toast("Essa OS está com cronômetro aberto. Encerre antes de concluir."); return; }
+    const x = {...o, concluida:fim}; if(fim) x.concluidaEm = new Date().toISOString(); else { delete x.concluidaEm; delete x.concluidaPor; }
+    try{ await save("ordens", x); toast(fim ? `OS ${o.os} concluída.` : `OS ${o.os} reaberta.`); state.rendered = null; render(); }catch(err){ toast(writeErr(err)); } },
+  async ordExcluir(b){ if(!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Confirmar exclusão"; return; } try{ await removeDoc("ordens", b.dataset.id); closeModal(); state.rendered = null; render(); toast("OS tirada da carteira (fica na lixeira)."); }catch(err){ toast(writeErr(err)); } },
   papelNum(b){ const el = $("#"+(state.papelCampo||"pp-os")); if(el){ el.value = b.dataset.n; state.papelCampo = state.papelCampo==="pp-os" ? "pp-tid" : "pp-os"; } },
   pushDepois(){ try{ localStorage.setItem("gaap-push-depois", today()); }catch(e){} state.rendered = null; render(); },
   async pushAtivar(b){

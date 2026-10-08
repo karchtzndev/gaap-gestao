@@ -7,7 +7,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-cron-token", "Access-Control-Allow-Methods": "POST, OPTIONS" };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, "Content-Type": "application/json" } });
-const TABELAS = ["apontamentos", "orcamentos", "recebimentos", "fechamentos", "despesas", "pagamentos", "equipamentos", "documentos"];
+const TABELAS = ["apontamentos", "orcamentos", "recebimentos", "fechamentos", "despesas", "pagamentos", "equipamentos", "documentos", "ordens"];
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });

@@ -420,3 +420,9 @@ body[data-ajaba="dados"] #view [data-aba]:not([data-aba~="dados"]){display:none}
 #papelbox input.duvida{background:#fff6d6;border-color:#d9a400}
 .papelbtns{display:inline-flex;gap:6px;flex-wrap:wrap}
 #papelbox .assinbox{overflow-x:hidden}#papelbox .assinbox>*{min-width:0;max-width:100%}#papelbox p,#papelbox b{overflow-wrap:anywhere}#papelbox .grid2>*{min-width:0}#papelbox input,#papelbox select{width:100%;min-width:0}
+.papelacoes{display:grid;gap:8px}.papelacoes .btn{justify-content:center;width:100%}
+.lotelista{display:grid;gap:12px;max-height:60vh;overflow:auto}.loteitem{border:1px solid var(--line);border-radius:10px;padding:10px;display:grid;gap:6px}
+.lotefoto{max-height:110px;object-fit:contain;width:100%;border-radius:6px;background:#000}
+#papelbox .loteitem input,#papelbox .loteitem select{width:100%;min-width:0}
+.ordcard .fc-acts .btn{white-space:nowrap}
+.lotehead{display:flex;align-items:center;gap:8px;font-size:.92rem}.lotehead input{width:20px!important;height:20px;flex:none}
