@@ -118,7 +118,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.08-3";
+const VERSAO = "2026.10.08-4";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -299,10 +299,13 @@ async function save(col, obj){
 // envio de um registro ao servidor; erro de conexão vem marcado com {rede:true}
 async function saveNet(col, id, data, versao){
   if(state.worker && col==="ordens"){
-    const {data:ret, error} = await sb.rpc("func_salvar_ordem", {p_id:id, p_data:data});
-    if(error){ if(ehRede(error)) throw {rede:true}; throw dbErr(error); }
+    const {data:ret, error} = await sb.rpc("func_salvar_ordem", {p_id:id, p_data:{...data, ...(versao?{_v:versao}:{})}});
+    if(error){ if(ehRede(error)) throw {rede:true}; const e = dbErr(error); if(e.conflito) await recarregarDoc(col, id).catch(()=>{}); throw e; }
     const [, v] = String(ret||id).split("|"); const old = state.ord.find(x=>x.id===id) || {};
-    const row = {...old, ...data, id, ...(old.recebidaPor?{}:{recebidaPor:state.me}), ...(v?{_v:v}:{})}; if(!data.concluida){ delete row.concluida; delete row.concluidaEm; }
+    // o servidor só completa campos vazios de uma OS que já existe: espelha isso aqui até a próxima leitura
+    const row = old.id ? {...old} : {...data, recebidaPor:state.me}; if(old.id) Object.entries(data).forEach(([k, val])=>{ if(old[k]==null || old[k]==="") row[k] = val; });
+    if(data.concluida===true){ row.concluida = true; row.concluidaEm ||= new Date().toISOString(); } else if(data.concluida===false){ delete row.concluida; delete row.concluidaEm; delete row.concluidaPor; }
+    Object.assign(row, {id, ...(v?{_v:v}:{})});
     upsertLocal("ord", row); scheduleRender(); return id;
   }
   if(state.worker){
@@ -658,7 +661,7 @@ const lockedE = e => lockOf(e.data, empOf(e), e.profissional);
 const lockMsg = f => state.worker ? `Esse período já foi fechado (${f.numero||""}). Fale com o responsável para alterar.` : `Período fechado (${f.numero||""}). Para alterar, reabra o fechamento no Financeiro.`;
 function orcOpts(){ return state.worker ? (state.pub?.orcs||[]) : state.orc.filter(orcAberto).map(o=>({id:o.id, numero:o.numero||"", titulo:o.titulo||"", cliente:o.cliente?.nome||""})); }
 function orcNum(id){ const o = orcOpts().find(x=>x.id===id) || state.orc.find(x=>x.id===id); return o ? (o.numero||"") : ""; }
-const eqList = () => (state.worker ? (state.pub?.equipamentos||[]) : state.eq.filter(x=>!x.inativo)).slice().sort((a,b)=>(a.tag||"").localeCompare(b.tag||""));
+const eqList = () => (state.worker ? (state.pub?.equipamentos||[]) : state.cfg.preventivas ? state.eq.filter(x=>!x.inativo) : []).slice().sort((a,b)=>(a.tag||"").localeCompare(b.tag||""));
 const eqDe = id => (state.worker ? (state.pub?.equipamentos||[]) : state.eq).find(x=>x.id===id);
 function eqSelect(attr, equipId, prevId){
   const ls = eqList(); if(!ls.length) return "";
@@ -720,7 +723,7 @@ async function uploadPhotosInt(files, ctx){
   if(ids.length) toast(`${ids.length} foto${ids.length>1?"s":""} adicionada${ids.length>1?"s":""}`);
   return ids;
 }
-function deleteAssetIfUnused(id, except=[]){ if(!assets || !id) return; if(state.ap.some(e=>!except.includes(e.id) && (e.fotos||[]).includes(id))) return; assets.delete(id).catch(()=>{}); }
+function deleteAssetIfUnused(id, except=[]){ if(!assets || !id) return; if(state.ap.some(e=>!except.includes(e.id) && (e.fotos||[]).includes(id)) || state.ord.some(o=>o.foto===id)) return; assets.delete(id).catch(()=>{}); }
 function fotoTipo(id){ const m = state.fotoMetaNovo?.[id] || state.ap.find(e=>e.fotoMeta && e.fotoMeta[id])?.fotoMeta[id]; return m && TIPO_FOTO[m.tipo] ? TIPO_FOTO[m.tipo] : ""; }
 function thumbs(ids, removable){ return (ids||[]).map(id=>`<span class="thumb">${fotoTipo(id)?`<i class="thumbtag">${fotoTipo(id)}</i>`:""}<img src="${esc(blobSrc(id))}" data-fid="${esc(id)}" alt="Foto do serviço" data-act="fotoVer" data-id="${esc(id)}" loading="lazy">${removable?`<button type="button" class="thumbx" data-act="fotoDel" data-id="${esc(id)}" aria-label="Remover foto">✕</button>`:""}</span>`).join(""); }
 document.addEventListener("change", async e=>{
@@ -892,10 +895,16 @@ function lerTracos(txt, opt = {}){
     for(const l of [linhas[k].replace(/^\S+(\s+vinculado)?\s*:?/i, ""), linhas[k+1]||""]){ const mc = l.match(/^\s*(\d{4})(?:[._ ]?\d{2,4})/); if(mc){ r.centro = mc[1]; break; } } }
   if(!r.centro){ const mc = String(txt).match(/\b(\d{4})[._]\d{3,4}/); if(mc) r.centro = mc[1]; }
   // vencimento (papel: "Data de Vencimento: 06/11/2026"; tela: rótulo e a data na linha de baixo), prioridade e categoria
+  const reData = /\b([0-3]?\d)\/([01]?\d)\/(20\d\d)\b/g, outroRot = /criad|inicio|abertura|planejad|conclu/;
   const iv = N.findIndex(l => /vencimento/.test(l));
-  if(iv >= 0) for(const l of [linhas[iv], linhas[iv+1]||"", linhas[iv+2]||""]){ const md = l.match(/\b([0-3]?\d)\/([01]?\d)\/(20\d\d)\b/); if(md){ r.venc = `${md[3]}-${pad(+md[2])}-${pad(+md[1])}`; break; } }
-  const mp = String(txt).match(/\b([1-5])\s*[-–]?\s*(urgente|emerg\S*|elevad[oa]|alt[oa]|m[eé]di[oa]|baix[oa]|cr[ií]tic[oa])\b/i); if(mp) r.prior = `${mp[1]}-${mp[2][0].toUpperCase()}${mp[2].slice(1).toLowerCase()}`;
-  const mk = String(txt).match(/\b(0\d\d)\s*[-–.]\s*(manut\S*\s+\S+)/i); if(mk) r.cat = `${mk[1]} - ${mk[2].replace(/[|.,;]+$/, "")}`;
+  if(iv >= 0){ const pos = N[iv].indexOf("vencimento"); let md = [...N[iv].slice(pos).matchAll(reData)][0];
+    if(!md && N[iv+1] && !outroRot.test(N[iv+1])){ // tela: rótulos numa linha, datas na de baixo, na mesma ordem
+      const antes = N[iv].slice(0, pos), k = (antes.match(/\bdata\b/g)||[]).length - (/\bdata( de)?\s*$/.test(antes) ? 1 : 0), ds = [...N[iv+1].matchAll(reData)];
+      md = ds.length > k ? ds[k] : k===0 ? ds[0] : null; }
+    if(md) r.venc = `${md[3]}-${pad(+md[2])}-${pad(+md[1])}`; }
+  const trechoRot = re => { const i = N.findIndex(l => re.test(l)); if(i < 0) return []; const pos = N[i].search(re); return [linhas[i].slice(pos), linhas[i+1]||""]; };
+  for(const l of trechoRot(/prioridade/)){ const mp = l.match(/\b([1-5])\s*[-–]?\s*(urgente|emerg\S*|elevad[oa]|alt[oa]|m[eé]di[oa]|baix[oa]|cr[ií]tic[oa])\b/i); if(mp){ r.prior = `${mp[1]}-${mp[2][0].toUpperCase()}${mp[2].slice(1).toLowerCase()}`; break; } }
+  for(const l of trechoRot(/categoria/)){ const mk = l.match(/\b(0\d\d)[ \t]*[-–.][ \t]*(manut\S*(?:[ \t]+[^\s|]+)?)/i); if(mk){ r.cat = `${mk[1]} - ${mk[2].replace(/[|.,;]+$/, "")}`; break; } }
   return r;
 }
 const ehNota = v => /^20\d{7}$/.test(v); // nota SAP da Brejeiro: 9 dígitos começando com 20 (ex.: 200186907)
@@ -946,17 +955,19 @@ async function lerPapelArquivo(file){
   r ||= {id:"", os:"", nota:"", titulo:"", centro:"", conf:{}};
   // números para tocar e corrigir: os soltos e os partidos por um espaço (sem colar dois números diferentes)
   const brutos = String(txt).match(/\d[\d ]*\d|\d/g) || [], cand = [];
-  brutos.forEach(t=>{ const j = t.replace(/ /g, ""); if(j.length <= 12) cand.push(j); else t.split(" ").forEach(x=>cand.push(x)); });
+  const tamOk = new Set([tamIdTracos(), 7, 9, 12]);
+  brutos.forEach(t=>{ const ps = t.split(/ +/); cand.push(...ps); const j = ps.join(""); if(ps.length > 1 && tamOk.has(j.length)) cand.push(j); });
   r.nums = [...new Set(cand.map(x=>x.replace(/^0{3,}/, "")).filter(x=>x.length>=4 && x.length<=10))].slice(0, 10);
   return r;
 }
 function papelUI(alvo, file, r, pdf){
   document.getElementById("papelbox")?.remove();
-  const emp = alvo.row!=null ? (state.day?.emp || lastEmp()) : alvo.form==="cr" ? ($("#cr-emp")?.value || lastEmp()) : ($("#f-emp")?.value || lastEmp());
+  const emp = alvo.nova ? (state.cfg.contratante || lastEmp()) : alvo.row!=null ? (state.day?.emp || lastEmp()) : alvo.form==="cr" ? ($("#cr-emp")?.value || lastEmp()) : ($("#f-emp")?.value || lastEmp());
   const us = unidsEmp(emp), unid = r.centro ? (us.find(u=>u.startsWith(r.centro)) || "") : "";
   const el = document.createElement("div"); el.id = "papelbox"; el.className = "assinpad"; state.papel = {alvo, file, pdf, emp};
   const duv = c => (r.conf?.[c]||0) < 0.8 ? ' class="duvida"' : "";
-  el.innerHTML = `<div class="assinbox"><h3 style="margin:0">Papel da OS</h3>
+  const jaTem = alvo.nova && r.os && ordemDe(r.os, emp);
+  el.innerHTML = `<div class="assinbox"><h3 style="margin:0">Papel da OS</h3>${jaTem?`<p class="muted" style="margin:0"><span class="pill info">já na carteira</span> Os dados já conferidos são mantidos; só o que estiver vazio é completado.</p>`:""}
     ${pdf?`<p class="muted" style="margin:0">PDF: <b>${esc(file.name)}</b></p>`:`<img src="${URL.createObjectURL(file)}" alt="Foto do papel" style="max-height:200px;object-fit:contain;width:100%;border-radius:8px;background:#000">`}
     <div class="grid2"><label class="field"><span>Nº da OS</span><input id="pp-os" inputmode="numeric" value="${esc(r.os)}"${duv("os")}></label><label class="field"><span>ID TracOS</span><input id="pp-tid" inputmode="numeric" value="${esc(r.id)}"${duv("id")}></label></div>
     <label class="field"><span>Título (vai para "Serviço executado")</span><input id="pp-tit" value="${esc(r.titulo)}"${duv("titulo")}></label>
@@ -974,23 +985,33 @@ async function papelAplicar(acao){
   const p = state.papel; if(!p) return; const v = id => ($("#"+id)?.value||"").trim();
   const os = v("pp-os").replace(/\D/g,""), tid = limpaTracos(v("pp-tid")), tit = v("pp-tit"), unid = v("pp-unid"), nota = v("pp-nota").replace(/\D/g,"").slice(0,14), venc = v("pp-venc"), prior = v("pp-prior"), cat = v("pp-cat"), anexar = $("#pp-anexar")?.checked;
   if(p.alvo.nova && !os){ toast("Informe o nº da OS."); $("#pp-os")?.focus(); return; }
-  $("#papelbox")?.remove(); state.papel = null;
+  const caixa = $("#papelbox"); if(p.alvo.nova){ caixa?.querySelectorAll("button").forEach(b=>b.disabled = true); } else { caixa?.remove(); state.papel = null; }
   const pôr = (el, val) => { if(el && val){ if(el.tagName==="SELECT") unidValor(el, val); else el.value = val; el.dispatchEvent(new Event("input", {bubbles:true})); } };
   const aplicar = (osEl, tidEl, descEl, unidEl) => { pôr(tidEl, tid); pôr(descEl, tit); pôr(unidEl, unid); if(osEl){ osEl.value = os; osEl.dispatchEvent(new Event("input", {bubbles:true})); osEl.dispatchEvent(new Event("change", {bubbles:true})); } };
-  const ids = anexar && !p.pdf ? await uploadPhotos([p.file], {tipo:"antes", os, unid}) : [];
-  // todo papel lido entra (ou atualiza) na carteira de OS recebidas
-  let ord = null; if(os) ord = await guardarNaCarteira({os, tracos:tid, titulo:tit, unidade:unid, empresa:p.emp||"", nota, vencimento:venc, prioridade:prior, categoria:cat, foto:ids[0]}).catch(err=>{ toast(writeErr(err)); return null; });
-  if(p.alvo.row!=null){ const row = document.querySelector(`.dayrow[data-r="${p.alvo.row}"]`), r = state.day.rows[p.alvo.row];
-    aplicar(row?.querySelector('[data-f="os"]'), row?.querySelector('[data-f="tid"]'), row?.querySelector('[data-f="desc"]'), row?.querySelector('[data-f="cli"]'));
-    if(r){ r.nota = nota; if(ids.length){ r.fotoMeta = {...(r.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; r.fotos = [...(r.fotos||[]), ...ids]; renderDayRows(); updateDay(); } } }
-  else if(p.alvo.form==="cr"){ aplicar($("#cr-os"), $("#cr-tid"), $("#cr-desc"), $("#cr-unid")); const h = $("#cr-nota"); if(h) h.value = nota; }
-  else if(p.alvo.form==="ap"){ aplicar($("#f-os"), $("#f-tid"), $("#f-desc"), $("#f-cli")); const h = $("#f-nota"); if(h) h.value = nota;
-    if(ids.length){ state.apFotos = [...(state.apFotos||[]), ...ids]; const box = $("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); } state.modalDirty = true; }
-  else if(p.alvo.nova && ord){
+  const carteira = fotoId => os ? guardarNaCarteira({os, tracos:tid, titulo:tit, unidade:unid, empresa:p.emp||"", nota, vencimento:venc, prioridade:prior, categoria:cat, foto:fotoId}) : Promise.resolve(null);
+  if(p.alvo.nova){ // todo papel lido entra (ou completa) a carteira de OS recebidas
+    let ord = null;
+    try{ const ids = anexar && !p.pdf ? await uploadPhotos([p.file], {tipo:"antes", os, unid}) : []; ord = await carteira(ids[0]); }
+    catch(err){ toast(writeErr(err)); }
+    if(!ord){ caixa?.querySelectorAll("button").forEach(b=>b.disabled = false); return; } // a caixa continua aberta com o que foi digitado
+    caixa?.remove(); state.papel = null;
     if(acao==="iniciar") ordIniciar(ord); else if(acao==="lancar") ordLancar(ord);
     else { toast(`OS ${os} guardada na carteira.`); if(state.view==="carteira" || state.view==="painel" || state.worker){ state.rendered = null; render(); } }
     return;
   }
+  // destinos antigos: preenche os campos na hora; foto e carteira seguem depois, sem travar a tela
+  let rowRef = null;
+  if(p.alvo.row!=null){ const row = document.querySelector(`.dayrow[data-r="${p.alvo.row}"]`); rowRef = state.day.rows[p.alvo.row];
+    aplicar(row?.querySelector('[data-f="os"]'), row?.querySelector('[data-f="tid"]'), row?.querySelector('[data-f="desc"]'), row?.querySelector('[data-f="cli"]')); if(rowRef) rowRef.nota = nota; }
+  else if(p.alvo.form==="cr"){ aplicar($("#cr-os"), $("#cr-tid"), $("#cr-desc"), $("#cr-unid")); const h = $("#cr-nota"); if(h) h.value = nota; }
+  else if(p.alvo.form==="ap"){ aplicar($("#f-os"), $("#f-tid"), $("#f-desc"), $("#f-cli")); const h = $("#f-nota"); if(h) h.value = nota; state.modalDirty = true; }
+  const unidC = unid || (rowRef ? (rowRef.cli || state.day?.unid) : p.alvo.form==="ap" ? $("#f-cli")?.value : "") || "";
+  (async ()=>{
+    const ids = anexar && !p.pdf && p.alvo.form!=="cr" ? await uploadPhotos([p.file], {tipo:"antes", os, unid:unidC}) : [];
+    if(ids.length && rowRef && state.day && state.day.rows.includes(rowRef)){ rowRef.fotoMeta = {...(rowRef.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; rowRef.fotos = [...(rowRef.fotos||[]), ...ids]; renderDayRows(); updateDay(); }
+    if(ids.length && p.alvo.form==="ap" && $("#apForm")){ state.apFotos = [...(state.apFotos||[]), ...ids]; const box = $("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); }
+    await carteira(ids[0]).catch(()=>{});
+  })();
   const outro = tid && state.ap.find(e=>e.tracos===tid && e.os && e.os!==os);
   toast(outro ? `Atenção: o ID TracOS ${tid} já foi usado na OS ${outro.os}. Confira.` : `OS ${os||"?"} · ID ${tid||"?"}${tit?` · ${tit.slice(0,40)}`:""}`);
 }
@@ -1003,22 +1024,33 @@ const papelBtn = alvo => `<span class="papelbtns"><label class="btn sm papelbtn"
 /* ---------- carteira de OS recebidas (papel/tela do TracOS) ---------- */
 const soDig = v => String(v||"").replace(/\D/g, "");
 function ordemDe(os, emp){ const k = soDig(os); if(!k) return null; return state.ord.find(o=>soDig(o.os)===k && (!emp || !o.empresa || chaveEmp(o.empresa)===chaveEmp(emp))) || null; }
-async function guardarNaCarteira(c){
-  const old = ordemDe(c.os, c.empresa), novo = {}; Object.entries(c).forEach(([k, v])=>{ if(v!=null && String(v).trim()!=="") novo[k] = v; });
-  const o = old ? {...old, ...novo} : {...novo, empresa:c.empresa || state.cfg.contratante || "", recebidaEm:new Date().toISOString(), recebidaPor:state.me || perfil?.nome || nomeDoEmail(session?.user?.email)};
-  o.id = old?.id || uid(); await save("ordens", o); return state.ord.find(x=>x.id===o.id) || o;
+// id fixo por OS e empresa: dois técnicos fotografando a mesma OS caem no mesmo registro
+const idOrdem = (os, emp) => ("os-" + soDig(os) + "-" + slug(chaveEmp(emp || state.cfg.contratante || "")||"x")).slice(0, 64);
+async function guardarNaCarteira(c, tentativa = 0){
+  c = {...c, empresa:c.empresa || state.cfg.contratante || ""};
+  const id = idOrdem(c.os, c.empresa); let old = ordemDe(c.os, c.empresa);
+  if(!old && !state.worker){ await recarregarDoc("ordens", id).catch(()=>{}); old = state.ord.find(x=>x.id===id) || null; } // pode ter sido criada em outro aparelho
+  const novo = {}; Object.entries(c).forEach(([k, v])=>{ if(v!=null && String(v).trim()!=="") novo[k] = v; });
+  let o;
+  if(old){ o = {...old}; Object.entries(novo).forEach(([k, v])=>{ if(old[k]==null || String(old[k]).trim()==="") o[k] = v; }); } // não troca o que já foi conferido
+  else o = {...novo, id, recebidaEm:new Date().toISOString(), recebidaPor:state.me || perfil?.nome || nomeDoEmail(session?.user?.email)};
+  try{ await save("ordens", o); }
+  catch(err){ if(err && err.conflito && tentativa < 1){ await recarregarDoc("ordens", o.id).catch(()=>{}); return guardarNaCarteira(c, tentativa + 1); } throw err; }
+  return state.ord.find(x=>x.id===o.id) || o;
 }
 const ST_ORD = {recebida:["Recebida","info"], execucao:["Em execução","warn"], concluida:["Concluída","good"], medida:["Medida","good"]};
+let apsPorOS = {ref:null, map:null};
+function apsDaOS(k){ if(apsPorOS.ref!==state.ap){ const m = new Map(); state.ap.forEach(e=>{ const kk = soDig(e.os); if(kk && !e.orcId){ if(!m.has(kk)) m.set(kk, []); m.get(kk).push(e); } }); apsPorOS = {ref:state.ap, map:m}; } return apsPorOS.map.get(k) || []; }
 function ordStatus(o){
-  const k = soDig(o.os), aps = state.ap.filter(e=>soDig(e.os)===k && !e.orcId && (!o.empresa || chaveEmp(empOf(e))===chaveEmp(o.empresa)));
-  const feitas = aps.filter(e=>!e.andamento), min = feitas.reduce((s,e)=>s+calc(e).total,0), outros = +o._naps || 0;
-  const st = feitas.length && feitas.every(e=>lockedE(e)) && (o.concluida || !aps.some(e=>e.andamento)) ? "medida" : o.concluida ? "concluida" : (aps.length || outros) ? "execucao" : "recebida";
-  return {st, aps, min, and:aps.some(e=>e.andamento)};
+  const aps = apsDaOS(soDig(o.os)).filter(e=>!o.empresa || chaveEmp(empOf(e))===chaveEmp(o.empresa));
+  const feitas = aps.filter(e=>!e.andamento), min = feitas.reduce((s,e)=>s+calc(e).total,0), outros = +o._naps || 0, and = aps.some(e=>e.andamento);
+  const st = and ? "execucao" : o.concluida && feitas.length && feitas.every(e=>lockedE(e)) ? "medida" : o.concluida ? "concluida" : (aps.length || outros) ? "execucao" : "recebida";
+  return {st, aps, min, and};
 }
 const vencOrd = o => o.vencimento ? diasEntre(today(), o.vencimento) : null;
 const ordAberta = st => st==="recebida" || st==="execucao";
-function vencChip(o, st){ const d = vencOrd(o); if(d==null) return ""; if(!ordAberta(st)) return `<span class="muted">venc. ${fdate(o.vencimento)}</span>`;
-  return d < 0 ? `<span class="pill bad">vencida há ${-d} dia${d<-1?"s":""}</span>` : d <= 3 ? `<span class="pill warn">${d===0?"vence hoje":`vence em ${d} dia${d>1?"s":""}`}</span>` : `<span class="muted">vence ${fdate(o.vencimento)}</span>`; }
+function vencChip(o, st){ const d = vencOrd(o); if(d==null) return ""; if(!ordAberta(st)) return `<span class="muted">venc. ${esc(fdate(o.vencimento))}</span>`;
+  return d < 0 ? `<span class="pill bad">vencida há ${-d} dia${d<-1?"s":""}</span>` : d <= 3 ? `<span class="pill warn">${d===0?"vence hoje":`vence em ${d} dia${d>1?"s":""}`}</span>` : `<span class="muted">vence ${esc(fdate(o.vencimento))}</span>`; }
 function carteiraResumo(){
   const ls = state.ord.map(o=>({o, ...ordStatus(o)})), n = st => ls.filter(x=>x.st===st).length, venc = ls.filter(x=>ordAberta(x.st) && vencOrd(x.o)!=null && vencOrd(x.o)<=3).length;
   if(!state.ord.length) return `<div class="banner"><span>📋 <b>Carteira de OS:</b> fotografe o papel (ou a tela do TracOS) de cada OS que a Brejeiro passar. O app guarda e acompanha até a medição.</span><div class="row">${papelNovaBtn("btn sm primary")}<button class="btn sm" data-act="nav" data-view="carteira">Abrir</button></div></div>`;
@@ -1039,7 +1071,7 @@ function vCarteira(){
     <div class="fc-top"><span><b class="mono">OS ${esc(o.os)}</b>${o.tracos?` · <span class="mono">#${esc(o.tracos)}</span>`:""}</span><span class="pill ${cl}">${l}${x.and?" · ▶":""}</span></div>
     ${o.titulo?`<p style="margin:0"><b>${esc(o.titulo)}</b></p>`:""}
     <p class="muted" style="margin:0;font-size:.85rem">${[o.unidade, o.categoria, o.prioridade].filter(Boolean).map(esc).join(" · ")}</p>
-    <p class="muted" style="margin:0;font-size:.85rem">${vencChip(o, x.st)} ${o.recebidaEm?`· recebida ${fdate(String(o.recebidaEm).slice(0,10))}${o.recebidaPor?` por ${esc(o.recebidaPor)}`:""}`:""}${x.min?` · <b>${fdec(x.min)} h</b> lançadas`:""}${o.concluida && o.concluidaEm?` · concluída ${fdate(String(o.concluidaEm).slice(0,10))}`:""}</p>
+    <p class="muted" style="margin:0;font-size:.85rem">${vencChip(o, x.st)} ${o.recebidaEm?`· recebida ${esc(fdate(String(o.recebidaEm).slice(0,10)))}${o.recebidaPor?` por ${esc(o.recebidaPor)}`:""}`:""}${x.min?` · <b>${fdec(x.min)} h</b> lançadas`:""}${o.concluida && o.concluidaEm?` · concluída ${esc(fdate(String(o.concluidaEm).slice(0,10)))}`:""}</p>
     <div class="row fc-acts">${x.st!=="medida"?`<button class="btn sm primary" data-act="ordIniciar" data-id="${esc(o.id)}">▶ Iniciar</button><button class="btn sm" data-act="ordLancar" data-id="${esc(o.id)}">+ Lançar horas</button>`:""}
       ${x.st==="medida"?"":o.concluida?`<button class="btn sm" data-act="ordConcluir" data-id="${esc(o.id)}" data-v="0">↺ Reabrir</button>`:`<button class="btn sm" data-act="ordConcluir" data-id="${esc(o.id)}" data-v="1">✓ Concluir</button>`}
       ${o.foto?`<button class="btn sm" data-act="fotoVer" data-id="${esc(o.foto)}">📷 Papel</button>`:""}${state.worker?"":`<button class="btn sm" data-act="ordEditar" data-id="${esc(o.id)}">Editar</button>`}</div></div>`; }).join("")}</div>`
@@ -1047,7 +1079,7 @@ function vCarteira(){
 }
 function ordIniciar(o){ state.crIds = null; openModal(cronoForm({emp:o.empresa, unid:o.unidade, desc:o.titulo}));
   const pôr = (id, v) => { const el = $("#"+id); if(el && v) el.value = v; }; pôr("cr-os", o.os); pôr("cr-tid", o.tracos); pôr("cr-nota", o.nota); setTimeout(()=>$("#cronoForm [type=submit]")?.focus(), 50); }
-function ordLancar(o){ A.newDay(); const d = state.day; if(!d) return;
+function ordLancar(o){ dayOpen(today(), {pedido:true, emp:o.empresa}); const d = state.day; if(!d) return;
   let i = d.rows.findIndex(r=>!r.os && !r.desc && !r.fim); if(i < 0){ A.dayAdd(); i = d.rows.length - 1; }
   const row = document.querySelector(`.dayrow[data-r="${i}"]`); if(!row) return; const r = d.rows[i];
   const pôr = (sel, v) => { const el = row.querySelector(sel); if(el && v){ if(el.tagName==="SELECT") unidValor(el, v); else el.value = v; el.dispatchEvent(new Event("input", {bubbles:true})); } };
@@ -1076,7 +1108,7 @@ function loteUI(){
   const el = document.createElement("div"); el.id = "papelbox"; el.className = "assinpad";
   el.innerHTML = `<div class="assinbox"><h3 style="margin:0">${L.length} papéis lidos</h3><p class="muted" style="margin:0">Confira cada um. Os campos em amarelo têm menos certeza.</p>
     <div class="lotelista">${L.map(({f, r, pdf}, i)=>{ const unid = r.centro ? (us.find(u=>u.startsWith(r.centro)) || "") : "", ja = ordemDe(r.os, emp), duv = c => (r.conf?.[c]||0) < 0.8 ? ' class="duvida"' : "";
-      return `<div class="loteitem" data-i="${i}"><label class="lotehead"><input type="checkbox" class="lt-ok" ${r.os?"checked":""}><span><b>${i+1}.</b> ${esc(f.name.length>30?f.name.slice(0,28)+"…":f.name)} ${ja?'<span class="pill info">já na carteira</span>':""}${!r.os?'<span class="pill bad">sem nº</span>':""}</span></label>
+      return `<div class="loteitem" data-i="${i}"><label class="lotehead"><input type="checkbox" class="lt-ok" ${r.os?"checked":""}><span><b>${i+1}.</b> ${esc(f.name.length>30?f.name.slice(0,28)+"…":f.name)} ${ja?'<span class="pill info">já na carteira</span>':""}${!r.os?'<span class="pill bad">sem nº</span>':""}${r.erro?`<span class="pill bad">${esc(r.erro)}</span>`:""}</span></label>
         ${pdf?"":`<img src="${URL.createObjectURL(f)}" alt="" class="lotefoto">`}
         <div class="grid2"><label class="field"><span>Nº da OS</span><input class="lt-os" inputmode="numeric" value="${esc(r.os||"")}"${duv("os")}></label><label class="field"><span>ID TracOS</span><input class="lt-tid" inputmode="numeric" value="${esc(r.id||"")}"${duv("id")}></label></div>
         <label class="field"><span>Título</span><input class="lt-tit" value="${esc(r.titulo||"")}"${duv("titulo")}></label>
@@ -1086,14 +1118,17 @@ function loteUI(){
   document.body.appendChild(el);
 }
 async function loteSalvar(b){
-  const L = state.lote || [], emp = state.cfg.contratante || lastEmp(), anexar = $("#lt-anexar")?.checked; let n = 0, falha = 0; b.disabled = true;
-  const itens = [...document.querySelectorAll("#papelbox .loteitem")].map(el=>({el, x:L[+el.dataset.i]})).filter(({el})=>el.querySelector(".lt-ok").checked);
-  for(const {el, x} of itens){ const v = c => (el.querySelector(c)?.value||"").trim(), os = v(".lt-os").replace(/\D/g,""); if(!os) continue;
+  const L = state.lote || [], emp = state.cfg.contratante || lastEmp(), anexar = $("#lt-anexar")?.checked; let n = 0, pulados = 0; const falhas = []; b.disabled = true;
+  const itens = [...document.querySelectorAll("#papelbox .loteitem")].map(el=>({el, i:+el.dataset.i, x:L[+el.dataset.i]}));
+  for(const {el, i, x} of itens){ const v = c => (el.querySelector(c)?.value||"").trim(), os = v(".lt-os").replace(/\D/g,"");
+    if(!el.querySelector(".lt-ok").checked || !os){ pulados++; continue; }
     try{ const ids = anexar && !x.pdf ? await uploadPhotos([x.f], {tipo:"antes", os, unid:v(".lt-unid")}) : [];
       await guardarNaCarteira({os, tracos:limpaTracos(v(".lt-tid")), titulo:v(".lt-tit"), unidade:v(".lt-unid"), empresa:emp, nota:x.r.nota||"", vencimento:v(".lt-venc"), prioridade:x.r.prior||"", categoria:x.r.cat||"", foto:ids[0]}); n++; }
-    catch(err){ falha++; } }
-  $("#papelbox")?.remove(); state.lote = null; toast(`${n} OS guardada(s) na carteira${falha?` · ${falha} com erro`:""}.`); state.view = "carteira"; state.rendered = null; render();
+    catch(err){ x.r = {...x.r, os, id:v(".lt-tid"), titulo:v(".lt-tit"), venc:v(".lt-venc"), erro:writeErr(err)}; falhas.push(i); } }
+  if(falhas.length){ state.lote = falhas.map(i=>L[i]); loteUI(); toast(`${n} guardada(s). ${falhas.length} não foi(ram) guardada(s): confira e tente de novo.`); return; }
+  $("#papelbox")?.remove(); state.lote = null; toast(`${n} OS guardada(s) na carteira${pulados?` · ${pulados} não marcada(s) ou sem nº ficaram de fora`:""}.`); state.view = "carteira"; state.rendered = null; render();
 }
+document.addEventListener("input", e=>{ if(e.target.classList?.contains("lt-os")){ const ok = e.target.closest(".loteitem")?.querySelector(".lt-ok"); if(ok && soDig(e.target.value)) ok.checked = true; } });
 function osSugestoes(used){ const m = osLista(); m.forEach((v,k)=>{ if(!(k in used)) used[k] = [v.desc, v.unid].filter(Boolean).join(" · "); }); return used; }
 // escolheu uma OS da lista: completa serviço e unidade (se estiverem vazios)
 function osPreencher(os, descEl, unidEl){ const x = osLista().get(String(os||"").trim()); if(!x) return false;
@@ -2575,7 +2610,7 @@ function terceirosPagina(doc, g, cab, f){
     styles:{font:"helvetica", fontSize:g.linhas.length>32 ? 5.4 : 6, cellPadding:g.linhas.length>32 ? 0.45 : 0.8, textColor:0, lineColor:[150,150,150], lineWidth:0.1, overflow:"ellipsize"},
     headStyles:{fillColor:[235,235,235], textColor:0, fontSize:5.6, lineColor:[150,150,150], lineWidth:0.1, overflow:"linebreak"},
     footStyles:{fillColor:[235,235,235], textColor:0, fontStyle:"bold", halign:"right"},
-    columnStyles:{0:{cellWidth:13, halign:"center"}, 1:{cellWidth:13, halign:"center"}, 2:{cellWidth:15}, 3:{cellWidth:50}, ...Object.fromEntries(Array.from({length:14},(_,i)=>[i+4, {halign:"right", cellWidth:(R-L-13-13-15-50-20)/14}])), 18:{halign:"right", cellWidth:20}}});
+    columnStyles:{0:{cellWidth:13, halign:"center"}, 1:{cellWidth:13, halign:"center"}, 2:{cellWidth:18.5}, 3:{cellWidth:46.5}, ...Object.fromEntries(Array.from({length:14},(_,i)=>[i+4, {halign:"right", cellWidth:(R-L-13-13-18.5-46.5-20)/14}])), 18:{halign:"right", cellWidth:20}}});
   let y = doc.lastAutoTable.finalY + 5; if(y > ph(doc)-44){ doc.addPage(); y = 15; }
   doc.autoTable({startY:y, margin:{left:L+20, right:W/2+10}, theme:"plain", head:[[{content:"RESUMO GERAL", colSpan:3, styles:{halign:"center", fontStyle:"bold", fontSize:8}}]],
     body:[["DIÁRIAS TRABALHADAS", "0,00", "R$ 0,00"], ["DIÁRIAS DE CUSTO", "0,00", "R$ 0,00"], ["KM RODADO", "0,00", "R$ 0,00"], ["HORAS NORMAIS", n2(t.hn), "R$ "+n2(t.vn)], ["HORAS EXTRAS 50%", n2(t.h50), "R$ "+n2(t.v50)], ["HORAS EXTRAS 100%", n2(t.h100), "R$ "+n2(t.v100)], ["ADICIONAL NOTURNO", n2(t.not), "R$ "+n2(t.notv)]],
@@ -2602,6 +2637,8 @@ async function terceirosXlsx(grupos, cab, nome, f){
     const hr = aoa.findIndex(r=>r[0]==="ORDENS"); // a linha "FUNCIONÁRIO:" (fechamento por funcionário) desce o cabeçalho
     ws["!merges"] = [[0,0],[1,1],[2,2],[3,3]].map(([c])=>[hr,c,hr+1,c]).concat([[4,5],[6,7],[8,9],[10,11],[12,13],[14,15],[16,17]].map(([a,b])=>[hr,a,hr,b]), [[hr,18,hr+1,18]]).map(([r1,c1,r2,c2])=>({s:{r:r1,c:c1},e:{r:r2,c:c2}}));
     ws["!cols"] = [{wch:10},{wch:10},{wch:14},{wch:44},...Array(14).fill({wch:9}),{wch:14}];
+    const rr = aoa.findIndex(r=>r[0]==="RESUMO GERAL");
+    for(let r=rr+1; r<aoa.length; r++) for(const c of [2,3,12]){ const cell = ws[X.utils.encode_cell({r,c})]; if(cell && typeof cell.v==="number") cell.z = "#,##0.00"; }
     for(let r=hr+2; r<aoa.length; r++) for(let c=4; c<19; c++){ const cell = ws[X.utils.encode_cell({r,c})]; if(cell && typeof cell.v==="number") cell.z = "#,##0.00"; }
     X.utils.book_append_sheet(wb, ws, (g.centro || g.cidade || "Fechamento").slice(0,31));
   }
@@ -3187,8 +3224,9 @@ document.addEventListener("submit", async e=>{
   if(e.target.id==="cronoForm"){ e.preventDefault(); submitCrono(); }
   if(e.target.id==="ordForm"){ e.preventDefault(); const id = e.target.dataset.id, old = state.ord.find(x=>x.id===id) || {}, os = $("#od-os").value.replace(/\D/g,"");
     if(!os){ toast("Informe o nº da OS."); return; }
-    const dup = state.ord.find(x=>x.id!==id && soDig(x.os)===os); if(dup){ toast(`A OS ${os} já está na carteira.`); return; }
-    const x = {...old, id: id || uid(), os, tracos:limpaTracos($("#od-tid").value), titulo:$("#od-tit").value.trim(), empresa:$("#od-emp").value.trim(), unidade:$("#od-unid").value.trim(), vencimento:$("#od-venc").value, prioridade:$("#od-prior").value.trim(), obs:$("#od-obs").value.trim()};
+    const empF = $("#od-emp").value.trim(), dup = state.ord.find(x=>x.id!==id && soDig(x.os)===os && (!x.empresa || !empF || chaveEmp(x.empresa)===chaveEmp(empF)));
+    if(dup){ toast(`A OS ${os} já está na carteira: abrindo a existente.`); openModal(ordForm(dup)); return; }
+    const x = {...old, id: id || idOrdem(os, empF), os, tracos:limpaTracos($("#od-tid").value), titulo:$("#od-tit").value.trim(), empresa:$("#od-emp").value.trim(), unidade:$("#od-unid").value.trim(), vencimento:$("#od-venc").value, prioridade:$("#od-prior").value.trim(), obs:$("#od-obs").value.trim()};
     if(!id){ x.recebidaEm = new Date().toISOString(); x.recebidaPor = state.me || perfil?.nome || nomeDoEmail(session?.user?.email); }
     try{ await save("ordens", x); state.modalDirty = false; closeModal(); state.rendered = null; render(); toast(`OS ${os} salva na carteira.`); }catch(err){ toast(writeErr(err)); } }
   if(e.target.id==="pagForm"){ e.preventDefault(); const id = e.target.dataset.id, old = state.pag.find(x=>x.id===id) || {};
@@ -3620,7 +3658,7 @@ const A = {
     b.disabled = true;
     try{ const {data, error} = await sb.rpc("esvaziar_lixeira"); if(error){ if(/esvaziar_lixeira|function|PGRST202/i.test(error.message||"") || error.code==="PGRST202") throw {code:"db", message:"O botão ainda não foi ativado no banco. Peça para rodar a migração 017 (esvaziar lixeira)."}; throw dbErr(error); }
       // fotos que eram só dos itens apagados (não as que continuam em alguma OS ou despesa)
-      const usadas = new Set([...state.ap, ...state.desp].flatMap(x=>x.fotos||[])), fotos = (data?.fotos||[]).filter(f=>f && !usadas.has(f));
+      const usadas = new Set([...state.ap, ...state.desp].flatMap(x=>x.fotos||[]).concat(state.ord.map(o=>o.foto).filter(Boolean))), fotos = (data?.fotos||[]).filter(f=>f && !usadas.has(f));
       if(fotos.length) await sb.storage.from("fotos").remove(fotos).catch(()=>{});
       toast(`Lixeira esvaziada: ${data?.itens||0} item(ns)${fotos.length?` e ${fotos.length} foto(s)`:""} apagados de vez.`); carregarLixeira();
     }catch(err){ b.disabled = false; delete b.dataset.armed; b.textContent = "Esvaziar lixeira"; toast(writeErr(err)); } },
@@ -3763,6 +3801,7 @@ const A = {
   papelFechar(){ $("#papelbox")?.remove(); state.papel = null; },
   papelUsar(){ papelAplicar(); },
   papelAcao(b){ const acao = b.dataset.acao;
+    if(!soDig($("#pp-os")?.value)){ toast("Informe o nº da OS."); $("#pp-os")?.focus(); return; }
     if(acao==="proximo"){ // a câmera precisa abrir no mesmo toque (regra do iPhone)
       const inp = document.createElement("input"); inp.type = "file"; inp.accept = "image/*"; inp.setAttribute("capture", "environment"); inp.dataset.papel = "proximo"; inp.hidden = true; document.body.appendChild(inp); inp.click(); }
     papelAplicar(acao); },
@@ -3774,7 +3813,7 @@ const A = {
   ordLancar(b){ const o = state.ord.find(x=>x.id===b.dataset.id); if(o) ordLancar(o); },
   async ordConcluir(b){ const o = state.ord.find(x=>x.id===b.dataset.id); if(!o) return; const fim = b.dataset.v==="1";
     if(fim && ordStatus(o).and){ toast("Essa OS está com cronômetro aberto. Encerre antes de concluir."); return; }
-    const x = {...o, concluida:fim}; if(fim) x.concluidaEm = new Date().toISOString(); else { delete x.concluidaEm; delete x.concluidaPor; }
+    const x = {...o, concluida:fim}; delete x._naps; if(fim) x.concluidaEm = new Date().toISOString(); else { delete x.concluidaEm; delete x.concluidaPor; }
     try{ await save("ordens", x); toast(fim ? `OS ${o.os} concluída.` : `OS ${o.os} reaberta.`); state.rendered = null; render(); }catch(err){ toast(writeErr(err)); } },
   async ordExcluir(b){ if(!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Confirmar exclusão"; return; } try{ await removeDoc("ordens", b.dataset.id); closeModal(); state.rendered = null; render(); toast("OS tirada da carteira (fica na lixeira)."); }catch(err){ toast(writeErr(err)); } },
   papelNum(b){ const el = $("#"+(state.papelCampo||"pp-os")); if(el){ el.value = b.dataset.n; state.papelCampo = state.papelCampo==="pp-os" ? "pp-tid" : "pp-os"; } },
@@ -3836,7 +3875,7 @@ const A = {
       if(!window.JSZip){ b.textContent = "Preparando…"; await loadScript(JSZIP); }
       const dados = backupDados(), todas = b.dataset.todas==="1", desde = todas ? 0 : (state.cfg.fotosAte ? new Date(state.cfg.fotosAte).getTime() : 0);
       const tempo = id => { const n = id.split("/").pop().replace(/\.\w+$/,""); const t = parseInt(n.slice(0,-6), 36); return isFinite(t) ? t : Date.now(); };
-      const ids = [...new Set([...state.ap, ...state.orc, ...state.desp].flatMap(x=>x.fotos||[]))].filter(id=>tempo(id) > desde);
+      const ids = [...new Set([...state.ap, ...state.orc, ...state.desp].flatMap(x=>x.fotos||[]).concat(state.ord.map(o=>o.foto).filter(Boolean)))].filter(id=>tempo(id) > desde);
       let n = 0, falhas = 0, parte = 1, tamanho = 0, zip = new JSZip(); const LIM = 150*1024*1024;
       zip.file("backup.json", JSON.stringify(dados, null, 1));
       const fechar = async (ultima)=>{ b.textContent = "Compactando…"; const blob = await zip.generateAsync({type:"blob", compression:"STORE"});
