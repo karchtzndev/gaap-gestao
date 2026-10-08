@@ -118,7 +118,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.08-1";
+const VERSAO = "2026.10.08-2";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -854,7 +854,7 @@ function lerTracos(txt, opt = {}){
   if(iId >= 0){ const m = linhas[iId].replace(/^.*?serv\S*\s*:?/i, "").match(/^\s*([#%*H£¥&@$€]?)\s*(\d[\d ]{1,9}\d|\d)/);
     if(m){ r.id = fixaId(m[1], m[2]); r.conf.id = m[1]==="#" || r.id.length===L ? 0.9 : 0.6; } }
   // linha do título: nº da ordem (12 dígitos, zeros à esquerda) [- nota SAP] - texto; na tela o ID vem antes na mesma linha
-  const reT = /(?:([#%*H£¥&@$€]?)\s*(\d{3,8})\s+)?(0{2,}\d[\d ]{3,12}\d)\s*[-–—~]+\s*(?:(\d[\d ]{6,13}\d)\s*[-–—~]+\s*)?(.+)$/;
+  const reT = /(?:([#%*H£¥&@$€]?)\s*(\d{3,8})\s+)?(0{2,}\d[\d ]{3,12}\d)\s*[-–—~*•·+=]+\s*(?:(\d[\d ]{6,13}\d)\s*[-–—~*•·+=]+\s*)?(.+)$/;
   let iT = N.findIndex(l => /^t[i1l]tu[l1i]o\b/.test(l)), k0 = -1, mt = null;
   for(let k = (iT >= 0 ? iT + 1 : 0); k < linhas.length && k < (iT >= 0 ? iT + 4 : linhas.length); k++){ const m = linhas[k].match(reT); if(m){ mt = m; k0 = k; break; } }
   if(!mt && iT >= 0) for(let k = 0; k < linhas.length; k++){ const m = linhas[k].match(reT); if(m){ mt = m; k0 = k; break; } }
@@ -868,7 +868,7 @@ function lerTracos(txt, opt = {}){
     // texto: corta no lixo da tela (botões em minúsculas como "Editar") e junta as linhas de continuação (título quebrado)
     let partes = [cortaLixo(mt[5])], fechado = /[.,]\s*(\S{1,6})?\s*$/.test(mt[5].trim());
     for(let k = k0 + 1; k < linhas.length && k <= k0 + 4; k++){
-      if(linhas[k].replace(/\W/g, "").length <= 2) continue; // letra solta (lixo da foto) entre as linhas do título
+      if(linhas[k].replace(/[^A-Za-zÀ-ÿ]/g, "").length < 4 || !/[A-ZÀ-Ú]{3,}/.test(linhas[k]) && !/[a-zà-ÿ]{4,}/.test(linhas[k])) continue; // lixo da foto (moiré) entre as linhas do título
       if(/\b(status|respons\S*|prioridade|categoria|local|em aberto)\b/.test(N[k]) || !continuacao(linhas[k])) break;
       partes.push(cortaLixo(linhas[k])); fechado = /[.,]\s*$/.test(linhas[k]);
     }
@@ -887,7 +887,7 @@ function lerTracos(txt, opt = {}){
 }
 const ehNota = v => /^20\d{7}$/.test(v); // nota SAP da Brejeiro: 9 dígitos começando com 20 (ex.: 200186907)
 // lixo da tela na mesma linha do título: corta a partir da primeira palavra com minúsculas (os títulos são em maiúsculas)
-function cortaLixo(s){ const ws = String(s||"").trim().split(/\s+/), i = ws.findIndex((w, k) => k > 0 && /[a-zà-ÿ]{2,}/.test(w));
+function cortaLixo(s){ const ws = String(s||"").trim().split(/\s+/), i = ws.findIndex((w, k) => k > 0 && (/[a-zà-ÿ]{2,}/.test(w) || /^[|¦]+$/.test(w)));
   if(i < 0) return ws.join(" "); const t = ws.slice(0, i); while(t.length > 1 && /^\S$|^\d{1,2}$/.test(t[t.length-1])) t.pop(); return t.join(" "); }
 // linha que continua o título: quase só maiúsculas, pelo menos uma palavra de 3+ letras
 function continuacao(l){ const w = l.trim(); if(!/[A-ZÀ-Ú]{3,}/.test(w)) return false; const letras = w.replace(/[^A-Za-zÀ-ÿ]/g, ""); return letras.length >= 4 && letras.replace(/[^a-zà-ÿ]/g, "").length <= letras.length * 0.2; }
