@@ -1,0 +1,22 @@
+# Roda os testes dos cálculos (horas, valores, feriados) e da leitura do papel da OS a cada envio.
+name: Testes
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Conferir a sintaxe de todos os arquivos
+        run: for f in js/*.js portal.js aprovar.js sw.js config.js; do node --check "$f" || exit 1; done
+      - name: Testes
+        run: node --test tests/*.test.js

@@ -27,7 +27,7 @@
       ]
     },
     {
-      "source": "/(app.js|aprovar.js|portal.js|style.css|config.js|sw.js)",
+      "source": "/(js/.*|vendor/.*|aprovar.js|portal.js|style.css|config.js|sw.js)",
       "headers": [
         {
           "key": "Cache-Control",

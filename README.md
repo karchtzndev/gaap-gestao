@@ -11,7 +11,9 @@ orçamentos, fechamentos e valores a receber.
 | Arquivo | O que é |
 |---|---|
 | `index.html` | Página do sistema |
-| `app.js` | Toda a lógica (cálculo de horas, relatórios, dashboard, login) |
+| `js/` | A lógica, dividida por assunto e carregada em ordem pelo `index.html`: `base.js` (cálculo de horas, feriados, valores), `dados.js` (Supabase, fila sem internet), `interface.js` (janelas, navegação), `leitura-os.js` (papel/PDF da OS e carteira), `telas.js`, `lancamentos.js`, `relatorios.js` (relatórios, fechamentos, PDF), `financeiro.js`, `ajustes.js`, `acoes.js` (botões; inicia o app) |
+| `vendor/` | Bibliotecas usadas em toda tela (Supabase, jsPDF), guardadas no próprio site para não depender de CDN |
+| `tests/` | Testes automáticos: `node --test tests/*.test.js` (rodam sozinhos no GitHub a cada envio) |
 | `style.css` | Visual |
 | `config.js` | Endereço e chave **pública** (anon) do Supabase |
 | `logo.js`, `logo.jpg`, `icon-*.png`, `manifest.webmanifest` | Logo e ícones (pode instalar no celular) |
