@@ -1,15 +1,16 @@
 // Service worker do GAAP Gestão: notificações (lembretes) e funcionamento sem internet.
-// - arquivos do app: tenta a rede primeiro e guarda uma cópia; sem internet usa a cópia
+// - arquivos do app: abre na hora com a cópia guardada e busca a versão nova em segundo plano
+//   (com internet fraca a rede não falha, só demora: esperar por ela deixava o app "só carregando")
 // - bibliotecas (CDN, fontes): usa a cópia guardada (versões fixas)
 // - dados (Supabase) não passam por aqui: o app guarda os dados e a fila de envio no IndexedDB
-const CACHE = "gaap-app-v29";
+const CACHE = "gaap-app-v30";
 const SHELL = ["/", "/app.js", "/style.css", "/config.js", "/logo.js", "/logo.jpg", "/icon-192.png", "/badge-96.png", "/manifest.webmanifest",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"];
 const CDN = /^https:\/\/(cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|fonts\.googleapis\.com|fonts\.gstatic\.com)\//;
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(new Request(u, CDN.test(u) ? { mode: "cors" } : {})).catch(() => {})))).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(new Request(u, CDN.test(u) ? { mode: "cors" } : { cache: "reload" })).catch(() => {})))).then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", e => e.waitUntil(
   caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith("gaap-app-") && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())
@@ -22,16 +23,15 @@ self.addEventListener("fetch", e => {
     return;
   }
   if (url.origin !== location.origin || url.pathname.startsWith("/api/") || url.pathname === "/sw.js") return;
+  const rede = fetch(req).then(res => {
+    if (res.ok && res.type === "basic") { const c = res.clone(); caches.open(CACHE).then(k => k.put(req.mode === "navigate" && url.pathname === "/index.html" ? "/" : req, c)); }
+    return res;
+  });
   e.respondWith((async () => {
-    try {
-      const res = await fetch(req);
-      if (res.ok && res.type === "basic") { const c = res.clone(); caches.open(CACHE).then(k => k.put(req.mode === "navigate" && url.pathname === "/index.html" ? "/" : req, c)); }
-      return res;
-    } catch (err) {
-      const r = await caches.match(req, { ignoreSearch: true }) || (req.mode === "navigate" ? await caches.match("/") : null);
-      if (r) return r;
-      throw err;
-    }
+    const guardado = await caches.match(req, { ignoreSearch: true }) || (req.mode === "navigate" && (url.pathname === "/" || url.pathname === "/index.html") ? await caches.match("/") : null);
+    if (guardado) { e.waitUntil(rede.catch(() => {})); return guardado; }
+    try { return await rede; }
+    catch (err) { const r = req.mode === "navigate" ? await caches.match("/") : null; if (r) return r; throw err; }
   })());
 });
 self.addEventListener("push", e => {

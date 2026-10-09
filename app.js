@@ -118,7 +118,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.08-4";
+const VERSAO = "2026.10.09-1";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -256,7 +256,15 @@ const state = {
   rep:{modo:"dia", dia:today(), de:ym(today())+"-01", ate:today(), valores:true, f:{prof:"__all",unid:"__all",emp:"__all"}, by:"", vazios:true, fmt:"dec"},
   hf:{f:{prof:"__all",unid:"__all",emp:"__all"}, by:""}, pby:"prof"
 };
-const sb = window.supabase.createClient(window.GAAP_CONFIG.supabaseUrl, window.GAAP_CONFIG.supabaseKey, {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:true}});
+// internet fraca: a requisição não falha, fica pendurada. Cada chamada tem um prazo (fotos têm mais tempo)
+function fetchComPrazo(url, init = {}){
+  const u = String(url?.url || url), ms = /\/storage\/v1\//.test(u) ? 90000 : /\/auth\/v1\//.test(u) ? 10000 : /\/functions\/v1\//.test(u) ? 45000 : 20000;
+  const ctl = new AbortController(), t = setTimeout(()=>ctl.abort(new Error("timeout: internet lenta")), ms);
+  if(init.signal){ if(init.signal.aborted) ctl.abort(init.signal.reason); else init.signal.addEventListener("abort", ()=>ctl.abort(init.signal.reason), {once:true}); }
+  return fetch(url, {...init, signal:ctl.signal}).finally(()=>clearTimeout(t));
+}
+const comPrazo = (p, ms) => Promise.race([p, new Promise((_, rej)=>setTimeout(()=>rej(new Error("timeout: internet lenta")), ms))]);
+const sb = window.supabase.createClient(window.GAAP_CONFIG.supabaseUrl, window.GAAP_CONFIG.supabaseKey, {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:true}, global:{fetch:fetchComPrazo}});
 let session = null, perfil = null;
 const MSG_DB = {SEM_PERMISSAO:"Seu acesso ainda não foi liberado para lançar OS. Fale com o responsável.", NAO_E_SEU:"Esse lançamento não é seu.", DATA_INVALIDA:"Data inválida.", HORA_INVALIDA:"Horário inválido. Use HH:MM.", ID_INVALIDO:"Código de registro inválido.", DADOS_INVALIDOS:"Dados inválidos.", OS_OBRIGATORIA:"Essa contratante exige o nº da OS.", NOME_VAZIO:"Digite o novo nome."};
 function dbErr(error){
@@ -294,7 +302,7 @@ async function save(col, obj){
   data.atualizadoEm = new Date().toISOString(); state.gen = (state.gen||0) + 1;
   if(precisaFila(col, id, data)) return filaSalvar(col, id, data, versao);
   try{ return await saveNet(col, id, data, versao); }
-  catch(e){ if(e && e.rede) return filaSalvar(col, id, data, versao); throw e; }
+  catch(e){ if(e && e.rede){ state.offline = true; return filaSalvar(col, id, data, versao); } throw e; }
 }
 // envio de um registro ao servidor; erro de conexão vem marcado com {rede:true}
 async function saveNet(col, id, data, versao){
@@ -328,7 +336,7 @@ async function saveMany(col, lista){ // registros novos em lote (importação)
 }
 async function removeDoc(col, id){
   state.gen = (state.gen||0) + 1;
-  if(outbox.tem(col, id) || state.offline){ await outbox.por({op:"del", col, id}); }
+  if(outbox.tem(col, id) || state.offline || state.atualizando){ await outbox.por({op:"del", col, id}); }
   else try{ await removeNet(col, id); }catch(e){ if(e && e.rede) await outbox.por({op:"del", col, id}); else throw e; }
   setList(KEY[col], state[KEY[col]].filter(x=>x.id!==id)); scheduleRender();
 }
@@ -337,7 +345,7 @@ async function removeNet(col, id){
   if(error){ if(ehRede(error)) throw {rede:true}; throw dbErr(error); }
 }
 /* ---------- sem internet: fila de envio, fotos guardadas e cópia dos dados no aparelho ---------- */
-const ehRede = err => !navigator.onLine || /failed to fetch|fetch failed|networkerror|network request|load failed|internet|timed? ?out|ERR_/i.test(String(err?.message || err?.error || err || ""));
+const ehRede = err => !navigator.onLine || err?.name==="AbortError" || /failed to fetch|fetch failed|networkerror|network request|load failed|internet|timed? ?out|abort|ERR_/i.test(String(err?.message || err?.error || err || ""));
 const idb = (()=>{ let con;
   const abrir = () => con ||= new Promise((res, rej)=>{ try{ const r = indexedDB.open("gaap-offline", 1); r.onupgradeneeded = ()=>r.result.createObjectStore("kv"); r.onsuccess = ()=>res(r.result); r.onerror = ()=>rej(r.error); }catch(e){ rej(e); } });
   const tx = async (modo, fn) => { const db = await abrir(); return new Promise((res, rej)=>{ const t = db.transaction("kv", modo), r = fn(t.objectStore("kv")); t.oncomplete = ()=>res(r ? r.result : undefined); t.onerror = ()=>rej(t.error); t.onabort = ()=>rej(t.error); }); };
@@ -362,7 +370,7 @@ const outbox = {
     this.lista.push(item); return this.gravar(); }
 };
 function precisaFila(col, id, data){
-  if(state.offline || outbox.tem(col, id)) return true;
+  if(state.offline || state.atualizando || outbox.tem(col, id)) return true; // abrindo com internet fraca: não espera, vai para a fila
   return fotosPend.size > 0 && (data.fotos||[]).some(f=>fotosPend.has(f));
 }
 function filaSalvar(col, id, data, versao){
@@ -407,9 +415,9 @@ async function sincronizar(){
 function syncTag(){
   let t = $("#synctag");
   if(!t){ const sp = document.querySelector(".topbar .spacer"); if(!sp) return; t = document.createElement("button"); t.type = "button"; t.id = "synctag"; t.dataset.act = "sincronizar"; t.hidden = true; sp.after(t); } const n = outbox.lista.length + fotosPend.size;
-  t.hidden = !n && !state.offline;
+  t.hidden = !n && !state.offline && !state.atualizando;
   t.className = "synctag" + (state.offline ? " off" : "");
-  t.textContent = state.offline ? (n ? `Sem internet · ${n} a enviar` : "Sem internet") : outbox.rodando ? `Enviando ${n}…` : `${n} a enviar ⟳`;
+  t.textContent = state.atualizando && !n ? "Atualizando…" : state.offline ? (n ? `Sem internet · ${n} a enviar` : "Sem internet") : outbox.rodando ? `Enviando ${n}…` : `${n} a enviar ⟳`;
 }
 const snap = {
   t: 0, chave: id => "dados:" + id,
@@ -425,7 +433,7 @@ const snap = {
 // sessão guardada pelo Supabase no aparelho (para abrir sem internet mesmo com o token vencido)
 function sessaoGuardada(){ try{ for(let i=0; i<localStorage.length; i++){ const k = localStorage.key(i); if(/^sb-.*-auth-token$/.test(k)){ const v = JSON.parse(localStorage.getItem(k)); const u = v?.user || v?.currentSession?.user; if(u?.id) return {user:u}; } } }catch(e){} return null; }
 async function reconectar(){
-  try{ const {data} = await sb.auth.getSession(); if(!data.session) return false; session = data.session; state.sessaoLocal = false; return true; }catch(e){ return false; }
+  try{ const {data} = await comPrazo(sb.auth.getSession(), 10000); if(!data.session) return false; session = data.session; state.sessaoLocal = false; return true; }catch(e){ return false; }
 }
 window.addEventListener("online", async ()=>{ if(!session) return; if(state.sessaoLocal && !(await reconectar())) return; await sincronizar(); if(!state.offline){ state.offline = false; syncTag(); atualizar(); } });
 window.addEventListener("offline", ()=>{ state.offline = true; syncTag(); });
@@ -484,6 +492,8 @@ async function carregar(){
 async function boot(){
   state.ready = false; render();
   await outbox.carregar();
+  const local = await snap.ler(session.user.id);
+  if(local && local.perfil){ snap.aplicar(local); reaplicarFila(); state.ready = true; state.atualizando = true; render(); syncTag(); }
   try{
     if(state.sessaoLocal) throw {rede:true};
     const {data, error} = await sb.from("perfis").select("*").eq("user_id", session.user.id).maybeSingle();
@@ -495,18 +505,20 @@ async function boot(){
     await carregar(); state.offline = false;
     pushEstado().catch(()=>{}); setTimeout(()=>{ carregarChamados(); portalAgendar(); }, 1500);
   }catch(err){
-    const s = (err && err.rede) || ehRede(err) ? await snap.ler(session.user.id) : null;
-    if(s && s.perfil){ snap.aplicar(s); state.offline = true; reaplicarFila(); toast("Sem internet: mostrando os dados salvos neste aparelho. O que você lançar será enviado quando a conexão voltar."); }
-    else toast("Não consegui carregar os dados. Verifique a conexão e recarregue a página.");
+    const rede = (err && err.rede) || ehRede(err);
+    if(rede && local && local.perfil){ state.offline = true; reaplicarFila(); toast("Internet fraca ou sem internet: usando os dados deste aparelho. O que você lançar é enviado sozinho quando a conexão melhorar."); }
+    else if(!local) toast(rede ? "Sem internet e ainda não há dados guardados neste aparelho. Abra o app uma vez com internet." : "Não consegui carregar os dados. Verifique a conexão e recarregue a página.");
   }
-  state.ready = true; render(); syncTag(); snap.agendar();
+  state.atualizando = false; state.ready = true; render(); syncTag(); snap.agendar();
 }
 // itens ainda na fila aparecem na tela mesmo depois de recarregar os dados
 function reaplicarFila(){ outbox.lista.forEach(it=>{ const k = KEY[it.col]; if(!k) return; if(it.op==="del") setList(k, state[k].filter(x=>x.id!==it.id)); else upsertLocal(k, {...it.data, id:it.id, _pend:true, ...(it.versao?{_v:it.versao}:{})}); }); }
 async function initStore(){
-  let r = null; try{ r = await sb.auth.getSession(); }catch(e){} session = r?.data?.session || null;
-  if(!session && !navigator.onLine){ const s = sessaoGuardada(); if(s){ session = s; state.sessaoLocal = true; } }
+  let r = null; try{ r = await comPrazo(sb.auth.getSession(), navigator.onLine ? 3000 : 1000); }catch(e){} session = r?.data?.session || null;
+  if(!session){ const s = sessaoGuardada(); if(s){ session = s; state.sessaoLocal = true; } } // internet ruim ou acesso vencido: abre com o que está no aparelho
   sb.auth.onAuthStateChange((ev, s)=>{
+    if(!s && state.sessaoLocal && ev!=="SIGNED_OUT") return; // a renovação ainda não passou: continua com o login do aparelho
+    if(s && state.sessaoLocal){ session = s; state.sessaoLocal = false; setTimeout(atualizar, 500); return; } // a internet voltou e o acesso foi renovado
     const tinha = !!session; session = s;
     if(ev==="PASSWORD_RECOVERY"){ state.auth = "nova-senha"; state.ready = true; render(); return; }
     if(ev==="SIGNED_OUT"){ perfil = null; Object.assign(state, {worker:false, me:"", ap:[], orc:[], rec:[], fech:[], desp:[], pag:[], eq:[], docs:[], perfis:[], pub:null, view:"painel", auth:"entrar"}); render(); return; }
@@ -519,6 +531,7 @@ async function initStore(){
 let recarregando = false;
 async function atualizar(){
   if(document.hidden || recarregando || !session || !perfil || !state.ready || !$("#modal").hidden || ["orcEdit","ajustes"].includes(state.view)) return;
+  if(state.sessaoLocal && !(await reconectar())) return;
   recarregando = true;
   if(outbox.lista.length || fotosPend.size){ await sincronizar(); if(state.offline || outbox.lista.length){ recarregando = false; return; } }
   try{ const ok = perfil.papel==="dono" ? await loadOwnerInc() : perfil.papel==="funcionario" ? await loadWorker() : false; if(ok){ if(state.offline){ state.offline = false; syncTag(); } scheduleRender(); } else if(ok===false) setTimeout(atualizar, 3000); }
@@ -535,8 +548,8 @@ const assets = {
   async upload(blob, {type}){
     const path = `${session.user.id}/${uid()}.${type==="image/png"?"png":type==="image/webp"?"webp":type==="image/gif"?"gif":"jpg"}`;
     let error = null;
-    if(state.offline || !navigator.onLine) error = {message:"offline"}; else try{ ({error} = await sb.storage.from("fotos").upload(path, blob, {contentType:type, upsert:false})); }catch(e){ error = e; }
-    if(error && (state.offline || ehRede(error) || error.message==="offline")){ // guarda no aparelho e envia depois
+    if(state.offline || state.atualizando || !navigator.onLine) error = {message:"offline"}; else try{ ({error} = await sb.storage.from("fotos").upload(path, blob, {contentType:type, upsert:false})); }catch(e){ error = e; }
+    if(error && (state.offline || state.atualizando || ehRede(error) || error.message==="offline")){ // guarda no aparelho e envia depois
       await idb.set("foto:" + path, blob); fotosPend.add(path); await outbox.gravar(); assetUrls[path] = URL.createObjectURL(blob); agendarSync(5000);
       return {id:path, url:assetUrls[path]}; }
     if(error) throw {code:/size/i.test(error.message)?"too_large":/mime|type/i.test(error.message)?"unsupported_type":"upstream_error", message:error.message};
