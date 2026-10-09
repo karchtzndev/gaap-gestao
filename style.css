@@ -49,6 +49,10 @@ button,input,select,textarea{font:inherit;color:inherit}
 .brandmark>div{min-width:0}
 .brandmark b{font-family:var(--f-display);font-size:1.15rem;letter-spacing:.03em;display:block;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:520px){.modetag,.topbar .brandmark small{display:none}}
+@media (max-width:520px){.topbar{gap:8px;padding:8px 12px}.brandmark{gap:8px}.brandmark img{width:34px;height:34px}.brandmark b{font-size:.95rem;letter-spacing:0}.topbar .iconbtn{width:36px}.topbar .btn.sm{padding:5px 9px}}
+@media (max-width:400px){.topbar .btn.sm .lbl{display:none}.topbar .btn.sm{padding:5px 10px}}
+@media (max-width:360px){.brandmark b{font-size:.85rem}}
+@media (max-width:330px){.topbar .brandmark img{display:none}}
 .brandmark small{color:var(--muted);font-size:.78rem;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .topbar .spacer{flex:1}
 .modetag{font-size:.72rem;padding:2px 8px;border-radius:99px;background:var(--warn-bg);color:var(--warn);font-weight:600}
