@@ -163,7 +163,7 @@ async function uploadPhotosInt(files, ctx){
   if(ids.length) toast(`${ids.length} foto${ids.length>1?"s":""} adicionada${ids.length>1?"s":""}`);
   return ids;
 }
-function deleteAssetIfUnused(id, except=[]){ if(!assets || !id) return; if(state.ap.some(e=>!except.includes(e.id) && (e.fotos||[]).includes(id)) || state.ord.some(o=>o.foto===id)) return; assets.delete(id).catch(()=>{}); }
+function deleteAssetIfUnused(id, except=[]){ if(!assets || !id) return; if(state.ap.some(e=>!except.includes(e.id) && (e.fotos||[]).includes(id)) || state.ord.some(o=>o.foto===id) || rtsFotosUsadas().includes(id)) return; assets.delete(id).catch(()=>{}); }
 function fotoTipo(id){ const m = state.fotoMetaNovo?.[id] || state.ap.find(e=>e.fotoMeta && e.fotoMeta[id])?.fotoMeta[id]; return m && TIPO_FOTO[m.tipo] ? TIPO_FOTO[m.tipo] : ""; }
 function thumbs(ids, removable){ return (ids||[]).map(id=>`<span class="thumb">${fotoTipo(id)?`<i class="thumbtag">${fotoTipo(id)}</i>`:""}<img src="${esc(blobSrc(id))}" data-fid="${esc(id)}" alt="Foto do serviço" data-act="fotoVer" data-id="${esc(id)}" loading="lazy">${removable?`<button type="button" class="thumbx" data-act="fotoDel" data-id="${esc(id)}" aria-label="Remover foto">✕</button>`:""}</span>`).join(""); }
 document.addEventListener("change", async e=>{
@@ -197,6 +197,8 @@ async function assinConfirmar(){
   const cv = $("#as-cv"), g = cv.getContext("2d"); g.fillStyle = "#555"; g.font = "22px sans-serif"; g.fillText(`${nome} · ${new Date().toLocaleString("pt-BR")}`, 16, cv.height-14);
   const blob = await new Promise(ok=>cv.toBlob(ok, "image/png")), file = new File([blob], "assinatura.png", {type:"image/png"}), row = el.dataset.row;
   el.remove();
+  if(row==="rts"){ const x = state.rts; const ids = await uploadPhotos([file], {tipo:"assinatura", os:x?.os, unid:x?.unid, nome}); // relatório técnico
+    if(ids[0] && state.rts){ state.rts.assin = {foto:ids[0], nome, em:new Date().toISOString()}; state.modalDirty = true; rtsPintarAssin(); } return; }
   if(row!==""){ const r = state.day.rows[+row]; const ids = await uploadPhotos([file], {tipo:"assinatura", os:r.os, unid:r.cli||state.day.unid, nome});
     r.fotoMeta = {...(r.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; r.fotos = [...(r.fotos||[]), ...ids]; renderDayRows(); updateDay(); }
   else { const ids = await uploadPhotos([file], {tipo:"assinatura", os:$("#f-os")?.value.trim(), unid:$("#f-cli")?.value.trim(), nome}); state.apFotos = [...(state.apFotos||[]), ...ids]; const box = $("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); state.modalDirty = true; }
@@ -213,7 +215,9 @@ function portalSnap(emp){
     tot:{os:fe.length, n:r2(t.n/60), e50:r2(t.e50/60), e100:r2(t.e100/60), total:r2(t.total/60), valor:F.portalValores!==false ? r2(t.valor) : 0, emerg:fe.filter(e=>e.emergencia).length, assin:fe.filter(assinOS).length},
     unidades: Object.values(uni).sort((a,b)=>b.total-a.total).map(u=>({unid:u.unid, os:u.os, total:r2(u.total), valor:F.portalValores!==false ? r2(u.valor) : 0})),
     os: rows.slice(0,400).map(e=>{ const c = calc(e), q = e.equipId && eqDe(e.equipId); return {data:e.data, os:e.os||"", tracos:e.tracos||"", unid:e.cliente||"", desc:e.descricao||"", prof:e.profissional||"", ini:e.inicio, fim:e.fim||"", alm:e.almIni&&e.almFim?`${e.almIni}–${e.almFim}`:"", horas:e.andamento?0:r2(c.total/60), emerg:!!e.emergencia, andamento:!!e.andamento, assin:assinOS(e), equip:q?`${q.tag||""} ${q.nome||""}`.trim():""}; }),
-    fechs: fechs.map(f=>({numero:f.numero, de:f.de, ate:f.ate, prof:f.profissional||"", horas:r2((+f.horas||0)/60), valor:F.portalValores!==false ? +f.valor||0 : 0, pago:fechSaldo(f)<=0.005}))};
+    fechs: fechs.map(f=>({numero:f.numero, de:f.de, ate:f.ate, prof:f.profissional||"", horas:r2((+f.horas||0)/60), valor:F.portalValores!==false ? +f.valor||0 : 0, pago:fechSaldo(f)<=0.005})),
+    rts: state.ord.filter(o=>o.relatorio?.codigo && chaveEmp(o.empresa||state.cfg.contratante||"")===k).sort((a,b)=>String(b.relatorio.em||"").localeCompare(String(a.relatorio.em||""))).slice(0,150)
+      .map(o=>({os:o.os, tracos:o.tracos||"", titulo:o.titulo||"", unid:o.unidade||"", em:o.relatorio.em||"", resultado:o.relatorio.resultado||"", codigo:o.relatorio.codigo, assin:!!o.relatorio.assin}))};
 }
 let portalT = null;
 function portalAgendar(){ if(!state.ready || state.worker || !portalEmps().length) return; clearTimeout(portalT); portalT = setTimeout(portalPublicar, 4000); }

@@ -58,7 +58,7 @@ function osHistHtml(os){
   <div class="tablewrap"><table><thead><tr><th>Data</th><th>Funcionário</th><th>Início</th><th>Fim</th><th class="r">Horas</th><th class="r">Extra</th></tr></thead>
   <tbody>${g.rows.map(e=>{ const c=calc(e); return `<tr><td class="mono">${fdate(e.data)}</td><td>${esc(e.profissional||"-")}</td><td class="mono">${esc(e.inicio)}</td><td class="mono">${esc(e.fim)}</td><td class="r mono">${fdec(c.total)}</td><td class="r mono">${c.e50+c.e100?fdec(c.e50+c.e100):""}</td></tr>`; }).join("")}</tbody></table></div>
   ${plHtml}
-  <footer><button class="btn" data-act="osPdf" data-os="${esc(os)}">PDF desta OS</button><button class="btn primary" data-act="osLancar" data-os="${esc(os)}">Lançar mais horas nesta OS</button></footer>`;
+  <footer><span class="row" style="gap:8px"><button class="btn" data-act="osPdf" data-os="${esc(os)}">PDF de horas</button>${os!=="(sem nº)"?`<button class="btn" data-act="rtsDaOS" data-os="${esc(os)}">📝 Relatório técnico</button>`:""}</span><button class="btn primary" data-act="osLancar" data-os="${esc(os)}">Lançar mais horas nesta OS</button></footer>`;
 }
 let osQT = 0;
 document.addEventListener("input", e=>{ if(e.target.id==="h-os-q"){ state.osQ = e.target.value; clearTimeout(osQT); osQT = setTimeout(()=>{ const pos = $("#h-os-q")?.selectionStart; render(); const i=$("#h-os-q"); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(err){} } }, 250); } });

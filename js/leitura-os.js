@@ -261,7 +261,7 @@ function vCarteira(){
     <p class="muted" style="margin:0;font-size:.85rem">${vencChip(o, x.st)} ${o.recebidaEm?`· recebida ${esc(fdate(String(o.recebidaEm).slice(0,10)))}${o.recebidaPor?` por ${esc(o.recebidaPor)}`:""}`:""}${x.min?` · <b>${fdec(x.min)} h</b> lançadas`:""}${o.concluida && o.concluidaEm?` · concluída ${esc(fdate(String(o.concluidaEm).slice(0,10)))}`:""}</p>
     <div class="row fc-acts">${x.st!=="medida"?`<button class="btn sm primary" data-act="ordIniciar" data-id="${esc(o.id)}">▶ Iniciar</button><button class="btn sm" data-act="ordLancar" data-id="${esc(o.id)}">+ Lançar horas</button>`:""}
       ${x.st==="medida"?"":o.concluida?`<button class="btn sm" data-act="ordConcluir" data-id="${esc(o.id)}" data-v="0">↺ Reabrir</button>`:`<button class="btn sm" data-act="ordConcluir" data-id="${esc(o.id)}" data-v="1">✓ Concluir</button>`}
-      ${o.foto?`<button class="btn sm" data-act="fotoVer" data-id="${esc(o.foto)}">📷 Papel</button>`:""}${state.worker?"":`<button class="btn sm" data-act="ordEditar" data-id="${esc(o.id)}">Editar</button>`}</div></div>`; }).join("")}</div>`
+      ${rtsBotao(o, x.st)}${o.foto?`<button class="btn sm" data-act="fotoVer" data-id="${esc(o.foto)}">📷 Papel</button>`:""}${state.worker?"":`<button class="btn sm" data-act="ordEditar" data-id="${esc(o.id)}">Editar</button>`}</div></div>`; }).join("")}</div>`
   :`<div class="empty"><b>${ls.length?"Nada nesta situação":"Nenhuma OS na carteira"}</b>${ls.length?"Escolha outra situação acima.":"Toque em <b>📷 Nova OS pelo papel</b> e fotografe o papel ou a tela do TracOS."}</div>`}`;
 }
 function ordIniciar(o){ state.crIds = null; openModal(cronoForm({emp:o.empresa, unid:o.unidade, desc:o.titulo}));

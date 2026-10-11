@@ -129,7 +129,7 @@ const A = {
     b.disabled = true;
     try{ const {data, error} = await sb.rpc("esvaziar_lixeira"); if(error){ if(/esvaziar_lixeira|function|PGRST202/i.test(error.message||"") || error.code==="PGRST202") throw {code:"db", message:"O botão ainda não foi ativado no banco. Peça para rodar a migração 017 (esvaziar lixeira)."}; throw dbErr(error); }
       // fotos que eram só dos itens apagados (não as que continuam em alguma OS ou despesa)
-      const usadas = new Set([...state.ap, ...state.desp].flatMap(x=>x.fotos||[]).concat(state.ord.map(o=>o.foto).filter(Boolean))), fotos = (data?.fotos||[]).filter(f=>f && !usadas.has(f));
+      const usadas = new Set([...state.ap, ...state.desp].flatMap(x=>x.fotos||[]).concat(state.ord.map(o=>o.foto).filter(Boolean), rtsFotosUsadas())), fotos = (data?.fotos||[]).filter(f=>f && !usadas.has(f));
       if(fotos.length) await sb.storage.from("fotos").remove(fotos).catch(()=>{});
       toast(`Lixeira esvaziada: ${data?.itens||0} item(ns)${fotos.length?` e ${fotos.length} foto(s)`:""} apagados de vez.`); carregarLixeira();
     }catch(err){ b.disabled = false; delete b.dataset.armed; b.textContent = "Esvaziar lixeira"; toast(writeErr(err)); } },
@@ -285,7 +285,8 @@ const A = {
   async ordConcluir(b){ const o = state.ord.find(x=>x.id===b.dataset.id); if(!o) return; const fim = b.dataset.v==="1";
     if(fim && ordStatus(o).and){ toast("Essa OS está com cronômetro aberto. Encerre antes de concluir."); return; }
     const x = {...o, concluida:fim}; delete x._naps; if(fim) x.concluidaEm = new Date().toISOString(); else { delete x.concluidaEm; delete x.concluidaPor; }
-    try{ await save("ordens", x); toast(fim ? `OS ${o.os} concluída.` : `OS ${o.os} reaberta.`); state.rendered = null; render(); }catch(err){ toast(writeErr(err)); } },
+    try{ await save("ordens", x); toast(fim ? `OS ${o.os} concluída.` : `OS ${o.os} reaberta.`); state.rendered = null; render();
+      if(fim && !o.relatorio) rtsAbrir(state.ord.find(y=>y.id===o.id) || x, {concluiu:true}); }catch(err){ toast(writeErr(err)); } },
   async ordExcluir(b){ if(!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Confirmar exclusão"; return; } try{ await removeDoc("ordens", b.dataset.id); closeModal(); state.rendered = null; render(); toast("OS tirada da carteira (fica na lixeira)."); }catch(err){ toast(writeErr(err)); } },
   papelNum(b){ const el = $("#"+(state.papelCampo||"pp-os")); if(el){ el.value = b.dataset.n; state.papelCampo = state.papelCampo==="pp-os" ? "pp-tid" : "pp-os"; } },
   pushDepois(){ try{ localStorage.setItem("gaap-push-depois", today()); }catch(e){} state.rendered = null; render(); },
@@ -346,7 +347,7 @@ const A = {
       if(!window.JSZip){ b.textContent = "Preparando…"; await loadScript(JSZIP); }
       const dados = backupDados(), todas = b.dataset.todas==="1", desde = todas ? 0 : (state.cfg.fotosAte ? new Date(state.cfg.fotosAte).getTime() : 0);
       const tempo = id => { const n = id.split("/").pop().replace(/\.\w+$/,""); const t = parseInt(n.slice(0,-6), 36); return isFinite(t) ? t : Date.now(); };
-      const ids = [...new Set([...state.ap, ...state.orc, ...state.desp].flatMap(x=>x.fotos||[]).concat(state.ord.map(o=>o.foto).filter(Boolean)))].filter(id=>tempo(id) > desde);
+      const ids = [...new Set([...state.ap, ...state.orc, ...state.desp].flatMap(x=>x.fotos||[]).concat(state.ord.map(o=>o.foto).filter(Boolean), rtsFotosUsadas()))].filter(id=>tempo(id) > desde);
       let n = 0, falhas = 0, parte = 1, tamanho = 0, zip = new JSZip(); const LIM = 150*1024*1024;
       zip.file("backup.json", JSON.stringify(dados, null, 1));
       const fechar = async (ultima)=>{ b.textContent = "Compactando…"; const blob = await zip.generateAsync({type:"blob", compression:"STORE"});
@@ -386,6 +387,7 @@ const A = {
   },
   exportJson(){ const d = backupDados(); offerFile(`backup-gaap-${today()}.json`, JSON.stringify(d,null,1)); }
 };
+Object.assign(A, RTS_ACOES); // relatório técnico (js/relatorio.js)
 document.addEventListener("click", e=>{ const b = e.target.closest("[data-act]"); if(!b) return; const f = A[b.dataset.act]; if(f){ if(b.tagName==="BUTTON" && b.type!=="submit") e.preventDefault(); f(b,e); } });
 
 renderNav();

@@ -71,6 +71,7 @@ async function saveNet(col, id, data, versao){
     // o servidor só completa campos vazios de uma OS que já existe: espelha isso aqui até a próxima leitura
     const row = old.id ? {...old} : {...data, recebidaPor:state.me}; if(old.id) Object.entries(data).forEach(([k, val])=>{ if(old[k]==null || old[k]==="") row[k] = val; });
     if(data.concluida===true){ row.concluida = true; row.concluidaEm ||= new Date().toISOString(); } else if(data.concluida===false){ delete row.concluida; delete row.concluidaEm; delete row.concluidaPor; }
+    if(data.relatorio && (!old.relatorio || old.relatorio.porId===session?.user?.id)) row.relatorio = {...data.relatorio, por:state.me, porId:session?.user?.id, ...(old.relatorio?.codigo?{codigo:old.relatorio.codigo}:{})};
     Object.assign(row, {id, ...(v?{_v:v}:{})});
     upsertLocal("ord", row); scheduleRender(); return id;
   }
