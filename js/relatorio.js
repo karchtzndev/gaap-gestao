@@ -247,22 +247,26 @@ function rtsSugestoes(r, planejadas = [], planObj = {}){
 // código de autenticidade: 12 caracteres sem letras confundíveis (60 bits)
 function rtsCodigo(){ const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789", b = new Uint8Array(12); crypto.getRandomValues(b); const s = [...b].map(x=>A[x % 32]).join(""); return `${s.slice(0,4)}-${s.slice(4,8)}-${s.slice(8)}`; }
 const rtsUrl = c => `${location.origin}/verificar#c=${c}`;
+// data para mostrar: "2026-10-05" fica como está; data e hora (ISO ou do Postgres) vira o dia no fuso do aparelho
+function rtsDia(v){ const s = String(v||"").trim(); if(!s) return ""; if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return fdate(s);
+  const d = new Date(s.replace(" ", "T").replace(/([+-]\d\d)$/, "$1:00")); return isNaN(d) ? fdate(s.slice(0,10)) : d.toLocaleDateString("pt-BR"); }
 
 /* ---------- dados da OS para o relatório ---------- */
 function rtsDaOrdem(o){
-  const k = soDig(o.os), aps = state.ap.filter(e=>soDig(e.os)===k && !e.orcId && (!o.empresa || chaveEmp(empOf(e))===chaveEmp(o.empresa))).sort((a,b)=>(a.data+a.inicio).localeCompare(b.data+b.inicio));
+  const k = soDig(o.os), aps = !k ? [] : state.ap.filter(e=>soDig(e.os)===k && !e.orcId && (!o.empresa || chaveEmp(empOf(e))===chaveEmp(o.empresa))).sort((a,b)=>(a.data+a.inicio).localeCompare(b.data+b.inicio));
   const feitas = aps.filter(e=>!e.andamento), min = feitas.reduce((s,e)=>s+calc(e).total, 0);
   const fotos = aps.flatMap(e=>(e.fotos||[]).map(id=>({id, tipo:((e.fotoMeta||{})[id]||{}).tipo||"durante"}))).filter(f=>f.tipo!=="assinatura");
   const assin = aps.flatMap(e=>Object.entries(e.fotoMeta||{}).filter(([,m])=>m && m.tipo==="assinatura").map(([id, m])=>({foto:id, nome:m.nome||"", em:m.em||""}))).pop() || null;
   return {aps:feitas, min, dias:new Set(feitas.map(e=>e.data)).size, tecnicos:[...new Set(feitas.map(e=>e.profissional).filter(Boolean))], fotos, assin};
 }
 const rtsMeuId = () => session?.user?.id || "";
+const rtsMarca = o => o?.relatorio ? `${o.relatorio.em||""}|${o.relatorio.codigo||""}|${o.relatorio.porId||""}` : "";
 const rtsPodeEditar = o => !o.relatorio || !state.worker || o.relatorio.porId===rtsMeuId();
 // a OS do histórico ainda não está na carteira: entra agora (com o que se sabe dela)
 async function rtsOrdemDaOS(os){
   const g = osGroups(state.ap.filter(e=>(e.os||"(sem nº)")===os))[0], emp = g?.rows?.[0] ? empOf(g.rows[0]) : (state.cfg.contratante||"");
   const ja = ordemDe(os, emp); if(ja) return ja;
-  return guardarNaCarteira({os, titulo:g?.desc||"", unidade:g?.rows?.find(e=>e.cliente)?.cliente||"", empresa:emp, tracos:g?.rows?.find(e=>e.tracos)?.tracos||""});
+  return guardarNaCarteira({os, titulo:g?.desc||"", unidade:g?.rows?.find(e=>e.cliente)?.cliente||"", empresa:emp, tracos:g?.rows?.find(e=>e.tracos)?.tracos||"", ...(g?.first?{recebidaEm:g.first}:{})});
 }
 
 /* ---------- tela do relatório ---------- */
@@ -276,7 +280,8 @@ function rtsAbrir(o, op = {}){
     sel, off, extras, auto:{achados:[], pecas:[], causas:[], acoes:[], resultado:"", planejadas:[], planObj:{}, lig:{}},
     resultado:r.resultado||"", resManual:!!r.resultado, recsOn:new Set(r.recs||[]), recsOff:new Set(), recsExtra:(r.recs||[]).slice(),
     fotos:todas.map((f, i)=>({id:f.id, tipo:f.tipo||"durante", on: r.fotos ? fotosSalvas.has(f.id) : (f.tipo!=="durante" || i < 6)})),
-    assin:r.assin || null, codigo:r.codigo || "", texto:r.texto||"", textoManual:!!r.textoManual, incluirRelato:r.incluirRelato!==false};
+    assin:r.assin || (novo && !state.worker ? base.assin : null), codigo:r.codigo || "", texto:r.texto||"", textoManual:!!r.textoManual, incluirRelato:r.incluirRelato!==false,
+    base: rtsMarca(o)};
   openModal(state.rts.leitura ? rtsVerHtml(o) : rtsFormHtml(o, r), "wide");
   if(!state.rts.leitura){
     if(r.relato) rtsEntender(true);
@@ -291,7 +296,7 @@ function rtsFormHtml(o, r){
   <form id="rtsForm" class="form rtsform">
     ${x.concluiu?`<div class="banner"><span>✅ <b>OS concluída.</b> Agora o relatório técnico: fale ou toque nos itens, em 30 segundos.</span></div>`:""}
     <p style="margin:0"><b>${esc(o.titulo||"")}</b><br><span class="muted">${esc([o.unidade, o.tracos?`ID TracOS #${o.tracos}`:"", o.empresa].filter(Boolean).join(" · "))}</span></p>
-    ${x.codigo?`<div class="rtscod">${rtsQRSvg(rtsUrl(x.codigo), 96)}<div><span class="muted" style="font-size:.85rem">Código de autenticidade (QR no PDF)</span><br><b class="mono">${esc(x.codigo)}</b><div class="row" style="margin-top:6px"><button type="button" class="btn sm" data-act="rtsLink" data-id="${esc(o.id)}">🔗 Enviar link</button><button type="button" class="btn sm" data-act="rtsPdf" data-id="${esc(o.id)}">📄 PDF salvo</button></div></div></div>`:""}
+    ${x.codigo?`<div class="rtscod">${rtsQRSvg(rtsUrl(x.codigo), 96)}<div><span class="muted" style="font-size:.85rem">Código de autenticidade (QR no PDF)</span><br><b class="mono">${esc(x.codigo)}</b><div class="row" style="margin-top:6px"><button type="button" class="btn sm" data-act="rtsLink" data-id="${esc(o.id)}">🔗 Enviar link</button></div></div></div>`:""}
     <label class="field"><span>Equipamento / local</span><input id="rts-equip" maxlength="200" value="${esc(r.equip ?? rtsEquip(o.titulo))}" placeholder="Ex.: bica 02 do armazém de farelo"></label>
     <div class="field"><span>Conte o que foi feito <small class="muted">(fale do seu jeito: o app marca os itens abaixo sozinho)</small></span>
       <textarea id="rts-relato" rows="3" maxlength="3000" placeholder="Ex.: a bica estava entupida de farelo e a chapa de desgaste furada; troquei a chapa, soldei e testei, ficou funcionando.">${esc(r.relato||"")}</textarea>
@@ -304,15 +309,15 @@ function rtsFormHtml(o, r){
       <div class="row"><label class="btn sm">📷 Foto ANTES<input type="file" accept="image/*" capture="environment" data-rtsnova="antes" hidden></label><label class="btn sm">📷 Foto DEPOIS<input type="file" accept="image/*" capture="environment" data-rtsnova="depois" hidden></label></div></div>
     <div class="field"><span>Assinatura do responsável da unidade</span><div id="rts-assin"></div></div>
     <div class="field"><span>Como vai ficar o relatório</span><div class="rtsprev" id="rts-prev"></div>
-      <div class="row"><button type="button" class="btn sm" data-act="rtsEditarTexto" id="rts-edbtn">✏️ Ajustar o texto</button></div>
-      <textarea id="rts-texto" rows="6" maxlength="6000" hidden></textarea></div>
+      <div class="row"><button type="button" class="btn sm" data-act="rtsEditarTexto" id="rts-edbtn">${x.textoManual?"↺ Voltar ao texto automático":"✏️ Ajustar o texto"}</button></div>
+      <textarea id="rts-texto" rows="6" maxlength="6000"${x.textoManual?"":" hidden"}>${esc(x.textoManual ? r.texto||"" : "")}</textarea></div>
     <footer><button type="button" class="btn" data-act="closeModal">${x.concluiu?"Agora não":"Cancelar"}</button><span class="row" style="gap:8px"><button type="submit" class="btn" data-pdf="0">Salvar</button><button type="submit" class="btn primary" data-pdf="1">Salvar e gerar PDF</button></span></footer>
   </form>`;
 }
 function rtsVerHtml(o){
   const r = o.relatorio || {};
   return `<header><h2>Relatório técnico · OS ${esc(o.os)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
-  <p class="muted" style="margin:0 0 8px">Feito por <b>${esc(r.por||"")}</b>${r.em?` em ${esc(fdate(String(r.em).slice(0,10)))}`:""}. Só quem escreveu ou o responsável pode alterar.</p>
+  <p class="muted" style="margin:0 0 8px">Feito por <b>${esc(r.por||"")}</b>${r.em?` em ${esc(rtsDia(r.em))}`:""}. Só quem escreveu ou o responsável pode alterar.</p>
   <div class="rtsprev">${esc(r.texto||"")}</div>
   <footer><span></span><span class="row" style="gap:8px"><button class="btn" data-act="rtsLink" data-id="${esc(o.id)}">🔗 Enviar link</button><button class="btn primary" data-act="rtsPdf" data-id="${esc(o.id)}">📄 PDF</button></span></footer>`;
 }
@@ -369,14 +374,17 @@ document.addEventListener("change", async e=>{
   if(t.id==="rts-increl"){ state.modalDirty = true; rtsPintar(); return; }
   if(t.dataset?.rtsfoto){ const f = state.rts.fotos.find(y=>y.id===t.dataset.rtsfoto); if(f){ f.on = t.checked; t.closest(".rtsfoto")?.classList.toggle("on", t.checked); state.modalDirty = true; } return; }
   if(t.dataset?.rtsnova && t.files?.length){
-    const tipo = t.dataset.rtsnova, ids = await uploadPhotos([...t.files], {tipo, os:state.rts.os, unid:state.rts.unid}); t.value = "";
-    if(!state.rts) return;
+    const alvo = state.rts, tipo = t.dataset.rtsnova, ids = await uploadPhotos([...t.files], {tipo, os:alvo.os, unid:alvo.unid}); t.value = "";
+    if(state.rts!==alvo || !$("#rtsForm")) return;
     ids.forEach(id=>state.rts.fotos.push({id, tipo, on:true})); state.modalDirty = true; rtsPintarFotos();
   }
 });
+document.addEventListener("click", e=>{ const b = e.target.closest?.("#rtsForm button[type=submit]"); if(b) state.rtsComPdf = b.dataset.pdf==="1"; }, true);
 document.addEventListener("submit", async e=>{
   if(e.target.id!=="rtsForm") return; e.preventDefault();
-  const pdf = e.submitter?.dataset?.pdf==="1"; e.target.querySelectorAll("button[type=submit]").forEach(b=>b.disabled = true);
+  if(state.enviando){ toast("Aguarde: as fotos ainda estão sendo enviadas."); return; }
+  try{ state.rtsRec?.stop(); }catch(err){}
+  const pdf = e.submitter ? e.submitter.dataset?.pdf==="1" : !!state.rtsComPdf; e.target.querySelectorAll("button[type=submit]").forEach(b=>b.disabled = true);
   try{ const o = await rtsSalvar(); if(o){ state.modalDirty = false; closeModal(); state.rendered = null; render(); rtsDepoisDeSalvar(o, pdf); } }
   finally{ e.target.querySelectorAll?.("button[type=submit]").forEach(b=>b.disabled = false); }
 });
@@ -389,12 +397,20 @@ async function rtsSalvar(tentativa = 0){
     fotos:x.fotos.filter(f=>f.on).slice(0, 12).map(f=>({id:f.id, tipo:f.tipo})), ...(x.assin?{assin:x.assin}:{}),
     codigo:x.codigo || o.relatorio?.codigo || rtsCodigo(), em:new Date().toISOString(),
     por: state.worker ? state.me : (o.relatorio?.por || perfil?.nome || state.cfg.empresa?.responsavel || nomeDoEmail(session?.user?.email)), porId: o.relatorio?.porId && !state.worker ? o.relatorio.porId : rtsMeuId(),
-    horas:{min:Math.round(base.min), dias:base.dias, tecnicos:base.tecnicos}};
+    horas: state.worker && (o.relatorio?.horas?.min||0) > base.min ? o.relatorio.horas : {min:Math.round(base.min), dias:base.dias, tecnicos:base.tecnicos}};
   if(!rel.recs.length) delete rel.recs;
   const novo = {...o, relatorio:{...rel, recs:rel.recs||[]}}; delete novo._naps;
-  try{ await save("ordens", novo); x.codigo = rel.codigo; return state.ord.find(y=>y.id===o.id) || novo; }
-  catch(err){ if(err && err.conflito && tentativa < 1) return rtsSalvar(tentativa + 1); toast(writeErr(err)); return null; }
+  try{ await save("ordens", novo); x.codigo = rel.codigo; const salvo = state.ord.find(y=>y.id===o.id) || novo;
+    if(state.worker && salvo.relatorio && salvo.relatorio.porId && salvo.relatorio.porId!==rtsMeuId()){ toast(`O relatório desta OS é de ${salvo.relatorio.por||"outra pessoa"}: só quem escreveu ou o responsável pode alterar.`); return null; }
+    return salvo; }
+  catch(err){
+    if(err && err.conflito && tentativa < 1){
+      const f = state.ord.find(y=>y.id===x.oid);
+      if(f && rtsMarca(f)!==x.base){ state.modalDirty = false; rtsAbrir(f); toast(`${f.relatorio?.por||"Outra pessoa"} salvou um relatório nesta OS agora há pouco. Abri a versão mais nova: confira e ajuste.`); return null; }
+      return rtsSalvar(tentativa + 1); }
+    toast(writeErr(err)); return null; }
 }
+const rtsAvisoFila = o => { if(o?._pend) toast("Atenção: sem internet o relatório ainda não foi enviado. O QR e o link só funcionam depois que o app sincronizar."); };
 function rtsDepoisDeSalvar(o, pdf){
   if(pdf){ rtsPdf(o); return; }
   toastAcao(`Relatório da OS ${o.os} salvo.`, "📄 PDF", ()=>rtsPdf(state.ord.find(y=>y.id===o.id) || o));
@@ -427,17 +443,22 @@ function rtsQRSvg(texto, px = 132){
   return `<svg class="rtsqr" viewBox="0 0 ${n+4} ${n+4}" width="${px}" height="${px}" role="img" aria-label="QR de autenticidade"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
 }
 async function rtsPdf(o){
-  const r = o?.relatorio; if(!r){ toast("Essa OS ainda não tem relatório técnico."); return; }
-  const doc = pdfDoc(false); if(!doc) return;
+  let r = o?.relatorio; if(!r){ toast("Essa OS ainda não tem relatório técnico."); return; }
+  if(!pdfDoc(false)) return;
   toast("Gerando o PDF do relatório…");
-  const W = pw(doc), R = W-14, base = rtsDaOrdem(o), url = rtsUrl(r.codigo), qs = 27, F = ficha(o.empresa||state.cfg.contratante||"");
+  const base = rtsDaOrdem(o), h = r.horas || {};
+  // responsável: horas lançadas depois do relatório atualizam o retrato (o PDF e a página de verificação mostram o mesmo)
+  if(!state.worker && (Math.round(base.min)!==(h.min||0) || base.dias!==(h.dias||0) || base.tecnicos.join("|")!==(h.tecnicos||[]).join("|"))){
+    try{ const o2 = {...o, relatorio:{...r, horas:{min:Math.round(base.min), dias:base.dias, tecnicos:base.tecnicos}}}; delete o2._naps; await save("ordens", o2); o = state.ord.find(x=>x.id===o.id) || o2; r = o.relatorio; }catch(err){} }
+  rtsAvisoFila(o);
+  const doc = pdfDoc(false), W = pw(doc), R = W-14, url = rtsUrl(r.codigo), qs = 27, F = ficha(o.empresa||state.cfg.contratante||"");
   let y = pdfHeader(doc, "RELATÓRIO TÉCNICO", [`OS ${o.os}${o.tracos?` · ID TracOS #${o.tracos}`:""}`, `Emitido em ${fdate(today())}`]);
   if(rtsQRPdf(doc, url, R-qs, y, qs)){ doc.setFont("helvetica","normal"); doc.setFontSize(6.6); doc.setTextColor(...GREY); doc.text("Confira a autenticidade:", R-qs/2, y+qs+3.6, {align:"center"}); doc.setFont("helvetica","bold"); doc.setTextColor(...INK); doc.text(r.codigo, R-qs/2, y+qs+7, {align:"center"}); }
   // o funcionário só tem os próprios lançamentos: vale o total guardado pelo responsável, quando for maior
   const parcial = state.worker && (r.horas?.min || 0) > base.min, horas = parcial ? r.horas.min : base.min, dias = parcial ? Math.max(base.dias, r.horas?.dias || 0) : base.dias;
   const tecs = parcial ? [...new Set([...(r.horas?.tecnicos || []), ...base.tecnicos])] : base.tecnicos;
   const info = [["Cliente", F.razao || o.empresa || ""], ["Unidade", o.unidade || ""], ["Ordem de serviço", `${o.os}${o.tracos?`  ·  ID TracOS #${o.tracos}`:""}${o.nota?`  ·  Nota ${o.nota}`:""}`], ["Serviço solicitado", o.titulo || ""], ["Equipamento / local", r.equip || ""],
-    ["Recebida em", o.recebidaEm ? fdate(String(o.recebidaEm).slice(0,10)) : ""], ["Concluída em", o.concluidaEm ? fdate(String(o.concluidaEm).slice(0,10)) : ""], ["Equipe", tecs.join(", ")], ["Horas trabalhadas", horas ? `${fdec(horas)} h em ${dias} dia${dias>1?"s":""}` : ""], ["Relatório por", r.por || ""]].filter(l=>l[1]);
+    ["Recebida em", rtsDia(o.recebidaEm)], ["Concluída em", rtsDia(o.concluidaEm)], ["Equipe", tecs.join(", ")], ["Horas trabalhadas", horas ? `${fdec(horas)} h em ${dias} dia${dias>1?"s":""}` : ""], ["Relatório por", r.por || ""]].filter(l=>l[1]);
   doc.autoTable({startY:y-1, margin:{left:14, right:14+qs+7}, theme:"plain", body:info, styles:{fontSize:9, cellPadding:1.05, textColor:INK, overflow:"linebreak"}, columnStyles:{0:{fontStyle:"bold", cellWidth:36, textColor:GREY}}});
   y = Math.max(doc.lastAutoTable.finalY, y + qs + 9) + 5;
   const titulo = t => { y = ensure(doc, y, 14); doc.setFont("helvetica","bold"); doc.setFontSize(10.8); doc.setTextColor(...NAVY); doc.text(t, 14, y); doc.setDrawColor(...GREEN); doc.setLineWidth(0.4); doc.line(14, y+1.6, 14+doc.getTextWidth(t), y+1.6); y += 6.5; };
@@ -455,7 +476,7 @@ async function rtsPdf(o){
       styles:{fontSize:8.6, cellPadding:1.4, textColor:INK, lineColor:[205,212,201], lineWidth:0.2}, headStyles:{fillColor:GREEN, textColor:255}, footStyles:{fillColor:[244,247,243], textColor:INK, fontStyle:"bold", halign:"right"},
       columnStyles:{0:{cellWidth:24}, 2:{cellWidth:18, halign:"center"}, 3:{cellWidth:18, halign:"center"}, 4:{cellWidth:20, halign:"right"}}});
     y = doc.lastAutoTable.finalY + 7; }
-  const fotos = (r.fotos||[]).length ? r.fotos : base.fotos.filter(f=>f.tipo!=="durante").slice(0, 6);
+  const fotos = Array.isArray(r.fotos) ? r.fotos : base.fotos.filter(f=>f.tipo!=="durante").slice(0, 6);
   if(fotos.length){
     const ims = []; for(const f of fotos){ const im = await imgData(f.id); if(im) ims.push({...f, im}); }
     if(ims.length){ const gap = 6, bw = (W-28-gap)/2, bh = bw*0.72; let col = 0;
@@ -471,14 +492,14 @@ async function rtsPdf(o){
       if(col) y += bh + 9;
     }
   }
-  const assin = r.assin || base.assin;
+  const assin = r.assin || null;
   y = ensure(doc, y, 44); y += 4;
   const mid = W/2, L1 = [14, mid-8], L2 = [mid+8, R];
   if(assin){ const im = await imgData(assin.foto); if(im){ const bw = L2[1]-L2[0], bh = 22, k = Math.min(bw/im.w, bh/im.h); try{ doc.addImage(im.url, im.fmt, L2[0]+(bw-im.w*k)/2, y, im.w*k, im.h*k); }catch(err){} } }
   y += 24; doc.setDrawColor(...GREY); doc.setLineWidth(0.3); doc.line(L1[0], y, L1[1], y); doc.line(L2[0], y, L2[1], y);
   doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...INK);
   doc.text(doc.splitTextToSize(`${state.cfg.empresa?.nome||""}${r.por?` - ${r.por}`:""}`, L1[1]-L1[0]), (L1[0]+L1[1])/2, y+4.5, {align:"center"});
-  doc.text(doc.splitTextToSize(assin ? `${assin.nome}${assin.em?` · ${fdate(String(assin.em).slice(0,10))}`:""}` : `Responsável ${o.empresa||"contratante"}`, L2[1]-L2[0]), (L2[0]+L2[1])/2, y+4.5, {align:"center"});
+  doc.text(doc.splitTextToSize(assin ? `${assin.nome}${assin.em?` · ${rtsDia(assin.em)}`:""}` : `Responsável ${o.empresa||"contratante"}`, L2[1]-L2[0]), (L2[0]+L2[1])/2, y+4.5, {align:"center"});
   pdfFooter(doc);
   const n = doc.getNumberOfPages(); for(let i=1; i<=n; i++){ doc.setPage(i); doc.setFontSize(7); doc.setTextColor(...GREY); doc.setFont("helvetica","normal"); doc.text(`Autenticidade: ${url.replace(/^https?:\/\//, "")}`, W/2, ph(doc)-4, {align:"center"}); }
   const nome = `Relatorio tecnico OS ${o.os}${o.titulo?` - ${o.titulo}`:""}`.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w .-]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 90);
@@ -515,7 +536,7 @@ const RTS_ACOES = {
   rtsEditarTexto(b){ const t = $("#rts-texto"); if(!t) return; t.hidden = !t.hidden; b.textContent = t.hidden ? "✏️ Ajustar o texto" : "↺ Voltar ao texto automático";
     if(t.hidden){ state.rts.textoManual = false; rtsPintar(); } else t.focus(); },
   async rtsPdf(b){ const o = state.ord.find(x=>x.id===b.dataset.id); if(o) await rtsPdf(o); },
-  rtsLink(b){ const o = state.ord.find(x=>x.id===b.dataset.id); if(!o?.relatorio) return; const w = (ficha(o.empresa||state.cfg.contratante||"").whats||"").replace(/\D/g, "");
+  rtsLink(b){ const o = state.ord.find(x=>x.id===b.dataset.id); if(!o?.relatorio) return; rtsAvisoFila(o); const w = (ficha(o.empresa||state.cfg.contratante||"").whats||"").replace(/\D/g, "");
     window.open(`https://wa.me/${w ? (w.length<=11 ? "55"+w : w) : ""}?text=${encodeURIComponent(rtsLinkTexto(o))}`, "_blank"); },
   rtsNovidadeOk(){ try{ localStorage.setItem("gaap-novo-rts", "1"); }catch(err){} state.rendered = null; render(); },
 };

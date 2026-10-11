@@ -220,7 +220,7 @@ async function guardarNaCarteira(c, tentativa = 0){
   const novo = {}; Object.entries(c).forEach(([k, v])=>{ if(v!=null && String(v).trim()!=="") novo[k] = v; });
   let o;
   if(old){ o = {...old}; Object.entries(novo).forEach(([k, v])=>{ if(old[k]==null || String(old[k]).trim()==="") o[k] = v; }); } // não troca o que já foi conferido
-  else o = {...novo, id, recebidaEm:new Date().toISOString(), recebidaPor:state.me || perfil?.nome || nomeDoEmail(session?.user?.email)};
+  else o = {recebidaEm:new Date().toISOString(), recebidaPor:state.me || perfil?.nome || nomeDoEmail(session?.user?.email), ...novo, id};
   try{ await save("ordens", o); }
   catch(err){ if(err && err.conflito && tentativa < 1){ await recarregarDoc("ordens", o.id).catch(()=>{}); return guardarNaCarteira(c, tentativa + 1); } throw err; }
   return state.ord.find(x=>x.id===o.id) || o;

@@ -287,7 +287,8 @@ const A = {
     const x = {...o, concluida:fim}; delete x._naps; if(fim) x.concluidaEm = new Date().toISOString(); else { delete x.concluidaEm; delete x.concluidaPor; }
     try{ await save("ordens", x); toast(fim ? `OS ${o.os} concluída.` : `OS ${o.os} reaberta.`); state.rendered = null; render();
       if(fim && !o.relatorio) rtsAbrir(state.ord.find(y=>y.id===o.id) || x, {concluiu:true}); }catch(err){ toast(writeErr(err)); } },
-  async ordExcluir(b){ if(!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Confirmar exclusão"; return; } try{ await removeDoc("ordens", b.dataset.id); closeModal(); state.rendered = null; render(); toast("OS tirada da carteira (fica na lixeira)."); }catch(err){ toast(writeErr(err)); } },
+  async ordExcluir(b){ if(!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Confirmar exclusão"; return; }
+    const ox = state.ord.find(x=>x.id===b.dataset.id); if(ox?.relatorio?.codigo && !confirm(`A OS ${ox.os} tem relatório técnico com QR. Se excluir, o QR dos PDFs já entregues deixa de confirmar o documento. Excluir mesmo assim?`)) return; try{ await removeDoc("ordens", b.dataset.id); closeModal(); state.rendered = null; render(); toast("OS tirada da carteira (fica na lixeira)."); }catch(err){ toast(writeErr(err)); } },
   papelNum(b){ const el = $("#"+(state.papelCampo||"pp-os")); if(el){ el.value = b.dataset.n; state.papelCampo = state.papelCampo==="pp-os" ? "pp-tid" : "pp-os"; } },
   pushDepois(){ try{ localStorage.setItem("gaap-push-depois", today()); }catch(e){} state.rendered = null; render(); },
   async pushAtivar(b){

@@ -5,7 +5,7 @@ function toast(msg){ const t=$("#toast"); t.textContent=msg; t.hidden=false; cle
 function toastAcao(msg, label, fn){ const t=$("#toast"); t.innerHTML = `<span>${esc(msg)}</span> <button type="button" class="btn sm" id="toast-acao">${esc(label)}</button>`; t.hidden=false; clearTimeout(tt);
   $("#toast-acao").onclick = async ()=>{ t.hidden = true; try{ await fn(); }catch(err){ toast(writeErr(err)); } }; tt=setTimeout(()=>t.hidden=true, 8000); }
 function openModal(html, cls){ state.modalDirty = false; state.closeArmed = 0; const m=$("#modal"); voltar.empilhar("modal"); m.innerHTML=`<div class="sheet ${cls||""}" role="dialog" aria-modal="true">${html}</div>`; m.hidden=false; const f=m.querySelector("input,select,textarea"); if(f && window.innerWidth>700) f.focus(); }
-function closeModal(){ const m=$("#modal"); const estava = !m.hidden; m.hidden=true; m.innerHTML=""; if(estava) voltar.desempilhar("modal"); state.apIds = null; state.modalDirty = false; if(state.renderPend){ state.renderPend = false; scheduleRender(); } }
+function closeModal(){ if(state.rts){ try{ state.rtsRec?.stop(); }catch(e){} state.rts = null; } const m=$("#modal"); const estava = !m.hidden; m.hidden=true; m.innerHTML=""; if(estava) voltar.desempilhar("modal"); state.apIds = null; state.modalDirty = false; if(state.renderPend){ state.renderPend = false; scheduleRender(); } }
 function tryCloseModal(){
   if(state.modalDirty && Date.now() - (state.closeArmed||0) > 4000){ state.closeArmed = Date.now(); toast("Há dados não salvos. Toque fora de novo para descartar."); return; }
   if($("#dayForm")) rascunho.limpar();
@@ -144,7 +144,7 @@ async function compressImage(file, stamp){
 function photoErr(err){ const c = err && err.code; if(/quota|exceed|limit|storage/i.test(err?.message||"") && c!=="too_large") return "Espaço para fotos do plano gratuito esgotado. Baixe um backup completo e fale com o responsável."; return c==="quota_or_state" ? "Espaço para fotos esgotado. Apague fotos antigas." : c==="too_large" ? "Foto muito grande." : c==="unsupported_type" ? "Formato de imagem não aceito. Use JPG ou PNG." : c==="rate_limited" ? "Muitas fotos de uma vez. Espere um pouco e tente de novo." : "Não consegui enviar a foto. Verifique a conexão."; }
 function enviandoFotos(delta){
   state.enviando = Math.max(0, (state.enviando||0) + delta);
-  document.querySelectorAll("#d-save,#apForm [type=submit],#despForm [type=submit]").forEach(b=>{ if(state.enviando){ b.dataset.txt ||= b.textContent; b.disabled = true; b.textContent = "Enviando fotos…"; } else if(b.dataset.txt){ b.disabled = false; b.textContent = b.dataset.txt; delete b.dataset.txt; } });
+  document.querySelectorAll("#d-save,#apForm [type=submit],#despForm [type=submit],#rtsForm [type=submit]").forEach(b=>{ if(state.enviando){ b.dataset.txt ||= b.textContent; b.disabled = true; b.textContent = "Enviando fotos…"; } else if(b.dataset.txt){ b.disabled = false; b.textContent = b.dataset.txt; delete b.dataset.txt; } });
 }
 async function uploadPhotos(files, ctx){
   if(!assets){ toast("Fotos indisponíveis nesta visualização."); return []; }
@@ -197,8 +197,8 @@ async function assinConfirmar(){
   const cv = $("#as-cv"), g = cv.getContext("2d"); g.fillStyle = "#555"; g.font = "22px sans-serif"; g.fillText(`${nome} · ${new Date().toLocaleString("pt-BR")}`, 16, cv.height-14);
   const blob = await new Promise(ok=>cv.toBlob(ok, "image/png")), file = new File([blob], "assinatura.png", {type:"image/png"}), row = el.dataset.row;
   el.remove();
-  if(row==="rts"){ const x = state.rts; const ids = await uploadPhotos([file], {tipo:"assinatura", os:x?.os, unid:x?.unid, nome}); // relatório técnico
-    if(ids[0] && state.rts){ state.rts.assin = {foto:ids[0], nome, em:new Date().toISOString()}; state.modalDirty = true; rtsPintarAssin(); } return; }
+  if(row==="rts"){ const x = state.rts; if(!x) return; const ids = await uploadPhotos([file], {tipo:"assinatura", os:x.os, unid:x.unid, nome}); // relatório técnico
+    if(ids[0] && state.rts===x && $("#rtsForm")){ x.assin = {foto:ids[0], nome, em:new Date().toISOString()}; state.modalDirty = true; rtsPintarAssin(); } return; }
   if(row!==""){ const r = state.day.rows[+row]; const ids = await uploadPhotos([file], {tipo:"assinatura", os:r.os, unid:r.cli||state.day.unid, nome});
     r.fotoMeta = {...(r.fotoMeta||{}), ...Object.fromEntries(ids.map(id=>[id, state.fotoMetaNovo?.[id]]))}; r.fotos = [...(r.fotos||[]), ...ids]; renderDayRows(); updateDay(); }
   else { const ids = await uploadPhotos([file], {tipo:"assinatura", os:$("#f-os")?.value.trim(), unid:$("#f-cli")?.value.trim(), nome}); state.apFotos = [...(state.apFotos||[]), ...ids]; const box = $("#f-thumbs"); if(box) box.innerHTML = thumbs(state.apFotos, true); state.modalDirty = true; }
