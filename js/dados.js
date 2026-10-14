@@ -262,13 +262,15 @@ async function boot(){
     if(state.worker) state.view = "worker"; else if(state.view==="worker") state.view = "painel";
     if(outbox.lista.length || fotosPend.size) await sincronizar();
     await carregar(); state.offline = false;
-    pushEstado().catch(()=>{}); setTimeout(()=>{ carregarChamados(); portalAgendar(); }, 1500);
+    pushEstado().catch(()=>{}); setTimeout(()=>{ carregarChamados(); portalAgendar(); }, 1500); setTimeout(prepararLeitorOffline, 15000);
   }catch(err){
     const rede = (err && err.rede) || ehRede(err);
     if(rede && local && local.perfil){ state.offline = true; reaplicarFila(); toast("Internet fraca ou sem internet: usando os dados deste aparelho. O que você lançar é enviado sozinho quando a conexão melhorar."); }
     else if(!local) toast(rede ? "Sem internet e ainda não há dados guardados neste aparelho. Abra o app uma vez com internet." : "Não consegui carregar os dados. Verifique a conexão e recarregue a página.");
   }
-  state.atualizando = false; state.ready = true; render(); syncTag(); snap.agendar();
+  const jaMostrava = state.atualizando; state.atualizando = false; state.ready = true;
+  if(jaMostrava) scheduleRender(); else render(); // já mostrava os dados do aparelho: com uma janela aberta, espera ela fechar
+  syncTag(); snap.agendar();
 }
 // itens ainda na fila aparecem na tela mesmo depois de recarregar os dados
 function reaplicarFila(){ outbox.lista.forEach(it=>{ const k = KEY[it.col]; if(!k) return; if(it.op==="del") setList(k, state[k].filter(x=>x.id!==it.id)); else upsertLocal(k, {...it.data, id:it.id, _pend:true, ...(it.versao?{_v:it.versao}:{})}); }); }

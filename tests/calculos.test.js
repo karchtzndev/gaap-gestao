@@ -100,6 +100,20 @@ test("total do orçamento com desconto", ()=>{
   const t = g("orcTotals")({itens:[{qtd:"2", valor:"150,50"}, {qtd:"1", valor:"99"}], descontoPct:"10"});
   assert.equal(t.sub, 400); assert.equal(t.desc, 40); assert.equal(t.total, 360);
 });
+test("material por conta do cliente fica fora do total", ()=>{
+  const mo = {tipo:"mo", qtd:"8", valor:"60"}, mat = {tipo:"mat", qtd:"10", valor:"25"}, matCli = {tipo:"mat", qtd:"4", valor:"100", cliente:true};
+  assert.equal(g("orcTotals")({itens:[mo, mat, matCli]}).total, 730);            // 480 + 250; o do cliente não soma
+  assert.equal(g("orcTotals")({itens:[mo, mat, matCli], matCliente:true}).total, 480); // todo material do cliente: só a mão de obra
+  assert.equal(g("orcTotals")({itens:[mo, {tipo:"srv", qtd:"1", valor:"200", cliente:true}], matCliente:true}).total, 680); // serviço continua somando
+});
+test("Pix copia e cola: dígito verificador e chave de telefone", ()=>{
+  assert.equal(g("crc16")("123456789"), "29B1"); // valor de referência do CRC16-CCITT
+  const p = g("pixPayload")({chave:"(62) 9 9310-3507", nome:"GAAP Engenharia", cidade:"Anápolis", valor:680, txid:"ORC2026-007"});
+  assert.match(p, /^000201/); assert.match(p, /0114\+5562993103507/); assert.match(p, /5406680\.00/); assert.match(p, /6008ANAPOLIS/);
+  assert.equal(p.slice(-4), g("crc16")(p.slice(0, -4)));
+  assert.equal(g("pixPayload")({chave:""}), "");
+  assert.match(g("pixPayload")({chave:"12.345.678/0001-90", nome:"X", cidade:"Y"}), /011412345678000190/);
+});
 test("números digitados no formato brasileiro", ()=>{
   assert.equal(g("num")("1.234,56"), 1234.56);
   assert.equal(g("numIn")("12.5"), 12.5);

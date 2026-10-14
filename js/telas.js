@@ -33,9 +33,9 @@ async function submitLogin(form){
   btn.disabled = true; err.textContent = "";
   try{
     if(modo==="entrar"){ const {error} = await sb.auth.signInWithPassword({email, password:senha}); if(error) throw error; }
-    else if(modo==="criar"){ const {data, error} = await sb.auth.signUp({email, password:senha, options:{emailRedirectTo: location.origin}}); if(error) throw error;
+    else if(modo==="criar"){ const {data, error} = await sb.auth.signUp({email, password:senha, options:{emailRedirectTo: location.origin + "/app"}}); if(error) throw error;
       if(!data.session){ state.auth = "enviado"; state.authInfo = `Enviamos um link de confirmação para ${email}. Abra o e-mail, toque no link e depois entre com seu e-mail e senha.`; render(); } }
-    else if(modo==="recuperar"){ const {error} = await sb.auth.resetPasswordForEmail(email, {redirectTo: location.origin}); if(error) throw error; state.auth = "enviado"; state.authInfo = `Se existir uma conta com ${email}, enviamos um link para criar uma senha nova.`; render(); }
+    else if(modo==="recuperar"){ const {error} = await sb.auth.resetPasswordForEmail(email, {redirectTo: location.origin + "/app"}); if(error) throw error; state.auth = "enviado"; state.authInfo = `Se existir uma conta com ${email}, enviamos um link para criar uma senha nova.`; render(); }
     else if(modo==="nova-senha"){ const {error} = await sb.auth.updateUser({password:senha}); if(error) throw error; state.auth = "entrar"; toast("Senha alterada."); if(session) await boot(); else render(); }
   }catch(e){ err.textContent = authMsg(e); btn.disabled = false; }
 }

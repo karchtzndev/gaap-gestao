@@ -1,7 +1,7 @@
 {
   "name": "GAAP Gestão de Serviços",
   "short_name": "GAAP OS",
-  "start_url": "/",
+  "start_url": "/app",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#1d3f8f",

@@ -2,60 +2,232 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
+<script src="/redir.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>GAAP Gestão de Serviços</title>
-<meta name="description" content="GAAP Engenharia: apontamento de horas por OS, relatórios, orçamentos e financeiro.">
-<meta name="theme-color" content="#1d3f8f">
-<link rel="manifest" href="/manifest.webmanifest">
+<title>GAAP Engenharia · Montagem e manutenção mecânica industrial em Anápolis-GO</title>
+<meta name="description" content="Montagem e manutenção mecânica industrial para grãos, cervejarias e farmacêuticas, galpões e estruturas metálicas, projetos, laudos, ART e segurança do trabalho em Anápolis-GO. Peça seu orçamento pelo WhatsApp.">
+<meta name="theme-color" content="#0b1322">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:site_name" content="GAAP Engenharia">
+<meta property="og:title" content="GAAP Engenharia · Montagem e manutenção mecânica industrial">
+<meta property="og:description" content="Manutenção e montagem mecânica, galpões e estruturas metálicas, projetos, laudos e ART em Anápolis-GO. Fale com a gente pelo WhatsApp.">
+<meta property="og:image" content="https://gaap-gestao.vercel.app/icon-512.png">
+<meta property="og:url" content="https://gaap-gestao.vercel.app/">
+<link rel="canonical" href="https://gaap-gestao.vercel.app/">
+<!-- dados da empresa para o Google (busca local) -->
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "LocalBusiness", "@id": "https://gaap-gestao.vercel.app/#empresa", "name": "GAAP Engenharia", "legalName": "GAAP ENGENHARIA", "description": "Montagem e manutenção mecânica industrial para empresas de grãos, cervejarias e farmacêuticas; fabricação e montagem de galpões e estruturas metálicas; engenharia mecânica, civil e de segurança do trabalho, com projetos, laudos, ART e treinamentos de segurança em Anápolis-GO e região.", "url": "https://gaap-gestao.vercel.app/", "image": "https://gaap-gestao.vercel.app/icon-512.png", "logo": "https://gaap-gestao.vercel.app/icon-512.png", "telephone": "+55 62 99310-3507", "email": "gaapengenharia3m@gmail.com", "taxID": "58.486.529/0001-47", "address": {"@type": "PostalAddress", "addressLocality": "Anápolis", "addressRegion": "GO", "addressCountry": "BR"}, "areaServed": [{"@type": "City", "name": "Anápolis"}, {"@type": "State", "name": "Goiás"}], "hasOfferCatalog": {"@type": "OfferCatalog", "name": "Serviços", "itemListElement": [{"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Manutenção mecânica industrial"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Montagem industrial"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Fabricação e montagem de galpões e estruturas metálicas"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Engenharia mecânica e civil: projetos, laudos e ART"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Engenharia de segurança do trabalho e treinamentos"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Chamados de emergência"}}]}}</script>
 <link rel="icon" href="/icon-192.png">
 <link rel="apple-touch-icon" href="/icon-192.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="GAAP OS">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/contratar.css">
 </head>
 <body>
 
-<div class="shell">
-  <nav class="rail" aria-label="Menu">
-    <div class="brandmark"><img alt="" src="/logo.jpg"><div><b>GAAP ENGENHARIA</b><small>Montagens e manutenção mecânica</small></div></div>
-    <div id="railnav"></div>
-  </nav>
-  <div style="min-width:0">
-    <header class="topbar">
-      <div class="brandmark"><img alt="" src="/logo.jpg"><div><b>GAAP ENGENHARIA</b><small>Ordens de serviço e orçamentos</small></div></div>
-      <div class="spacer"></div>
-      <span id="modetag" class="modetag" hidden>Salvo só neste aparelho</span>
-      <button class="btn primary sm" data-act="newDay" title="Lançar OS do dia"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">Apontar</span></button>
-      <button class="iconbtn" data-act="sair" aria-label="Sair" title="Sair"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
-      <button class="iconbtn" data-act="nav" data-view="ajustes" aria-label="Ajustes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
-    </header>
-    <main id="view"><div class="loading">Carregando seus dados…</div></main>
+<header class="topo">
+  <div class="wrap topo-in">
+    <a class="marca" href="#inicio" aria-label="GAAP Engenharia, início">
+      <img src="/emblema.png" alt="" width="34" height="34">
+      <span><b>GAAP ENGENHARIA</b><small>Montagem e manutenção mecânica</small></span>
+    </a>
+    <nav class="menu" aria-label="Seções">
+      <a href="#servicos">Serviços</a>
+      <a href="#como">Como funciona</a>
+      <a href="#duvidas">Dúvidas</a>
+      <a href="#orcamento">Orçamento</a>
+    </nav>
+    <a class="equipe" href="/app" title="Acesso da equipe">Equipe</a>
+    <a class="btn wa sm" data-wa="topo" href="#orcamento"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-wa"/></svg><span>WhatsApp</span></a>
   </div>
-  <nav class="tabbar" id="tabbar" aria-label="Menu"></nav>
-</div>
-<div id="modal" class="modal" hidden></div>
-<div id="toast" class="toast" hidden></div>
+</header>
 
+<main id="inicio">
+  <section class="hero">
+    <div class="grade" aria-hidden="true"></div>
+    <div class="wrap hero-in">
+      <div class="hero-txt">
+        <p class="eyebrow">Montagem e manutenção mecânica industrial · Anápolis-GO</p>
+        <h1>Sua indústria <span class="metal">rodando</span>, com engenharia do projeto à manutenção.</h1>
+        <p class="lead">Montagem e manutenção mecânica, galpões e estruturas metálicas, projetos, laudos e ART para a indústria. Conte o que você precisa e receba o retorno direto pelo WhatsApp.</p>
+        <div class="acoes">
+          <a class="btn wa lg" data-wa="hero" href="#orcamento"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-wa"/></svg><span>Chamar no WhatsApp</span></a>
+          <a class="btn ghost lg" href="#servicos">Ver serviços</a>
+        </div>
+        <ul class="selos">
+          <li><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-check"/></svg>Orçamento sem compromisso</li>
+          <li><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-check"/></svg>Relatório de cada serviço</li>
+          <li><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-check"/></svg>Projetos, laudos e ART</li>
+        </ul>
+      </div>
+      <div class="hero-arte" aria-hidden="true">
+        <div class="anel a1"></div><div class="anel a2"></div>
+        <img src="/emblema.png" alt="" width="438" height="435">
+      </div>
+    </div>
+  </section>
 
-<script src="/vendor/supabase-2.45.4.min.js"></script>
-<script src="/vendor/jspdf-2.5.1.umd.min.js"></script>
-<script src="/vendor/jspdf-autotable-3.8.2.min.js"></script>
-<script src="/vendor/qrcode-generator-1.4.4.js"></script>
-<script src="/config.js"></script>
-<script src="/logo.js"></script>
-<script src="/js/base.js"></script>
-<script src="/js/dados.js"></script>
-<script src="/js/interface.js"></script>
-<script src="/js/leitura-os.js"></script>
-<script src="/js/telas.js"></script>
-<script src="/js/lancamentos.js"></script>
-<script src="/js/relatorios.js"></script>
-<script src="/js/financeiro.js"></script>
-<script src="/js/ajustes.js"></script>
-<script src="/js/relatorio.js"></script>
-<script src="/js/acoes.js"></script>
+  <section class="setores" aria-label="Setores que atendemos">
+    <div class="wrap setores-in">
+      <span class="setores-tit">Atendemos</span>
+      <ul>
+        <li><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-grao"/></svg>Grãos e armazéns</li>
+        <li><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-tanque"/></svg>Cervejarias</li>
+        <li><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-frasco"/></svg>Farmacêuticas</li>
+        <li><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-beam"/></svg>Galpões e estruturas</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="servicos" class="secao">
+    <div class="wrap">
+      <p class="eyebrow">O que fazemos</p>
+      <h2>Serviços para manter sua planta produzindo</h2>
+      <div class="cards">
+        <article class="card">
+          <div class="ic"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-gear"/></svg></div>
+          <h3>Manutenção mecânica</h3>
+          <p>Corretiva e preventiva em transportadores, elevadores de canecas, redutores, bombas e demais equipamentos da linha.</p>
+        </article>
+        <article class="card">
+          <div class="ic"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-crane"/></svg></div>
+          <h3>Montagem industrial</h3>
+          <p>Montagem, alinhamento e remanejamento de equipamentos para grãos, cervejarias e farmacêuticas, no prazo combinado.</p>
+        </article>
+        <article class="card">
+          <div class="ic"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-beam"/></svg></div>
+          <h3>Galpões e estruturas metálicas</h3>
+          <p>Fabricação e montagem de galpões, estruturas, plataformas, passarelas, escadas e suportes sob medida.</p>
+        </article>
+        <article class="card">
+          <div class="ic"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-ruler"/></svg></div>
+          <h3>Engenharia mecânica e civil</h3>
+          <p>Projetos, cálculos, laudos técnicos e ART para obras, equipamentos e adequações da sua planta.</p>
+        </article>
+        <article class="card">
+          <div class="ic"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-shield"/></svg></div>
+          <h3>Segurança do trabalho</h3>
+          <p>Engenharia de segurança do trabalho: laudos, projetos e treinamentos de segurança para a sua equipe.</p>
+        </article>
+        <article class="card">
+          <div class="ic"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-bolt"/></svg></div>
+          <h3>Chamados de emergência</h3>
+          <p>Parou algo fora do plano? Chame no WhatsApp, explique o problema e combinamos o atendimento.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="secao faixa">
+    <div class="wrap dif">
+      <div>
+        <p class="eyebrow">Por que a GAAP</p>
+        <h2>Transparência em cada hora trabalhada</h2>
+        <p class="muted">Você sabe o que foi feito, quando e por quem. Sem surpresa na hora de fechar a conta.</p>
+        <p class="local"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-pin"/></svg><span>Em Anápolis-GO, no maior polo industrial do Centro-Oeste.</span></p>
+      </div>
+      <ul class="lista">
+        <li><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-doc"/></svg><div><b>Ordem de serviço registrada</b><span>Cada serviço é lançado com horário de início e fim, descrição e fotos do antes e depois.</span></div></li>
+        <li><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-qr"/></svg><div><b>Relatório técnico com QR de autenticidade</b><span>O relatório sai com fotos e um código que qualquer pessoa confere aqui no site. <a href="/verificar">Conferir um relatório</a></span></div></li>
+        <li><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-check"/></svg><div><b>Medição para você aprovar</b><span>No fechamento você recebe o relatório das horas e pode conferir e aprovar pelo link.</span></div></li>
+        <li><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-shield"/></svg><div><b>Segurança em primeiro lugar</b><span>Engenharia de segurança do trabalho na própria empresa e equipe treinada para trabalhar na sua planta.</span></div></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="como" class="secao">
+    <div class="wrap">
+      <p class="eyebrow">Como funciona</p>
+      <h2>Do primeiro contato ao serviço entregue</h2>
+      <ol class="passos">
+        <li><span class="n">1</span><h3>Você conta o que precisa</h3><p>Mande uma mensagem no WhatsApp com o serviço, o local e, se puder, uma foto.</p></li>
+        <li><span class="n">2</span><h3>Avaliamos e orçamos</h3><p>Entendemos o problema, combinamos a visita se for preciso e enviamos o orçamento.</p></li>
+        <li><span class="n">3</span><h3>Executamos e entregamos</h3><p>Fazemos o serviço e você recebe o relatório técnico com as fotos do que foi feito.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="duvidas" class="secao faixa">
+    <div class="wrap duvidas">
+      <div>
+        <p class="eyebrow">Dúvidas comuns</p>
+        <h2>Antes de chamar</h2>
+        <p class="muted">Não achou sua pergunta? Mande no WhatsApp que a gente responde.</p>
+      </div>
+      <div class="faq">
+        <details><summary>Como peço um orçamento?</summary><p>Preencha o formulário abaixo ou chame direto no WhatsApp. Conte o serviço, o local e, se puder, mande fotos. Se precisar, combinamos uma visita técnica.</p></details>
+        <details><summary>Vocês fazem projeto, laudo e ART?</summary><p>Sim. Atuamos em engenharia mecânica, civil e de segurança do trabalho, com projetos, laudos técnicos e emissão de ART.</p></details>
+        <details><summary>Como recebo o orçamento?</summary><p>Você recebe a proposta com os valores e as condições e pode aprovar pelo próprio celular, com a sua assinatura.</p></details>
+        <details><summary>Como confiro um relatório técnico da GAAP?</summary><p>Todo relatório técnico sai com um QR e um código de autenticidade. Aponte a câmera para o QR ou digite o código em <a href="/verificar">Conferir relatório</a>.</p></details>
+        <details><summary>Atendem chamados de emergência?</summary><p>Sim. Chame no WhatsApp, explique o problema e combinamos o atendimento o quanto antes.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section id="orcamento" class="secao">
+    <div class="wrap orc">
+      <div class="orc-txt">
+        <p class="eyebrow">Peça seu orçamento</p>
+        <h2>Preencha e a mensagem já vai pronta para o WhatsApp</h2>
+        <p class="muted">Leva menos de um minuto. Você confere o texto no WhatsApp antes de enviar.</p>
+        <a class="btn ghost" data-wa="direto" href="#orcamento"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-wa"/></svg><span>Prefiro escrever do meu jeito</span></a>
+      </div>
+      <form id="form-orc" class="form" novalidate>
+        <label><span>Seu nome</span><input name="nome" autocomplete="name" required placeholder="Como podemos te chamar?"></label>
+        <label><span>Empresa</span><input name="empresa" autocomplete="organization" placeholder="Opcional"></label>
+        <label><span>Cidade</span><input name="cidade" autocomplete="address-level2" placeholder="Onde é o serviço?"></label>
+        <label><span>Tipo de serviço</span>
+          <select name="servico">
+            <option>Manutenção mecânica</option>
+            <option>Montagem industrial</option>
+            <option>Galpão ou estrutura metálica</option>
+            <option>Projeto, laudo ou ART</option>
+            <option>Segurança do trabalho ou treinamento</option>
+            <option>Chamado de emergência</option>
+            <option>Outro serviço</option>
+          </select>
+        </label>
+        <label class="full"><span>O que você precisa?</span><textarea name="descricao" rows="4" placeholder="Ex.: elevador de canecas com ruído e vibração, precisa de avaliação."></textarea></label>
+        <button class="btn wa lg full" type="submit"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-wa"/></svg><span>Enviar pelo WhatsApp</span></button>
+        <p class="aviso full" id="form-aviso" role="status" hidden></p>
+      </form>
+    </div>
+  </section>
+</main>
+
+<footer class="rodape">
+  <div class="wrap rod-in">
+    <div class="marca"><img src="/emblema.png" alt="" width="28" height="28"><span><b>GAAP ENGENHARIA</b><small>Montagem e manutenção mecânica industrial</small></span></div>
+    <div class="contatos">
+      <a data-wa="rodape" href="#orcamento"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-wa"/></svg>(62) 9 9310-3507</a>
+      <a href="mailto:gaapengenharia3m@gmail.com"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-mail"/></svg>gaapengenharia3m@gmail.com</a>
+      <span><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-pin"/></svg>Anápolis-GO</span>
+    </div>
+    <p class="muted">© <span id="ano"></span> GAAP Engenharia · CNPJ 58.486.529/0001-47 · <a href="/verificar">Conferir relatório</a> · <a href="/app">Acesso da equipe</a></p>
+  </div>
+</footer>
+
+<a class="flutuante" data-wa="flutuante" href="#orcamento" aria-label="Falar no WhatsApp"><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#i-wa"/></svg></a>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-wa" viewBox="0 0 24 24"><path fill="currentColor" d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38a9.9 9.9 0 0 0 4.74 1.21h.01c5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2Zm0 18.15h-.01a8.23 8.23 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.2 8.2 0 0 1-1.26-4.38c0-4.54 3.7-8.23 8.25-8.23 2.2 0 4.27.86 5.82 2.42a8.18 8.18 0 0 1 2.41 5.83c0 4.54-3.7 8.22-8.23 8.22Zm4.52-6.16c-.25-.12-1.47-.72-1.69-.81-.23-.08-.39-.12-.56.13-.16.25-.64.81-.79.97-.14.17-.29.19-.54.06-.25-.12-1.05-.39-1.99-1.23-.74-.66-1.23-1.47-1.38-1.72-.14-.25-.02-.38.11-.51.11-.11.25-.29.37-.43.13-.15.17-.25.25-.42.08-.16.04-.31-.02-.43-.06-.13-.56-1.34-.76-1.84-.2-.48-.41-.42-.56-.43h-.48c-.17 0-.43.06-.66.31-.22.25-.86.85-.86 2.07s.89 2.4 1.01 2.56c.12.17 1.75 2.67 4.23 3.74.59.26 1.05.41 1.41.52.59.19 1.13.16 1.56.1.48-.07 1.47-.6 1.67-1.18.21-.58.21-1.07.15-1.18-.06-.1-.22-.16-.47-.29Z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5"/><circle cx="12" cy="12" r="6.6"/></g></symbol>
+  <symbol id="i-crane" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4l14 3H6M10 4.8V7M15 5.9V7M18 7v5"/><path d="M16.5 12h3v2.5h-3zM3 21h8"/></g></symbol>
+  <symbol id="i-beam" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 5h18M3 19h18M8 5v14M16 5v14"/><path d="m8 5 8 7-8 7M16 5l-8 7 8 7"/></g></symbol>
+  <symbol id="i-ruler" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17.5 17.5 3 21 6.5 6.5 21Z"/><path d="m7.5 13 2 2M10.5 10l1.5 1.5M13.5 7l2 2"/></g></symbol>
+  <symbol id="i-qr" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1"/><rect x="14" y="3.5" width="6.5" height="6.5" rx="1"/><rect x="3.5" y="14" width="6.5" height="6.5" rx="1"/><path d="M14 14h2.5v2.5H14zM18 18h2.5v2.5H18zM18 14h2.5M14 18v2.5" stroke-linecap="round"/></g></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5" stroke-linecap="round"/></g></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"/><circle cx="12" cy="10" r="2.3"/></g></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M13.5 2.5 5 13.5h6l-1 8 8.5-11h-6l1-8Z"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></g></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.4 7.5 9.5 4.3-1.1 7.5-4.9 7.5-9.5V6Z"/><path d="m8.8 12 2.2 2.2 4.2-4.4" stroke-linecap="round"/></g></symbol>
+  <symbol id="i-grao" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9M12 13c-3 0-5-2-5-5 3 0 5 2 5 5ZM12 13c3 0 5-2 5-5-3 0-5 2-5 5ZM12 9c-2 0-3.5-1.5-3.5-4C10.5 5 12 6.5 12 9ZM12 9c2 0 3.5-1.5 3.5-4-2 0-3.5 1.5-3.5 4Z"/></g></symbol>
+  <symbol id="i-tanque" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M7 4h10v12a5 5 0 0 1-10 0Z"/><path d="M7 9h10M10 21h4M12 21v0"/></g></symbol>
+  <symbol id="i-frasco" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M9 3h6M10 3v6L5 18a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3L14 9V3"/><path d="M7.5 14h9"/></g></symbol>
+</svg>
+
+<script src="/contratar.js"></script>
 </body>
 </html>

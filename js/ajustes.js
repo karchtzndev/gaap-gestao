@@ -81,7 +81,8 @@ function vAjustes(){
       <div class="grid2"><label class="field"><span>Nome</span><input id="e-nome" value="${esc(E.nome)}"></label><label class="field"><span>CNPJ</span><input id="e-cnpj" value="${esc(E.cnpj)}"></label>
       <label class="field"><span>E-mail</span><input id="e-email" value="${esc(E.email)}"></label><label class="field"><span>Telefone</span><input id="e-tel" value="${esc(E.telefone)}"></label>
       <label class="field"><span>Código do serviço na NF (LC 116)</span><input id="e-codserv" value="${esc(E.codServico||"14.01")}" placeholder="14.01"></label><label class="field"><span>Alíquota do ISS (%)</span><input id="e-iss" inputmode="decimal" value="${esc(E.issPct??"")}" placeholder="Ex.: 3"></label>
-      <label class="field"><span>Cidade</span><input id="e-cid" value="${esc(E.cidade)}"></label><label class="field"><span>Responsável técnico (assinatura)</span><input id="e-resp" value="${esc(E.responsavel)}"></label></div>
+      <label class="field"><span>Cidade</span><input id="e-cid" value="${esc(E.cidade)}"></label><label class="field"><span>Responsável técnico (assinatura)</span><input id="e-resp" value="${esc(E.responsavel)}"></label>
+      <label class="field"><span>Chave Pix (sinal dos orçamentos)</span><input id="e-pix" value="${esc(E.pix||"")}" placeholder="CNPJ, e-mail, +55 62 9… ou chave aleatória"></label></div>
       <label class="field"><span>Quem somos</span><textarea id="e-sobre" rows="5">${esc(E.sobre)}</textarea></label>
     </div>
     <div class="row cfg-salvar" data-aba="valores jornada contratantes empresa" style="justify-content:flex-end"><span class="muted cfg-aviso" id="cfg-aviso" hidden>Alterações não salvas</span><button class="btn primary" type="submit">Salvar ajustes</button></div>
@@ -206,7 +207,7 @@ async function submitCfg(){
   c.tolerancia = Math.max(0, +g("c-tol") || 0); c.carimbo = !!$("#c-carimbo")?.checked; c.preventivas = !!$("#c-prev")?.checked;
   c.profissionais = lines(g("c-profs")).join("\n"); c.unidades = lines(g("c-unids")).join("\n");
   c.feriados = {carnaval:$("#c-carn").checked, corpus:$("#c-corp").checked, extras:g("c-fer")};
-  c.empresa = {nome:g("e-nome"), cnpj:g("e-cnpj"), email:g("e-email"), telefone:g("e-tel"), cidade:g("e-cid"), responsavel:g("e-resp"), sobre:g("e-sobre"), codServico:g("e-codserv"), issPct:g("e-iss")};
+  c.empresa = {nome:g("e-nome"), cnpj:g("e-cnpj"), email:g("e-email"), telefone:g("e-tel"), cidade:g("e-cid"), responsavel:g("e-resp"), pix:g("e-pix"), sobre:g("e-sobre"), codServico:g("e-codserv"), issPct:g("e-iss")};
   const cuOld = c.custos || {}; c.custos = {}; document.querySelectorAll("[data-cu]").forEach(tr=>{ const v = numIn(tr.querySelector(".cu-v").value), bco = !!tr.querySelector(".cu-b")?.checked, o = cuOld[tr.dataset.cu] || {};
     if(v>0 || bco) c.custos[tr.dataset.cu] = {tipo:tr.querySelector(".cu-t").value, valor:v, ...(bco?{banco:true, bancoDesde:o.banco && o.bancoDesde ? o.bancoDesde : today()}:{})}; });
   c.contratantes = {}; document.querySelectorAll("[data-ct]").forEach(el=>{ const q = k=>el.querySelector(k);

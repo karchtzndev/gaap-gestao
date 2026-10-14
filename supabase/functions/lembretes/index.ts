@@ -118,7 +118,7 @@ Deno.serve(async (req) => {
     const tok = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
     const { data: u } = await sb.auth.getUser(tok);
     if (!u?.user) return json({ erro: "login" }, 401);
-    const n = await enviar([u.user.id], { title: "GAAP Gestão", body: "Lembretes ativados neste aparelho. 👍", url: "/" });
+    const n = await enviar([u.user.id], { title: "GAAP Gestão", body: "Lembretes ativados neste aparelho. 👍", url: "/app" });
     return json({ enviados: n });
   }
 
@@ -130,8 +130,23 @@ Deno.serve(async (req) => {
     if (!ch) return json({ erro: "chamado" }, 404);
     const { data: ps } = await sb.from("perfis").select("user_id").in("papel", ["dono", "funcionario"]);
     const d = ch.data ?? {};
-    const n = await enviar((ps ?? []).map((p: any) => p.user_id), { title: `🚨 Chamado de emergência · ${ch.empresa}`, body: `${d.unidade ? d.unidade + ": " : ""}${d.descricao ?? ""}${d.parada ? " (máquina parada)" : ""}${d.nome ? ` — ${d.nome}` : ""}`.slice(0, 220), url: "/#chamados" });
+    const n = await enviar((ps ?? []).map((p: any) => p.user_id), { title: `🚨 Chamado de emergência · ${ch.empresa}`, body: `${d.unidade ? d.unidade + ": " : ""}${d.descricao ?? ""}${d.parada ? " (máquina parada)" : ""}${d.nome ? ` — ${d.nome}` : ""}`.slice(0, 220), url: "/app#chamados" });
     return json({ acao: "chamado", enviados: n });
+  }
+
+  // orçamento respondido pelo cliente no link (aprovado ou recusado): avisa o responsável na hora
+  if (body?.orcamento) {
+    const { data: lk } = await sb.from("orc_links").select("orc_id, snap, resposta").eq("token", String(body.orcamento)).maybeSingle();
+    if (!lk?.resposta) return json({ erro: "orcamento" }, 404);
+    const r: any = lk.resposta, P: any = lk.snap ?? {};
+    const valor = P.opcoes ? (r.opcao === "B" ? P.opcoes.B : P.opcoes.A) : P.total;
+    const { data: ds } = await sb.from("perfis").select("user_id").eq("papel", "dono");
+    const n = await enviar((ds ?? []).map((p: any) => p.user_id), {
+      title: r.aprovado ? `✅ Orçamento ${P.numero ?? ""} aprovado!` : `Orçamento ${P.numero ?? ""} recusado`,
+      body: `${r.nome ?? ""}${P.cliente?.nome ? ` (${P.cliente.nome})` : ""}${r.aprovado ? ` · ${brl(+valor || 0)}${r.opcao ? ` · opção ${r.opcao}` : ""}` : r.obs ? ` · ${r.obs}` : ""}`.slice(0, 220),
+      url: "/app", tag: "orcamento-" + lk.orc_id,
+    });
+    return json({ acao: "orcamento", enviados: n });
   }
 
   let { dia, dow, min } = agoraBrasilia();
@@ -154,7 +169,7 @@ Deno.serve(async (req) => {
     let enviados = 0;
     for (const d of perfis ?? []) {
       if ((ja ?? []).some((x: any) => x.user_id === d.user_id)) continue;
-      enviados += await enviar([d.user_id], { title: `Para fazer hoje (${R.length})`, body: corpo, url: "/" });
+      enviados += await enviar([d.user_id], { title: `Para fazer hoje (${R.length})`, body: corpo, url: "/app" });
       await sb.from("lembretes_enviados").upsert({ dia, user_id: d.user_id, tipo: "manha" });
     }
     resultado.acao = "manha: enviado"; resultado.enviados = enviados; return json(resultado);
@@ -179,19 +194,19 @@ Deno.serve(async (req) => {
   const plano: any[] = [];
   for (const f of funcs) {
     const meu = abertos.find((a: any) => a.profissional === f.nome);
-    if (meu) plano.push({ u: f.user_id, t: "aberto", p: { title: "Cronômetro ainda aberto", body: `A OS ${meu.data.os || "s/n"} está em andamento desde ${meu.data.inicio}. Encerre quando terminar.`, url: "/" } });
-    else if (semLanc.includes(f.nome)) plano.push({ u: f.user_id, t: "sem_os", p: { title: "Faltou lançar as OS de hoje", body: "Você ainda não lançou nenhuma OS hoje. Leva um minuto.", url: "/" } });
+    if (meu) plano.push({ u: f.user_id, t: "aberto", p: { title: "Cronômetro ainda aberto", body: `A OS ${meu.data.os || "s/n"} está em andamento desde ${meu.data.inicio}. Encerre quando terminar.`, url: "/app" } });
+    else if (semLanc.includes(f.nome)) plano.push({ u: f.user_id, t: "sem_os", p: { title: "Faltou lançar as OS de hoje", body: "Você ainda não lançou nenhuma OS hoje. Leva um minuto.", url: "/app" } });
   }
   const partes: string[] = [];
   if (semLanc.length) partes.push(`Sem lançamento hoje: ${semLanc.join(", ")}.`);
   if (abertos.length) partes.push(`${abertos.length} cronômetro(s) aberto(s).`);
   if (pend) partes.push(`${pend} cadastro(s) aguardando liberação.`);
-  if (partes.length) for (const d of donos) plano.push({ u: d.user_id, t: "resumo", p: { title: "Resumo do dia", body: partes.join(" "), url: "/" } });
+  if (partes.length) for (const d of donos) plano.push({ u: d.user_id, t: "resumo", p: { title: "Resumo do dia", body: partes.join(" "), url: "/app" } });
 
   // véspera do corte: funcionário confere as próprias OS
   const amanha = +somaDias(dia, 1).slice(8);
   const corteAmanha = Object.entries<any>(cfg.contratantes ?? {}).filter(([, F]) => +F?.corte === amanha).map(([n]) => n);
-  if (corteAmanha.length) for (const f of funcs) plano.push({ u: f.user_id, t: "vespera", p: { title: "Amanhã é dia de fechamento", body: `Fechamento ${corteAmanha.join(", ")} amanhã (dia ${amanha}). Confira se todas as suas OS estão lançadas e sem cronômetro aberto.`, url: "/" } });
+  if (corteAmanha.length) for (const f of funcs) plano.push({ u: f.user_id, t: "vespera", p: { title: "Amanhã é dia de fechamento", body: `Fechamento ${corteAmanha.join(", ")} amanhã (dia ${amanha}). Confira se todas as suas OS estão lançadas e sem cronômetro aberto.`, url: "/app" } });
   const fazer = plano.filter((x) => !jaFoi(x.u, x.t));
   resultado.plano = fazer.map((x) => ({ tipo: x.t, body: x.p.body }));
   if (body?.simular) { resultado.acao = "simulado"; return json(resultado); }

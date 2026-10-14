@@ -110,7 +110,24 @@ const A = {
   delItem(b){ const o=state.orcDraft; o.itens.splice(+b.dataset.i,1); $("#items").innerHTML=itemsHtml(o); $("#orcTotals").innerHTML=totalsHtml(o); state.orcDirty=true; },
   async saveOrc(){ if(await saveOrc()){ const h=document.querySelector(".pagehead .eyebrow"); if(h) h.textContent=`Orçamento Nº ${state.orcDraft.numero}`; } },
   async orcPdf(){ if(await saveOrc()) orcPdf(state.orcDraft); },
-  dupOrc(){ const o = clone(state.orcDraft); delete o.id; delete o.numero; o.status="rascunho"; o.data=today(); o.titulo = o.titulo ? o.titulo+" (cópia)" : ""; state.orcDraft=o; state.orcDirty=true; state.rendered=null; render(); toast("Cópia criada. Salve para gerar um novo número."); },
+  // modelos prontos e "salvar como modelo"
+  orcModelo(b){ const m = modelosOrc()[+b.dataset.k]; if(!m) return; const o = state.orcDraft, d = clone(m.dados);
+    d.itens = (d.itens||[]).map(i=>({un:"", qtd:"1", valor: i.tipo==="mo" ? String(state.cfg.valorHora) : "", ...i}));
+    Object.assign(o, d); state.orcDirty = true; state.rendered = null; render(); toast(`Modelo “${m.nome}” aplicado. Ajuste quantidades e valores.`); },
+  async orcSalvarModelo(){ const o = state.orcDraft, nome = (prompt("Nome do modelo (ex.: Troca de rolamento):", o.titulo||"")||"").trim(); if(!nome) return;
+    const dados = {titulo:o.titulo, escopo:o.escopo, itens:clone(o.itens||[]), incluso:o.incluso, naoIncluso:o.naoIncluso, garantia:o.garantia, seguranca:o.seguranca, pagamento:o.pagamento, prazo:o.prazo, obs:o.obs, matCliente:o.matCliente};
+    const c = clone(state.cfg); delete c._v; c.modelosOrc = [...(c.modelosOrc||[]).filter(m=>m.nome!==nome), {nome, dados}];
+    try{ await saveCfg(c); state.cfg = deepMerge(DEFAULT_CFG, c); toast(`Modelo “${nome}” salvo. Aparece ao criar um novo orçamento.`); }catch(err){ toast(writeErr(err)); } },
+  orcFotoDel(b){ const o = state.orcDraft; o.fotos = (o.fotos||[]).filter(x=>x!==b.dataset.id); const box = $("#orc-thumbs"); if(box) box.innerHTML = orcThumbs(o); state.orcDirty = true; },
+  // link de aprovação: salva, gera (ou reaproveita) o link e devolve o endereço
+  async orcLinkCopiar(){ const u = await orcLinkGerar(); if(u){ await copyText(u); toast("Link de aprovação copiado. Cole na conversa com o cliente."); } },
+  async orcZap(){ const u = await orcLinkGerar(); if(!u) return; const o = state.orcDraft;
+    window.open(`https://wa.me/${foneZap(o.cliente?.telefone)}?text=${encodeURIComponent(orcMsg(o, u))}`, "_blank", "noopener"); },
+  async orcCobrar(b){ const o = state.orc.find(x=>x.id===b.dataset.id); if(!o) return;
+    const u = o.linkToken ? `${location.origin}/orcamento#t=${o.linkToken}` : "", val = orcValidade(o), nome = (o.cliente?.contato||o.cliente?.nome||"").split(" ")[0];
+    const msg = `Olá${nome?" "+nome:""}! Tudo bem? Passando para saber se conseguiu avaliar a proposta nº ${o.numero} (${o.titulo||"serviço"}).${val?` Ela vale até ${fdate(val)}.`:""}${u?`\n\nPara ver e aprovar pelo celular: ${u}`:""}\n\nQualquer dúvida, estou à disposição.`;
+    window.open(`https://wa.me/${foneZap(o.cliente?.telefone)}?text=${encodeURIComponent(msg)}`, "_blank", "noopener"); },
+  dupOrc(){ const o = clone(state.orcDraft); delete o.id; delete o.numero; o.status="rascunho"; o.data=today(); delete o.respostaCliente; delete o.linkToken; delete o.enviadoEm; o.titulo = o.titulo ? o.titulo+" (cópia)" : ""; state.orcDraft=o; state.orcDirty=true; state.rendered=null; render(); toast("Cópia criada. Salve para gerar um novo número."); },
   async delOrc(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar exclusão"; return; } try{ await removeDoc("orcamentos", state.orcDraft.id); state.orcDirty=false; state.view="orcamentos"; state.rendered=null; render(); toast("Orçamento excluído"); }catch(err){ toast(writeErr(err)); } },
   newRec(b){ openModal(recForm({o:b.dataset.o, m:b.dataset.m, e:b.dataset.e, v:b.dataset.v?Math.round(+b.dataset.v*100)/100:"", id:b.dataset.id})); },
   async delRec(b){ if(!b.dataset.armed){ b.dataset.armed="1"; b.textContent="Confirmar"; return; } const x = state.rec.find(r=>r.id===b.dataset.id); try{ await removeDoc("recebimentos", b.dataset.id); toastAcao("Recebimento excluído.", "Desfazer", async ()=>{ const y = {...x}; delete y._v; await save("recebimentos", y); toast("Exclusão desfeita."); }); }catch(err){ toast(writeErr(err)); } },
@@ -129,7 +146,7 @@ const A = {
     b.disabled = true;
     try{ const {data, error} = await sb.rpc("esvaziar_lixeira"); if(error){ if(/esvaziar_lixeira|function|PGRST202/i.test(error.message||"") || error.code==="PGRST202") throw {code:"db", message:"O botão ainda não foi ativado no banco. Peça para rodar a migração 017 (esvaziar lixeira)."}; throw dbErr(error); }
       // fotos que eram só dos itens apagados (não as que continuam em alguma OS ou despesa)
-      const usadas = new Set([...state.ap, ...state.desp].flatMap(x=>x.fotos||[]).concat(state.ord.map(o=>o.foto).filter(Boolean), rtsFotosUsadas())), fotos = (data?.fotos||[]).filter(f=>f && !usadas.has(f));
+      const usadas = new Set([...state.ap, ...state.orc, ...state.desp].flatMap(x=>x.fotos||[]).concat(state.ord.map(o=>o.foto).filter(Boolean), rtsFotosUsadas())), fotos = (data?.fotos||[]).filter(f=>f && !usadas.has(f));
       if(fotos.length) await sb.storage.from("fotos").remove(fotos).catch(()=>{});
       toast(`Lixeira esvaziada: ${data?.itens||0} item(ns)${fotos.length?` e ${fotos.length} foto(s)`:""} apagados de vez.`); carregarLixeira();
     }catch(err){ b.disabled = false; delete b.dataset.armed; b.textContent = "Esvaziar lixeira"; toast(writeErr(err)); } },
@@ -398,5 +415,9 @@ if("serviceWorker" in navigator){
   let jaTinha = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener("controllerchange", ()=>{ if(!jaTinha){ jaTinha = true; return; } if(state.modalDirty || state.cfgDirty || state.orcDirty || $("#dayForm")){ toast("Saiu uma versão nova do app. Salve o que está fazendo e toque em Atualizar."); return; } location.reload(); });
   document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) navigator.serviceWorker.getRegistration().then(r=>r && r.update()).catch(()=>{}); });
+  // o app abre pela cópia do aparelho; quando a versão nova termina de baixar inteira, avisa (vale na próxima abertura)
+  navigator.serviceWorker.addEventListener("message", e=>{ if(e.data?.tipo!=="nova-versao") return;
+    if(state.modalDirty || state.cfgDirty || state.orcDirty || $("#dayForm")) toast("Nova versão do app pronta. Ela entra quando você abrir o app de novo.");
+    else toastAcao("Nova versão do app pronta.", "Atualizar", ()=>location.reload()); });
 }
 initStore();

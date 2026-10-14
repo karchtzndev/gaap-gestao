@@ -8,7 +8,16 @@ const TESS = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min
 let tessWorker = null;
 async function tesseract(){
   if(!window.Tesseract) await loadScript(TESS);
-  return tessWorker ||= await window.Tesseract.createWorker("por", 1, {workerPath:"https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js", corePath:"https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1", langPath:"https://cdn.jsdelivr.net/npm/@tesseract.js-data/por@1.0.0/4.0.0_best_int"});
+  return tessWorker ||= await novoLeitor();
+}
+const novoLeitor = async () => { if(!window.Tesseract) await loadScript(TESS);
+  return window.Tesseract.createWorker("por", 1, {workerPath:"https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js", corePath:"https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1", langPath:"https://cdn.jsdelivr.net/npm/@tesseract.js-data/por@1.0.0/4.0.0_best_int"}); };
+// deixa o leitor guardado no aparelho (uma vez, com boa conexão e o app parado), para ler o papel sem internet já no primeiro uso
+function prepararLeitorOffline(){
+  try{ if(localStorage.getItem("leitor-offline")) return; }catch(e){ return; }
+  const con = navigator.connection; if(!navigator.onLine || state.offline || con?.saveData || /2g/.test(con?.effectiveType||"")) return;
+  const fazer = async () => { try{ const w = await novoLeitor(); await w.terminate(); localStorage.setItem("leitor-offline", "1"); }catch(e){} }; // leitor à parte: não atrapalha uma leitura em andamento
+  (window.requestIdleCallback || (f=>setTimeout(f, 8000)))(fazer, {timeout:20000});
 }
 // prepara a foto: reduz para 1800px e passa para cinza; "sombra" também divide pelo fundo borrado (tira sombra e luz desigual)
 async function prepFoto(file, modo){

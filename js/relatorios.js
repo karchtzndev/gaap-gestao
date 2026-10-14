@@ -64,7 +64,7 @@ const repH = m => state.rep.fmt==="hm" ? fh(m) : fdec(m);
 const repX = m => m ? repH(m) : "";
 function repCols(rows){
   const many = k => new Set(rows.map(DIMS[k].get)).size>1;
-  return {prof: many("prof"), unid: rows.some(e=>e.cliente) && !(oneOf(rows,"unid") && (state.rep.by==="unid"||state.rep.f.unid!==ALL)), emp: many("emp"), val: state.rep.valores};
+  return {prof: many("prof"), unid: rows.some(e=>e.cliente) && !(oneOf(rows,"unid") && (state.rep.by==="unid"||state.rep.f.unid!==ALL)), emp: many("emp"), val: state.rep.valores, tid: rows.some(e=>e.tracos)};
 }
 function repSummary(t){
   const cfg = state.cfg;
@@ -76,21 +76,21 @@ function repSummary(t){
     ["Total geral de horas", t.total, t.valor]
   ];
 }
-function repHead(C){ const cfg=state.cfg; return ["ORDEM","DIA","DATA","INÍCIO","FIM","DESCRIÇÃO","HORAS",`${cfg.extraPct}%`,`${cfg.feriadoPct}%`,...(C.val?["VALOR"]:[]),...(C.unid?["UNIDADE"]:[]),...(C.emp?["EMPRESA"]:[]),...(C.prof?["FUNCIONÁRIO"]:[])]; }
+function repHead(C){ const cfg=state.cfg; return ["ORDEM",...(C.tid?["ID TRACTIAN"]:[]),"DIA","DATA","INÍCIO","FIM","DESCRIÇÃO","HORAS",`${cfg.extraPct}%`,`${cfg.feriadoPct}%`,...(C.val?["VALOR"]:[]),...(C.unid?["UNIDADE"]:[]),...(C.emp?["EMPRESA"]:[]),...(C.prof?["FUNCIONÁRIO"]:[])]; }
 function repExtra(e, C){ return [...(C.unid?[e.cliente||""]:[]), ...(C.emp?[empOf(e)]:[]), ...(C.prof?[e.profissional||""]:[])]; }
 function groupHtml(rows){
   const days = repDays(rows), cfg = state.cfg, t = sumCalc(rows), C = repCols(rows), nDias = days.filter(d=>d.rows.length).length;
-  const head = repHead(C), ncols = head.length, nExtra = ncols - 9 - (C.val?1:0);
+  const head = repHead(C), ncols = head.length, k = C.tid ? 1 : 0, nExtra = ncols - 9 - k - (C.val?1:0); // k: coluna do ID logo depois da ORDEM
   const body = days.map(d=>{
     const hol = holidayName(d.data), sun = parseYmd(d.data).getDay()===0;
     const dayCells = k => `<td rowspan="${k}" style="white-space:nowrap">${wdl(d.data)}${hol?`<br><span class="pill bad">${esc(hol)}</span>`:""}</td><td rowspan="${k}" class="mono">${fdate(d.data)}</td>`;
-    if(!d.rows.length) return `<tr style="${sun||hol?"background:var(--surface-2)":""}"><td></td>${dayCells(1)}<td colspan="${ncols-3}"></td></tr>`;
-    return d.rows.map((e,i)=>{ const c=calc(e); return `<tr><td class="mono">${esc(e.os||"-")}</td>${i===0?dayCells(d.rows.length):""}<td class="mono">${esc(e.inicio)}</td><td class="mono">${esc(e.fim)}</td><td>${esc(e.descricao||"")}${e.emergencia?' <span class="pill warn">Emergência</span>':""}</td><td class="r mono"><b>${repH(c.total)}</b></td><td class="r mono">${repX(c.e50)}</td><td class="r mono">${repX(c.e100)}</td>${C.val?`<td class="r mono">${brl(c.valor)}</td>`:""}${repExtra(e,C).map(x=>`<td>${esc(x)}</td>`).join("")}</tr>`; }).join("");
+    if(!d.rows.length) return `<tr style="${sun||hol?"background:var(--surface-2)":""}"><td></td>${k?"<td></td>":""}${dayCells(1)}<td colspan="${ncols-3-k}"></td></tr>`;
+    return d.rows.map((e,i)=>{ const c=calc(e); return `<tr><td class="mono">${esc(e.os||"-")}</td>${k?`<td class="mono">${esc(e.tracos||"")}</td>`:""}${i===0?dayCells(d.rows.length):""}<td class="mono">${esc(e.inicio)}</td><td class="mono">${esc(e.fim)}</td><td>${esc(e.descricao||"")}${e.emergencia?' <span class="pill warn">Emergência</span>':""}</td><td class="r mono"><b>${repH(c.total)}</b></td><td class="r mono">${repX(c.e50)}</td><td class="r mono">${repX(c.e100)}</td>${C.val?`<td class="r mono">${brl(c.valor)}</td>`:""}${repExtra(e,C).map(x=>`<td>${esc(x)}</td>`).join("")}</tr>`; }).join("");
   }).join("");
   return `<section class="section"><header><h2>${esc(repHeading(rows))}</h2><span class="muted">${repTitle()} · ${nDias} ${nDias>1?"dias":"dia"} · ${rows.length} OS</span></header>
-  <div class="tablewrap"><table><thead><tr>${head.map((h,i)=>`<th${i>=6&&i<9+(C.val?1:0)?' class="r"':""}>${h}</th>`).join("")}</tr></thead>
+  <div class="tablewrap"><table><thead><tr>${head.map((h,i)=>`<th${i>=6+k&&i<9+k+(C.val?1:0)?' class="r"':""}>${h}</th>`).join("")}</tr></thead>
   <tbody>${body}</tbody>
-  <tfoot><tr style="background:var(--warn-bg)"><td colspan="6">TOTAL</td><td class="r mono">${repH(t.total)}</td><td class="r mono">${repH(t.e50)}</td><td class="r mono">${repH(t.e100)}</td>${C.val?`<td class="r mono">${brl(t.valor)}</td>`:""}${"<td></td>".repeat(nExtra)}</tr></tfoot></table></div>
+  <tfoot><tr style="background:var(--warn-bg)"><td colspan="${6+k}">TOTAL</td><td class="r mono">${repH(t.total)}</td><td class="r mono">${repH(t.e50)}</td><td class="r mono">${repH(t.e100)}</td>${C.val?`<td class="r mono">${brl(t.valor)}</td>`:""}${"<td></td>".repeat(nExtra)}</tr></tfoot></table></div>
   <div class="tablewrap" style="max-width:600px"><table><tbody>${repSummary(t).map((r,i)=>`<tr ${i>=3?'style="font-weight:700"':""}><td>${r[0]}</td><td class="r mono">${fdec(r[1])} h</td><td class="r mono muted">${fh(r[1])}</td>${C.val?`<td class="r mono">${brl(r[2])}</td>`:""}</tr>`).join("")}</tbody></table></div></section>`;
 }
 // fechamentos que caem no período escolhido (inclusive os das planilhas importadas), com os PDFs
@@ -213,34 +213,34 @@ const SRI = {"https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min
 function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement("script"); s.src=src; if(SRI[src]){ s.integrity = SRI[src]; s.crossOrigin = "anonymous"; } s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
 function xlsxSheet(X, rows){
   const days = repDays(rows), cfg = state.cfg, C = repCols(rows), t = sumCalc(rows);
-  const head = repHead(C), nc = head.length, H = m => Math.round(m/60*10000)/10000;
+  const head = repHead(C), nc = head.length, H = m => Math.round(m/60*10000)/10000, k = C.tid ? 1 : 0, ID = k ? [""] : []; // k: coluna do ID logo depois da ORDEM
   const aoa = [[repHeading(rows)], [`${cfg.empresa.nome} - CNPJ ${cfg.empresa.cnpj} - Período: ${repTitle()}`], head];
   const merges = [{s:{r:0,c:0},e:{r:0,c:nc-1}}, {s:{r:1,c:0},e:{r:1,c:nc-1}}];
   days.forEach(d=>{
     const start = aoa.length, list = d.rows.length ? d.rows : [null];
     list.forEach((e,i)=>{
-      if(!e){ aoa.push(["", wdl(d.data), fdate(d.data)]); return; }
+      if(!e){ aoa.push(["", ...ID, wdl(d.data), fdate(d.data)]); return; }
       const c = calc(e);
-      aoa.push([e.os||"", i?"":wdl(d.data), i?"":fdate(d.data), e.inicio, e.fim, descRep(e), H(c.total), c.e50?H(c.e50):"", c.e100?H(c.e100):"", ...(C.val?[c.valor]:[]), ...repExtra(e,C)]);
+      aoa.push([e.os||"", ...(k?[e.tracos||""]:[]), i?"":wdl(d.data), i?"":fdate(d.data), e.inicio, e.fim, descRep(e, C.tid), H(c.total), c.e50?H(c.e50):"", c.e100?H(c.e100):"", ...(C.val?[c.valor]:[]), ...repExtra(e,C)]);
     });
-    if(list.length>1){ merges.push({s:{r:start,c:1},e:{r:start+list.length-1,c:1}}, {s:{r:start,c:2},e:{r:start+list.length-1,c:2}}); }
+    if(list.length>1){ merges.push({s:{r:start,c:1+k},e:{r:start+list.length-1,c:1+k}}, {s:{r:start,c:2+k},e:{r:start+list.length-1,c:2+k}}); }
   });
   const first = 4, last = aoa.length, totR = aoa.length;
-  aoa.push(["TOTAL","","","","","", H(t.total), H(t.e50), H(t.e100), ...(C.val?[t.valor]:[])]);
-  merges.push({s:{r:totR,c:0},e:{r:totR,c:5}});
-  aoa.push([]); aoa.push(["RESUMO DE HORAS","","","","","","HORAS",...(C.val?["","","VALOR"]:[])]);
+  aoa.push(["TOTAL",...ID,"","","","","", H(t.total), H(t.e50), H(t.e100), ...(C.val?[t.valor]:[])]);
+  merges.push({s:{r:totR,c:0},e:{r:totR,c:5+k}});
+  aoa.push([]); aoa.push(["RESUMO DE HORAS",...ID,"","","","","","HORAS",...(C.val?["","","VALOR"]:[])]);
   const sumStart = aoa.length;
-  repSummary(t).forEach(r=>aoa.push([r[0],"","","","","",H(r[1]),...(C.val?["","",Math.round(r[2]*100)/100]:[])]));
-  const ws = X.utils.aoa_to_sheet(aoa), valCol = C.val ? 9 : -1;
-  ["G","H","I"].forEach((L,k)=>{ ws[`${L}${totR+1}`] = {t:"n", v:[H(t.total),H(t.e50),H(t.e100)][k], f:`SUM(${L}${first}:${L}${last})`}; });
-  if(C.val) ws[`J${totR+1}`] = {t:"n", v:t.valor, f:`SUM(J${first}:J${last})`};
+  repSummary(t).forEach(r=>aoa.push([r[0],...ID,"","","","","",H(r[1]),...(C.val?["","",Math.round(r[2]*100)/100]:[])]));
+  const ws = X.utils.aoa_to_sheet(aoa), valCol = C.val ? 9+k : -1, L = c => X.utils.encode_col(c+k);
+  [L(6),L(7),L(8)].forEach((col,j)=>{ ws[`${col}${totR+1}`] = {t:"n", v:[H(t.total),H(t.e50),H(t.e100)][j], f:`SUM(${col}${first}:${col}${last})`}; });
+  if(C.val) ws[`${L(9)}${totR+1}`] = {t:"n", v:t.valor, f:`SUM(${L(9)}${first}:${L(9)}${last})`};
   const range = X.utils.decode_range(ws["!ref"]);
-  for(let R=3; R<=range.e.r; R++) for(let Cc=6; Cc<=range.e.c; Cc++){
+  for(let R=3; R<=range.e.r; R++) for(let Cc=6+k; Cc<=range.e.c; Cc++){
     const cell = ws[X.utils.encode_cell({r:R,c:Cc})]; if(!cell || cell.t!=="n") continue;
-    cell.z = (Cc===valCol && R<sumStart) || (R>=sumStart && Cc===9) ? '"R$" #,##0.00' : "0.00";
+    cell.z = (Cc===valCol && R<sumStart) || (R>=sumStart && Cc===9+k) ? '"R$" #,##0.00' : "0.00";
   }
   ws["!merges"] = merges;
-  ws["!cols"] = [10,14,11,8,8,52,8,8,8,...(C.val?[13]:[]),...(C.unid?[16]:[]),...(C.emp?[18]:[]),...(C.prof?[22]:[])].map(w=>({wch:w}));
+  ws["!cols"] = [10,...(k?[12]:[]),14,11,8,8,52,8,8,8,...(C.val?[13]:[]),...(C.unid?[16]:[]),...(C.emp?[18]:[]),...(C.prof?[22]:[])].map(w=>({wch:w}));
   return ws;
 }
 async function repXlsx(){
@@ -276,6 +276,8 @@ function instalarHtml(){
   if(instalado()) return "";
   if(pedidoInstalar) return `<div class="banner"><span>Instale o GAAP no celular: abre pelo ícone, em tela cheia, e funciona sem internet.</span><button class="btn sm primary" data-act="instalarApp">Instalar app</button></div>`;
   if(ehAndroid()) return `<div class="banner"><span>Para instalar no Android: no Chrome, toque nos ⋮ (três pontos) → <b>Instalar app</b> ou <b>Adicionar à tela inicial</b>.</span></div>`;
+  // iPhone/iPad: não existe botão de instalar; é pelo menu Compartilhar (e só com o app instalado chegam os lembretes)
+  if(ehIOS()) return `<div class="banner"><span>${/CriOS|FxiOS|EdgiOS/.test(navigator.userAgent) ? "Para instalar no iPhone, abra este endereço no <b>Safari</b>. Depois: " : "Para instalar no iPhone: "}toque em <b>Compartilhar</b> <span aria-hidden="true">(□↑)</span> → <b>Adicionar à Tela de Início</b> → <b>Adicionar</b>. O GAAP fica com ícone na tela, abre direto nas suas OS e passa a receber os lembretes.</span></div>`;
   return "";
 }
 const instalado = () => window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
@@ -577,7 +579,7 @@ function pdfHeader(doc, title, sub){
   try{ doc.addImage(LOGO,"JPEG",14,9,24,24); }catch(e){}
   doc.setTextColor(...INK); doc.setFont("helvetica","bold"); doc.setFontSize(15); doc.text(E.nome||"",42,16);
   doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...GREY);
-  doc.text(`CNPJ: ${E.cnpj||""}`,42,21.5); doc.text(`${E.email||""}  |  ${E.telefone||""}`,42,26); doc.text(`Montagens e manutenção mecânica industrial  |  ${E.cidade||""}`,42,30.5);
+  [E.cnpj ? `CNPJ: ${E.cnpj}` : "", [E.email, E.telefone].filter(Boolean).join("  |  "), ["Montagens e manutenção mecânica industrial", E.cidade].filter(Boolean).join("  |  ")].filter(Boolean).forEach((t,i)=>doc.text(t,42,21.5+i*4.5)); // só o que estiver preenchido
   doc.setTextColor(...NAVY); doc.setFont("helvetica","bold"); doc.setFontSize(12.5); doc.text(title,R,16,{align:"right"});
   doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...GREY); (Array.isArray(sub)?sub:[sub]).forEach((s,i)=>doc.text(s,R,21.5+i*4.5,{align:"right"}));
   doc.setDrawColor(...GREEN); doc.setLineWidth(0.8); doc.line(14,36,R,36);
@@ -585,7 +587,7 @@ function pdfHeader(doc, title, sub){
 }
 function pdfFooter(doc){
   const n = doc.getNumberOfPages(), E = state.cfg.empresa, R = pw(doc)-14, Y = ph(doc)-8;
-  for(let i=1;i<=n;i++){ doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(...GREY); doc.setFont("helvetica","normal"); doc.text(`${E.nome} - CNPJ ${E.cnpj}`,14,Y); doc.text(`Página ${i} de ${n}`,R,Y,{align:"right"}); }
+  for(let i=1;i<=n;i++){ doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(...GREY); doc.setFont("helvetica","normal"); doc.text(`${E.nome}${E.cnpj?` - CNPJ ${E.cnpj}`:""}`,14,Y); doc.text(`Página ${i} de ${n}`,R,Y,{align:"right"}); }
 }
 function ensure(doc,y,need){ if(y+need>ph(doc)-17){ doc.addPage(); return 20; } return y; }
 function signature(doc, y, left, right){
@@ -640,18 +642,18 @@ async function pdfGroup(doc, rows){
   info.push(["Resumo:", `${nDias} ${nDias>1?"dias trabalhados":"dia trabalhado"} · ${rows.length} ordens de serviço · ${fdec(t.total)} horas`]);
   info.forEach(([a,b])=>{ doc.setFont("helvetica","bold"); doc.text(a,14,y); doc.setFont("helvetica","normal"); doc.text(b,40,y); y+=5; });
   y += 1;
-  const head = [repHead(C)], ncols = head[0].length, body = [], shade = [244,246,243];
+  const head = [repHead(C)], ncols = head[0].length, body = [], shade = [244,246,243], k = C.tid ? 1 : 0; // k: coluna do ID logo depois da ORDEM
   days.forEach(d=>{
-    const hol = holidayName(d.data), sun = parseYmd(d.data).getDay()===0, k = Math.max(1,d.rows.length);
-    const dia = {content: wdl(d.data)+(hol?`\n${hol}`:""), rowSpan:k, styles:{halign:"center"}}, data = {content: fdate(d.data), rowSpan:k, styles:{halign:"center"}};
-    if(!d.rows.length){ const st = (sun||hol) ? {fillColor:shade} : {}; body.push([{content:"",styles:st}, {...dia, styles:{...dia.styles,...st,textColor:GREY}}, {...data, styles:{...data.styles,...st,textColor:GREY}}, {content:"", colSpan:ncols-3, styles:st}]); return; }
+    const hol = holidayName(d.data), sun = parseYmd(d.data).getDay()===0, n = Math.max(1,d.rows.length); // n: linhas do dia (k é a coluna do ID)
+    const dia = {content: wdl(d.data)+(hol?`\n${hol}`:""), rowSpan:n, styles:{halign:"center"}}, data = {content: fdate(d.data), rowSpan:n, styles:{halign:"center"}};
+    if(!d.rows.length){ const st = (sun||hol) ? {fillColor:shade} : {}; body.push([{content:"",styles:st}, ...(k?[{content:"",styles:st}]:[]), {...dia, styles:{...dia.styles,...st,textColor:GREY}}, {...data, styles:{...data.styles,...st,textColor:GREY}}, {content:"", colSpan:ncols-3-k, styles:st}]); return; }
     d.rows.forEach((e,i)=>{ const c = calc(e);
-      body.push([e.os||"-", ...(i===0?[dia,data]:[]), e.inicio, e.fim, descRep(e), {content:repH(c.total),styles:{fontStyle:"bold"}}, repX(c.e50), repX(c.e100), ...(C.val?[brl(c.valor)]:[]), ...repExtra(e,C)]); });
+      body.push([e.os||"-", ...(k?[e.tracos||""]:[]), ...(i===0?[dia,data]:[]), e.inicio, e.fim, descRep(e, C.tid), {content:repH(c.total),styles:{fontStyle:"bold"}}, repX(c.e50), repX(c.e100), ...(C.val?[brl(c.valor)]:[]), ...repExtra(e,C)]); });
   });
-  const yellow = {fillColor:[255,240,150], textColor:INK, fontStyle:"bold"}, nExtra = ncols - 9 - (C.val?1:0);
-  const foot = [[{content:"TOTAL",colSpan:6,styles:yellow}, ...[repH(t.total), repH(t.e50), repH(t.e100), ...(C.val?[brl(t.valor)]:[])].map(x=>({content:x,styles:{...yellow,halign:"right"}})), ...Array.from({length:nExtra},()=>({content:"",styles:yellow}))]];
-  const cs = {0:{cellWidth:18}, 1:{cellWidth:22}, 2:{cellWidth:19}, 3:{cellWidth:13,halign:"center"}, 4:{cellWidth:13,halign:"center"}, 6:{cellWidth:15,halign:"right"}, 7:{cellWidth:13,halign:"right"}, 8:{cellWidth:13,halign:"right"}};
-  let ci = 9; if(C.val) cs[ci++] = {cellWidth:24, halign:"right"}; if(C.unid) cs[ci++] = {cellWidth:24}; if(C.emp) cs[ci++] = {cellWidth:24}; if(C.prof) cs[ci++] = {cellWidth:30};
+  const yellow = {fillColor:[255,240,150], textColor:INK, fontStyle:"bold"}, nExtra = ncols - 9 - k - (C.val?1:0);
+  const foot = [[{content:"TOTAL",colSpan:6+k,styles:yellow}, ...[repH(t.total), repH(t.e50), repH(t.e100), ...(C.val?[brl(t.valor)]:[])].map(x=>({content:x,styles:{...yellow,halign:"right"}})), ...Array.from({length:nExtra},()=>({content:"",styles:yellow}))]];
+  const cs = {0:{cellWidth:18}, ...(k?{1:{cellWidth:17,halign:"center"}}:{}), [1+k]:{cellWidth:22}, [2+k]:{cellWidth:19}, [3+k]:{cellWidth:13,halign:"center"}, [4+k]:{cellWidth:13,halign:"center"}, [6+k]:{cellWidth:15,halign:"right"}, [7+k]:{cellWidth:13,halign:"right"}, [8+k]:{cellWidth:13,halign:"right"}};
+  let ci = 9+k; if(C.val) cs[ci++] = {cellWidth:24, halign:"right"}; if(C.unid) cs[ci++] = {cellWidth:24}; if(C.emp) cs[ci++] = {cellWidth:24}; if(C.prof) cs[ci++] = {cellWidth:30};
   doc.autoTable({startY:y, head, body, foot, theme:"grid", margin:{left:14,right:14}, showFoot:"lastPage",
     styles:{fontSize:7.8,cellPadding:1.4,textColor:INK,lineColor:[205,212,201],lineWidth:0.2,valign:"middle"},
     headStyles:{fillColor:GREEN,textColor:255,fontStyle:"bold",halign:"center"}, columnStyles:cs});
@@ -703,51 +705,122 @@ async function repPdf(){
   pdfFooter(doc);
   offerFile(`controle-ordens-${repFileTag()}.pdf`, doc.output("blob"));
 }
-function orcPdf(o){
+// texto para o PDF: as fontes padrão não têm setas, emojis e alguns símbolos
+const pdfTxt = t => String(t??"").replace(/→/g, "->").replace(/[✓✔]/g, "-").replace(/[^\x00-\xFF–—‘’“”•€]/g, "");
+const sobreEmpresa = () => String(state.cfg.empresa.sobre||"").replace(/\s*Edite este texto em Ajustes.*$/s, "").trim();
+// QR code desenhado direto no PDF (nítido em qualquer impressão): o mesmo do relatório técnico
+const pdfQR = (doc, texto, x, y, tam) => !!texto && typeof rtsQRPdf === "function" && rtsQRPdf(doc, texto, x, y, tam);
+async function orcPdf(o){
   const doc = pdfDoc(); if(!doc) return;
-  const T = orcTotals(o), E = state.cfg.empresa, val = orcValidade(o);
-  let y = pdfHeader(doc, "PROPOSTA DE ORÇAMENTO", [`Nº ${o.numero||"-"}`, `Emissão: ${fdate(o.data)}`]);
+  const T = orcTotals(o), E = state.cfg.empresa, val = orcValidade(o), op = orcOpcoes(o), R = pw(doc)-14, W = R-14;
+  let y = pdfHeader(doc, "PROPOSTA DE ORÇAMENTO", [`Nº ${o.numero||"-"}`, `Emissão: ${fdate(o.data)}`, ...(val?[`Válida até ${fdate(val)}`]:[])]);
   const C = o.cliente||{};
-  doc.setFillColor(240,244,238); doc.roundedRect(14,y-4,182,24,2,2,"F");
+  doc.setFillColor(240,244,238); doc.roundedRect(14,y-4,W,24,2,2,"F");
   doc.setFontSize(8); doc.setTextColor(...GREY); doc.setFont("helvetica","bold"); doc.text("CLIENTE",18,y+0.5);
-  doc.setFontSize(10.5); doc.setTextColor(...INK); doc.text(C.nome||"-",18,y+6);
+  doc.setFontSize(10.5); doc.setTextColor(...INK); doc.text(pdfTxt(C.nome||"-"),18,y+6);
   doc.setFont("helvetica","normal"); doc.setFontSize(8.8);
   const l2 = [C.documento?`CNPJ/CPF: ${C.documento}`:"", C.cidade||""].filter(Boolean).join("   |   ");
   const l3 = [C.contato?`A/C: ${C.contato}`:"", C.telefone||"", C.email||""].filter(Boolean).join("   |   ");
-  if(l2) doc.text(l2,18,y+11); if(l3) doc.text(l3,18,y+15.5);
+  [l2, l3].filter(Boolean).forEach((l,i)=>doc.text(pdfTxt(l),18,y+11+i*4.5)); // sem linha em branco quando faltar um dado
   y += 28;
+  const titulo = t => { y = ensure(doc, y, 14); doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(...NAVY); doc.text(t,14,y); y += 5; };
   const block = (title, text) => {
-    if(!text) return;
-    doc.setFont("helvetica","normal"); doc.setFontSize(9.2);
-    const lines = doc.splitTextToSize(text, 182);
-    y = ensure(doc, y, 12);
-    doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(...NAVY); doc.text(title,14,y); y+=5;
+    if(!text) return; titulo(title);
     doc.setFont("helvetica","normal"); doc.setFontSize(9.2); doc.setTextColor(...INK);
-    lines.forEach(l=>{ y = ensure(doc,y,5); doc.text(l,14,y); y+=4.4; }); y+=3;
+    doc.splitTextToSize(pdfTxt(text), W).forEach(l=>{ y = ensure(doc,y,5); doc.text(l,14,y); y+=4.4; }); y+=3;
   };
-  if(o.titulo){ doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.setTextColor(...INK); const tl=doc.splitTextToSize(`Objeto: ${o.titulo}`,182); tl.forEach(l=>{doc.text(l,14,y); y+=5.5;}); y+=2; }
-  if(o.apresentacao) block("Quem somos", E.sobre);
+  if(o.titulo){ doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.setTextColor(...INK); doc.splitTextToSize(pdfTxt(`Objeto: ${o.titulo}`),W).forEach(l=>{doc.text(l,14,y); y+=5.5;}); y+=2; }
+  if(o.apresentacao) block("Quem somos", sobreEmpresa());
   block("Escopo dos serviços", o.escopo);
-  const itens = (o.itens||[]).filter(i=>i.desc||numIn(i.valor));
+  // itens com valor (na opção A entram também os materiais que a opção B deixa para o cliente)
+  const todos = (o.itens||[]).filter(i=>i.desc||numIn(i.valor)), doCliente = todos.filter(i=>matDoCliente(o,i)), itens = todos.filter(i=>!matDoCliente(o,i));
   y = ensure(doc,y,30);
   doc.autoTable({startY:y, theme:"grid", margin:{left:14,right:14},
     head:[["Item","Descrição","Un.","Qtd.","Valor unit.","Total"]],
-    body: itens.map((i,k)=>[String(k+1), i.desc||"", i.un||"", String(numIn(i.qtd)).replace(".",","), brl(numIn(i.valor)), brl(numIn(i.qtd)*numIn(i.valor))]),
+    body: itens.map((i,k)=>[String(k+1), pdfTxt(i.desc||"")+(op && i.tipo==="mat" ? "  (só na opção A)" : ""), pdfTxt(i.un||""), String(numIn(i.qtd)).replace(".",","), brl(numIn(i.valor)), brl(numIn(i.qtd)*numIn(i.valor))]),
     styles:{fontSize:8.8,cellPadding:2,textColor:INK,lineColor:[210,216,206],lineWidth:0.2,valign:"middle"},
     headStyles:{fillColor:GREEN,textColor:255}, columnStyles:{0:{cellWidth:12,halign:"center"},2:{cellWidth:14,halign:"center"},3:{cellWidth:16,halign:"right"},4:{cellWidth:28,halign:"right"},5:{cellWidth:30,halign:"right"}}});
-  y = doc.lastAutoTable.finalY + 2;
-  const tot = [["Subtotal", brl(T.sub)]];
-  if(T.desc) tot.push([`Desconto (${String(numIn(o.descontoPct)).replace(".",",")}%)`, "- "+brl(T.desc)]);
-  tot.push([{content:"VALOR TOTAL",styles:{fontStyle:"bold",fontSize:10.5}},{content:brl(T.total),styles:{fontStyle:"bold",fontSize:10.5,textColor:GREEN}}]);
-  doc.autoTable({startY:y, theme:"plain", margin:{left:120,right:14}, body:tot, styles:{fontSize:9.2,cellPadding:1.4,textColor:INK}, columnStyles:{1:{halign:"right"}}});
-  y = doc.lastAutoTable.finalY + 7;
+  y = doc.lastAutoTable.finalY + 4;
+  // valor em destaque: uma caixa (ou duas, quando há as opções A e B)
+  const caixa = (x, w, rotulo, sub, valor, forte) => {
+    doc.setFillColor(...(forte ? NAVY : [223,230,245])); doc.roundedRect(x, y, w, 22, 2, 2, "F");
+    doc.setTextColor(...(forte ? [255,255,255] : NAVY)); doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.text(rotulo, x+4, y+6);
+    doc.setFont("helvetica","normal"); doc.setFontSize(7.8); if(sub) doc.text(doc.splitTextToSize(sub, w-8)[0], x+4, y+10.5);
+    doc.setFont("helvetica","bold"); doc.setFontSize(14); doc.text(brl(valor), x+w-4, y+18, {align:"right"}); };
+  y = ensure(doc, y, 32);
+  if(T.desc){ doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...INK); doc.text(`Subtotal ${brl(T.sub)}   ·   Desconto (${String(numIn(o.descontoPct)).replace(".",",")}%) - ${brl(T.desc)}`, R, y, {align:"right"}); y += 4; }
+  if(op){ const w = (W-6)/2; caixa(14, w, "OPÇÃO A", "Com todo o material incluso", op.A, true); caixa(14+w+6, w, "OPÇÃO B", "Material por conta do cliente", op.B, false); y += 28; }
+  else { caixa(R-90, 90, "VALOR TOTAL", o.matCliente || doCliente.length ? "Material por conta do cliente" : "", T.total, true); y += 28; }
+  if(doCliente.length){ // material fornecido pelo cliente: só descrição e quantidade, fora do valor
+    titulo("MATERIAL POR CONTA DO CLIENTE");
+    doc.setFont("helvetica","normal"); doc.setFontSize(8.6); doc.setTextColor(...INK);
+    doc.splitTextToSize("Os materiais abaixo serão fornecidos pelo cliente e não estão incluídos no valor desta proposta.", W).forEach(l=>{ doc.text(l, 14, y); y += 4; }); y += 1;
+    doc.autoTable({startY:y, theme:"grid", margin:{left:14,right:14}, head:[["Item","Descrição","Un.","Qtd."]],
+      body: doCliente.map((i,k)=>[String(k+1), pdfTxt(i.desc||""), pdfTxt(i.un||""), String(numIn(i.qtd)).replace(".",",")]),
+      styles:{fontSize:8.8,cellPadding:2,textColor:INK,lineColor:[210,216,206],lineWidth:0.2,valign:"middle"},
+      headStyles:{fillColor:[236,241,234],textColor:INK}, columnStyles:{0:{cellWidth:12,halign:"center"},2:{cellWidth:14,halign:"center"},3:{cellWidth:20,halign:"right"}}});
+    y = doc.lastAutoTable.finalY + 7;
+  }
+  // o que está e o que não está incluso, lado a lado
+  const lista = t => String(t||"").split("\n").map(x=>x.trim()).filter(Boolean);
+  const inc = lista(o.incluso), nao = lista(o.naoIncluso);
+  if(inc.length || nao.length){
+    y = ensure(doc, y, 20);
+    doc.autoTable({startY:y, theme:"plain", margin:{left:14,right:14},
+      head:[[...(inc.length?[{content:"O QUE ESTÁ INCLUSO", styles:{textColor:[31,122,63]}}]:[]), ...(nao.length?[{content:"O QUE NÃO ESTÁ INCLUSO", styles:{textColor:[179,38,30]}}]:[])]],
+      body: Array.from({length:Math.max(inc.length, nao.length)}, (_,k)=>[...(inc.length?[inc[k]?`+  ${pdfTxt(inc[k])}`:""]:[]), ...(nao.length?[nao[k]?`-  ${pdfTxt(nao[k])}`:""]:[])]),
+      styles:{fontSize:8.8,cellPadding:1.2,textColor:INK}, headStyles:{fontStyle:"bold",fontSize:9}});
+    y = doc.lastAutoTable.finalY + 6;
+  }
   const cond = [];
+  if(op) cond.push(["Opções", "A: material fornecido pela "+pdfTxt(E.nome||"empresa")+". B: os materiais da tabela acima ficam por conta do cliente."]);
+  else if(doCliente.length) cond.push(["Materiais", "Por conta do cliente (não incluídos no valor desta proposta)"]);
   if(o.pagamento) cond.push(["Condições de pagamento", o.pagamento]);
+  if(numIn(o.sinalPct)>0) cond.push(["Sinal na aprovação", `${String(numIn(o.sinalPct)).replace(".",",")}%${op ? " do valor da opção escolhida" : ` = ${brl(T.total*numIn(o.sinalPct)/100)}`}`]);
   if(o.prazo) cond.push(["Prazo de execução", o.prazo]);
   if(val) cond.push(["Validade da proposta", `${o.validadeDias} dias (até ${fdate(val)})`]);
+  if(o.garantia) cond.push(["Garantia", o.garantia]);
+  if(o.seguranca) cond.push(["Segurança", o.seguranca]);
   if(o.obs) cond.push(["Observações", o.obs]);
-  if(cond.length){ y = ensure(doc,y,20); doc.autoTable({startY:y, theme:"plain", margin:{left:14,right:14}, body:cond, styles:{fontSize:9,cellPadding:1.4,textColor:INK}, columnStyles:{0:{fontStyle:"bold",cellWidth:46,textColor:NAVY}}}); y = doc.lastAutoTable.finalY + 6; }
-  signature(doc, y+4, `${E.nome}${E.responsavel?" - "+E.responsavel:""}`, `De acordo - ${C.nome||"Cliente"}`);
+  if(cond.length){ y = ensure(doc,y,20); doc.autoTable({startY:y, theme:"plain", margin:{left:14,right:14}, body:cond.map(([a,b])=>[a, pdfTxt(b)]), styles:{fontSize:9,cellPadding:1.4,textColor:INK}, columnStyles:{0:{fontStyle:"bold",cellWidth:46,textColor:NAVY}}}); y = doc.lastAutoTable.finalY + 6; }
+  // Pix do sinal e aprovação pelo celular, com QR codes
+  const sinal = numIn(o.sinalPct), pix = E.pix && sinal>0 ? pixPayload({chave:E.pix, nome:E.nome, cidade:E.cidade, valor: op ? 0 : T.total*sinal/100, txid:"ORC"+(o.numero||"")}) : "";
+  const link = o.linkToken ? `${location.origin}/orcamento#t=${o.linkToken}` : "";
+  if(pix || link){
+    y = ensure(doc, y, 44); const w = pix && link ? (W-6)/2 : W; let x = 14;
+    const qrBox = (titulo, linhas, texto) => { doc.setDrawColor(210,216,206); doc.setLineWidth(0.3); doc.roundedRect(x, y, w, 38, 2, 2);
+      pdfQR(doc, texto, x+3, y+3, 32);
+      doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.setTextColor(...NAVY); doc.text(titulo, x+39, y+8);
+      doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(...INK); let yy = y+13;
+      linhas.forEach(l=>doc.splitTextToSize(pdfTxt(l), w-42).forEach(t=>{ if(yy < y+36){ doc.text(t, x+39, yy); yy += 3.6; } })); x += w+6; };
+    if(pix) qrBox("PIX DO SINAL", [op ? `Sinal de ${String(sinal).replace(".",",")}% da opção escolhida (informe o valor ao pagar).` : `Sinal de ${String(sinal).replace(".",",")}%: ${brl(T.total*sinal/100)}`, `Chave: ${E.pix}`, "Abra o app do banco > Pix > Ler QR code."], pix);
+    if(link) qrBox("APROVE PELO CELULAR", ["Aponte a câmera para ver a proposta e aprovar com sua assinatura.", link.replace(/^https?:\/\//, "").slice(0, 60)+"…"], link);
+    y += 44;
+  }
+  // assinaturas: se o cliente já aprovou pelo link, a assinatura dele vai no lugar
+  const r = o.respostaCliente;
+  if(r && r.aprovado && r.assinatura){
+    y = ensure(doc, y, 48); const mid = pw(doc)/2;
+    doc.setFont("helvetica","italic"); doc.setFontSize(9.5); doc.setTextColor(...INK); doc.text(`Aprovado pelo cliente em ${fdate(String(r.em||"").slice(0,10))}${r.opcao?` (opção ${r.opcao})`:""}.`, R, y, {align:"right"}); y += 6;
+    try{ doc.addImage(r.assinatura, r.assinatura.startsWith("data:image/png") ? "PNG" : "JPEG", mid+20, y, 60, 16); }catch(e){}
+    y += 18; doc.setDrawColor(...GREY); doc.setLineWidth(0.3); doc.setFont("helvetica","normal"); doc.setFontSize(8.5);
+    doc.line(14,y,mid-11,y); doc.line(mid+11,y,R,y);
+    doc.text(pdfTxt(`${E.nome}${E.responsavel?" - "+E.responsavel:""}`),(14+mid-11)/2,y+4.5,{align:"center"}); doc.text(pdfTxt(`${r.nome}${r.documento?" - "+r.documento:""} (${C.nome||"Cliente"})`),(mid+11+R)/2,y+4.5,{align:"center"});
+  } else signature(doc, y+4, pdfTxt(`${E.nome}${E.responsavel?" - "+E.responsavel:""}`), pdfTxt(`De acordo - ${C.nome||"Cliente"}`));
+  // fotos da visita técnica
+  if((o.fotos||[]).length){
+    toast("Montando o PDF com as fotos…");
+    doc.addPage(); y = pdfHeader(doc, "FOTOS DA VISITA TÉCNICA", [`Proposta Nº ${o.numero||"-"}`]) + 2;
+    const cols = 2, gap = 6, bw = (W-gap*(cols-1))/cols, bh = bw*0.72; let col = 0;
+    for(const id of o.fotos){
+      if(col===0 && y + bh > ph(doc)-17){ doc.addPage(); y = 20; }
+      const x = 14 + col*(bw+gap), im = await imgData(id);
+      doc.setDrawColor(205,212,201); doc.setLineWidth(0.2); doc.rect(x, y, bw, bh);
+      if(im){ const k = Math.min(bw/im.w, bh/im.h), w = im.w*k, h = im.h*k; try{ doc.addImage(im.url, im.fmt, x+(bw-w)/2, y+(bh-h)/2, w, h); }catch(err){} }
+      else { doc.setFontSize(8); doc.setTextColor(...GREY); doc.text("Foto indisponível", x+bw/2, y+bh/2, {align:"center"}); }
+      col++; if(col===cols){ col = 0; y += bh + 6; }
+    }
+  }
   pdfFooter(doc);
   offerFile(`orcamento-${o.numero||"rascunho"}-${(C.nome||"cliente").replace(/[^\wÀ-ú]+/g,"-").slice(0,30)}.pdf`, doc.output("blob"));
 }

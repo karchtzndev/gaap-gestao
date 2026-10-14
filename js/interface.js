@@ -163,7 +163,7 @@ async function uploadPhotosInt(files, ctx){
   if(ids.length) toast(`${ids.length} foto${ids.length>1?"s":""} adicionada${ids.length>1?"s":""}`);
   return ids;
 }
-function deleteAssetIfUnused(id, except=[]){ if(!assets || !id) return; if(state.ap.some(e=>!except.includes(e.id) && (e.fotos||[]).includes(id)) || state.ord.some(o=>o.foto===id) || rtsFotosUsadas().includes(id)) return; assets.delete(id).catch(()=>{}); }
+function deleteAssetIfUnused(id, except=[]){ if(!assets || !id) return; if(state.ap.some(e=>!except.includes(e.id) && (e.fotos||[]).includes(id)) || state.orc.some(o=>(o.fotos||[]).includes(id)) || state.ord.some(o=>o.foto===id) || rtsFotosUsadas().includes(id)) return; assets.delete(id).catch(()=>{}); }
 function fotoTipo(id){ const m = state.fotoMetaNovo?.[id] || state.ap.find(e=>e.fotoMeta && e.fotoMeta[id])?.fotoMeta[id]; return m && TIPO_FOTO[m.tipo] ? TIPO_FOTO[m.tipo] : ""; }
 function thumbs(ids, removable){ return (ids||[]).map(id=>`<span class="thumb">${fotoTipo(id)?`<i class="thumbtag">${fotoTipo(id)}</i>`:""}<img src="${esc(blobSrc(id))}" data-fid="${esc(id)}" alt="Foto do serviço" data-act="fotoVer" data-id="${esc(id)}" loading="lazy">${removable?`<button type="button" class="thumbx" data-act="fotoDel" data-id="${esc(id)}" aria-label="Remover foto">✕</button>`:""}</span>`).join(""); }
 document.addEventListener("change", async e=>{

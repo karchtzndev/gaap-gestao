@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /orcamento
+Disallow: /aprovar
+Disallow: /portal
+Disallow: /verificar
+
+Sitemap: https://gaap-gestao.vercel.app/sitemap.xml

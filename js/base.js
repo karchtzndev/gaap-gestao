@@ -118,7 +118,7 @@ function calcRaw(e){
   r.valor = Math.round((r.vn+r.v50+r.v100+r.vnot)*100)/100;
   return r;
 }
-const VERSAO = "2026.10.11-2";
+const VERSAO = "2026.10.14-1";
 const NOITE_INI = 22*60, NOITE_FIM = 5*60;
 function rateFor(emp, data){
   let t = (state.cfg.taxas||{})[emp] || {}; const num0 = (v,d) => (v===""||v==null||isNaN(+v)) ? d : +v;
@@ -154,8 +154,9 @@ function emergTxt(e){ if(!e.emergencia) return ""; const a = e.acion||{};
   return ["EMERGÊNCIA", a.por?`acionado por ${a.por}`:"", a.as?`às ${a.as}`:"", a.meio?`via ${a.meio}`:"", a.motivo?`(${a.motivo})`:""].filter(Boolean).join(" "); }
 // quem assinou a OS (responsável da unidade)
 function assinOS(e){ const m = Object.values(e.fotoMeta||{}).find(x=>x && x.tipo==="assinatura"); return m ? (m.nome || "responsável") : ""; }
-function descRep(e){ const q = e.equipId && eqDe(e.equipId), pl = q && e.prevId && (q.plano||[]).find(x=>x.id===e.prevId);
-  return [e.descricao||"", e.tracos?`ID TracOS ${e.tracos}`:"", almTxt(e), assinOS(e)?`Assinado por ${assinOS(e)}`:"", q?`Equip. ${q.tag||""}${pl?` (preventiva: ${pl.atividade})`:""}`:"", emergTxt(e), e.obs?`Obs.: ${e.obs}`:""].filter(Boolean).join(" · "); }
+// semId: o relatório já mostra o ID numa coluna própria
+function descRep(e, semId){ const q = e.equipId && eqDe(e.equipId), pl = q && e.prevId && (q.plano||[]).find(x=>x.id===e.prevId);
+  return [e.descricao||"", e.tracos && !semId?`ID TracOS ${e.tracos}`:"", almTxt(e), assinOS(e)?`Assinado por ${assinOS(e)}`:"", q?`Equip. ${q.tag||""}${pl?` (preventiva: ${pl.atividade})`:""}`:"", emergTxt(e), e.obs?`Obs.: ${e.obs}`:""].filter(Boolean).join(" · "); }
 function acionadores(){ const m = {}; state.ap.forEach(e=>{ const p = e.acion?.por; if(p) m[p] = (m[p]||0)+1; }); return Object.keys(m).sort((a,b)=>m[b]-m[a]).slice(0,30); }
 /* ---------- ficha da contratante ---------- */
 const ficha = emp => ((state.cfg.contratantes||{})[emp]) || {};
@@ -205,6 +206,9 @@ function alertasDinheiro(){
     else if(d>=-3) out.push({nivel:"warn", txt:`${f.numero} vence ${d===0?"hoje":`em ${-d} dia${d<-1?"s":""}`}: ${brl(sd)}`, btn:`<button class="btn sm" data-act="fechCobrar" data-id="${esc(f.id)}">Lembrar</button>`});
     if((!f.nf || !f.nf.numero || f.nf.status==="emitir") && diasEntre(f.enviadoEm||f.ate, hoje) >= 2) out.push({nivel:"warn", txt:`${f.numero}: nota fiscal ainda não emitida`, btn:`<button class="btn sm" data-act="fechNF" data-id="${esc(f.id)}">Nota fiscal</button>`});
   });
+  // propostas enviadas que vencem logo (ou acabaram de vencer) sem resposta do cliente
+  state.orc.filter(o=>o.status==="enviado").forEach(o=>{ const v = orcValidade(o); if(!v) return; const d = diasEntre(hoje, v); if(d > 2 || d < -7) return;
+    out.push({nivel:d < 0 ? "bad" : "warn", txt:`Proposta ${o.numero}${o.cliente?.nome?` (${o.cliente.nome})`:""} ${d < 0 ? `venceu há ${-d} dia${d<-1?"s":""}` : d===0 ? "vence hoje" : `vence em ${d} dia${d>1?"s":""}`} sem resposta: ${brl(orcTotals(o).total)}`, btn:`<button class="btn sm" data-act="orcCobrar" data-id="${esc(o.id)}">Cobrar retorno</button>`}); });
   empresasCfg().forEach(emp=>{ const m0 = medicao(emp, 0), m1 = medicao(emp, -1); if(!m0) return;
     if(m0[1]===hoje) out.push({nivel:"info", txt:`Hoje é o dia de corte da medição ${emp} (${fdate(m0[0])} a ${fdate(m0[1])}).`, btn:`<button class="btn sm" data-act="irFechar" data-de="${m0[0]}" data-ate="${m0[1]}">Fechar medição</button>`});
     if(m1 && !fechConflict(m1[0], m1[1], emp) && state.ap.some(e=>e.data>=m1[0] && e.data<=m1[1] && !e.orcId && chaveEmp(empOf(e))===chaveEmp(emp)))
@@ -239,7 +243,28 @@ function confHtml(lista, titulo, max=8){
   ${lista.length>max?`<p class="muted" style="margin:6px 0 0">E mais ${lista.length-max} dia(s).</p>`:""}</section>`;
 }
 /* ---------- orçamento ---------- */
-function orcTotals(o){ const sub=(o.itens||[]).reduce((s,i)=>s+numIn(i.qtd)*numIn(i.valor),0); const desc=sub*numIn(o.descontoPct)/100; return {sub,desc,total:Math.round((sub-desc)*100)/100}; }
+/* ---------- Pix "copia e cola" (BR Code do Banco Central): chave, nome, cidade, valor e identificador ---------- */
+function pixPayload({chave, nome, cidade, valor, txid}){
+  const limpa = (t, n) => String(t||"").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9 .,\-]/g, "").trim().toUpperCase().slice(0, n);
+  const campo = (id, v) => id + String(v.length).padStart(2, "0") + v;
+  chave = String(chave||"").trim(); if(!chave) return "";
+  // telefone: "+55…" ou com DDD entre parênteses → +55DDDNÚMERO; CPF/CNPJ (com ou sem pontos) → só números; e-mail e chave aleatória ficam como estão
+  if(/^\+|^\(/.test(chave)){ const d = chave.replace(/\D/g, ""); chave = "+" + (d.startsWith("55") && d.length>11 ? d : "55" + d); }
+  else if(/^[\d.\-\/ ]+$/.test(chave)) chave = chave.replace(/\D/g, "");
+  const conta = campo("00", "br.gov.bcb.pix") + campo("01", chave);
+  const v = Math.round((+valor||0)*100)/100;
+  let p = campo("00", "01") + campo("26", conta) + campo("52", "0000") + campo("53", "986") + (v > 0 ? campo("54", v.toFixed(2)) : "") + campo("58", "BR")
+    + campo("59", limpa(nome, 25) || "RECEBEDOR") + campo("60", limpa(cidade, 15) || "BRASIL") + campo("62", campo("05", (String(txid||"").replace(/[^A-Za-z0-9]/g, "").slice(0, 25)) || "***")) + "6304";
+  return p + crc16(p);
+}
+// CRC16-CCITT (polinômio 0x1021, início 0xFFFF), exigido no fim do BR Code
+function crc16(p){
+  let crc = 0xFFFF; for(const ch of p){ crc ^= ch.charCodeAt(0) << 8; for(let i=0; i<8; i++) crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xFFFF : (crc << 1) & 0xFFFF; }
+  return crc.toString(16).toUpperCase().padStart(4, "0");
+}
+// material fornecido pelo cliente: vai no orçamento com descrição e quantidade, sem valor e fora do total
+const matDoCliente = (o, i) => i.tipo==="mat" && (!!o.matCliente || !!i.cliente);
+function orcTotals(o){ const sub=(o.itens||[]).filter(i=>!matDoCliente(o,i)).reduce((s,i)=>s+numIn(i.qtd)*numIn(i.valor),0); const desc=sub*numIn(o.descontoPct)/100; return {sub,desc,total:Math.round((sub-desc)*100)/100}; }
 const RETS = [["iss","ISS"],["inss","INSS"],["ir","IR"],["outras","Outras"]];
 const retTot = r => RETS.reduce((s,[k])=>s+numIn((r.ret||{})[k]),0);
 const recBruto = r => numIn(r.valor) + retTot(r);
