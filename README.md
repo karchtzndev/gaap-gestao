@@ -12,7 +12,7 @@ orçamentos, fechamentos e valores a receber.
 |---|---|
 | `index.html`, `contratar.css`, `contratar.js`, `emblema.png` | Página inicial para clientes (serviços e orçamento pelo WhatsApp); quem tem o app instalado ou chega por link de e-mail vai para `/app` (`redir.js`) |
 | `app.html` | O sistema da equipe, em `/app` (o app instalado abre aqui) |
-| `js/` | A lógica, dividida por assunto e carregada em ordem pelo `app.html`: `base.js` (cálculo de horas, feriados, valores), `dados.js` (Supabase, fila sem internet), `interface.js` (janelas, navegação), `leitura-os.js` (papel/PDF da OS e carteira), `telas.js`, `lancamentos.js`, `relatorios.js` (relatórios, fechamentos, PDF), `financeiro.js`, `ajustes.js`, `relatorio.js` (relatório técnico da OS: entende o relato, escreve o texto, PDF com QR), `acoes.js` (botões; inicia o app) |
+| `js/` | A lógica, dividida por assunto e carregada em ordem pelo `app.html`: `base.js` (cálculo de horas, feriados, valores), `dados.js` (Supabase, fila sem internet), `interface.js` (janelas, navegação), `leitura-os.js` (papel/PDF da OS e carteira), `telas.js`, `lancamentos.js`, `relatorios.js` (relatórios, fechamentos, PDF), `financeiro.js`, `ajustes.js`, `relatorio.js` (relatório técnico da OS: entende o relato, escreve o texto, PDF com QR), `extras.js`, `biometria.js`, `importar.js`, `acoes.js` (botões; inicia o app) |
 | `vendor/` | Bibliotecas usadas em toda tela (Supabase, jsPDF, gerador de QR), guardadas no próprio site para não depender de CDN |
 | `tests/` | Testes automáticos: `node --test tests/*.test.js` (rodam sozinhos no GitHub a cada envio) |
 | `style.css` | Visual |
@@ -23,6 +23,11 @@ orçamentos, fechamentos e valores a receber.
 | `supabase/functions/lembretes/` | Função do servidor que envia os lembretes no celular |
 | `sw.js` | Recebe as notificações no celular e guarda o app para abrir sem internet |
 | `orcamento.html`, `orcamento.js`, `orcamento.css` | Página pública onde o cliente vê a proposta, escolhe a opção, assina e aprova (ou recusa) pelo link |
+| `avaliar.html`, `avaliar.js` | Página pública onde o cliente dá a nota do serviço (link enviado pelo WhatsApp); as boas aparecem no site |
+| `js/biometria.js` | Entrar com Face ID / digital e olhinho da senha |
+| `js/extras.js` | Ditado por voz, comparativo mês a mês, avaliações, galeria de obras, contatos do site, acessos ao app e Emitir nota fiscal |
+| `js/importar.js` | Importar ordens do TracOS (Excel/XML) e distribuir no período |
+| `supabase/functions/conta/`, `supabase/functions/passkey/` | Funções do servidor: entrar com usuário e senha, e Face ID / digital |
 | `aprovar.html`, `aprovar.js` | Página pública onde o cliente confere e aprova (ou contesta) uma medição pelo link |
 | `verificar.html`, `verificar.js` | Página pública do QR do relatório técnico: confere a autenticidade e mostra o relatório com fotos (função `rts-fotos`) |
 | `.github/workflows/manter-ativo.yml` | Chama o banco todo dia para o plano gratuito não pausar |

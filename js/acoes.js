@@ -53,16 +53,42 @@ const A = {
     window.open(`https://wa.me/${w?(w.length<=11?"55"+w:w):""}?text=${encodeURIComponent(msg)}`, "_blank");
     try{ await save("fechamentos", {...f, cobrancas:[...(f.cobrancas||[]), today()]}); }catch(err){}
   },
-  fechNF(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; const nf = f.nf||{};
+  fechNF(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; const nf = f.nf||{}, E = state.cfg.empresa, F = ficha(f.empresa||state.cfg.contratante||"");
+    const comp = f.competencia || (f.ate||"").slice(0,7), iss = numIn(E.issPct), v = +f.valor||0;
+    const porU = new Map(); try{ linhasTerceiros(f).forEach(l=>{ const u = l.unid||""; porU.set(u, (porU.get(u)||0) + (+l.total||0)); }); }catch(e){}
+    const cnpjU = u => (F.unidadesCnpj||{})[u] || F.cnpj || "";
+    const tomadores = [...new Set([...porU.keys()].map(cnpjU))];
+    const varios = tomadores.length > 1;
+    const campos = [...(varios ? [] : [["Tomador · CNPJ", tomadores[0] || F.cnpj]]), ["Tomador · razão social", F.razao||f.empresa], ["Competência (data)", comp ? `01/${comp.slice(5,7)}/${comp.slice(0,4)}` : ""],
+      ["Município da prestação", E.cidade], ["Código de tributação nacional", E.cTribNac], ["Item da LC 116", E.codServico], ["Valor do serviço", brl(v).replace("R$","").trim()],
+      ...(iss?[["Alíquota do ISS", String(iss).replace(".",",")+"%"], ["ISS", brl(Math.round(v*iss)/100)]]:[])];
+    const linha = ([r, val], i) => `<div class="nfl"><span>${esc(r)}</span><b class="mono">${val?esc(val):'<em class="muted">preencha em Ajustes</em>'}</b>${val?`<button type="button" class="btn sm" data-act="nfCopia" data-v="${esc(val)}">Copiar</button>`:""}</div>`;
+    const anexo = (k, rot) => nf[k] ? `<button type="button" class="btn sm" data-act="docVer" data-path="${esc(nf[k])}">📄 Ver ${rot}</button>` : "";
     openModal(`<header><h2>Nota fiscal · ${esc(f.numero)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>
     <form class="form" id="nfForm" data-id="${esc(f.id)}">
-      <div class="grid2"><label class="field"><span>Nº da NF</span><input id="nf-num" value="${esc(nf.numero||"")}" inputmode="numeric"></label>
-      <label class="field"><span>Data de emissão</span><input type="date" id="nf-data" value="${esc(nf.data||"")}"></label>
-      <label class="field"><span>Situação</span><select id="nf-st">${[["emitir","A emitir"],["emitida","Emitida"],["cancelada","Cancelada"]].map(([k,l])=>`<option value="${k}" ${(nf.status||(nf.numero?"emitida":"emitir"))===k?"selected":""}>${l}</option>`).join("")}</select></label>
-      <label class="field"><span>Vencimento do pagamento</span><input type="date" id="nf-venc" value="${esc(fechVenc(f))}"></label></div>
-      <div class="field"><span>Texto para a nota (discriminação do serviço)</span><textarea id="nf-txt" rows="7" readonly>${esc(nfTexto(f))}</textarea></div>
-      <footer><button type="button" class="btn" data-act="nfCopiar">Copiar texto</button><button class="btn primary" type="submit">Salvar</button></footer>
+      <details class="panel" ${nf.numero?"":"open"}><summary><b>1. Emitir no Emissor Nacional (gov.br)</b></summary>
+        <p class="muted" style="margin:6px 0">Abra o emissor, entre com a conta gov.br ou o certificado da empresa e copie cada campo abaixo. Na descrição, cole o texto do fim da lista.</p>
+        <button type="button" class="btn primary" data-act="nfEmissor">🧾 Abrir Emissor Nacional</button>
+        ${varios?`<div class="banner"><span>⚠ Este fechamento tem unidades com CNPJs diferentes: emita <b>uma nota para cada CNPJ</b>, com o valor da unidade.</span></div>
+        <div class="nflista">${[...porU].map(([u,val])=>`<div class="nfl"><span>${esc(u||"Sem unidade")} · ${brl(val)}</span><b class="mono">${cnpjU(u)?esc(cnpjU(u)):'<em class="muted">CNPJ em Ajustes</em>'}</b>${cnpjU(u)?`<button type="button" class="btn sm" data-act="nfCopia" data-v="${esc(cnpjU(u))}">Copiar</button>`:""}</div>`).join("")}</div>`:""}
+        <div class="nflista">${campos.map(linha).join("")}</div>
+        <div class="field"><span>Descrição do serviço (discriminação)</span><textarea id="nf-txt" rows="7" readonly>${esc(nfTexto(f))}</textarea></div>
+        <button type="button" class="btn" data-act="nfCopiar">Copiar descrição</button>
+      </details>
+      <div class="panel form"><b>2. Depois de emitir: guarde a nota aqui</b>
+        <div class="grid2"><label class="field"><span>XML da NFS-e (preenche sozinho)</span><input type="file" id="nf-xml" accept=".xml,text/xml,application/xml"></label>
+        <label class="field"><span>PDF da nota (DANFSe)</span><input type="file" id="nf-pdf" accept="application/pdf,image/*"></label>
+        <label class="field"><span>Nº da NFS-e</span><input id="nf-num" value="${esc(nf.numero||"")}" inputmode="numeric"></label>
+        <label class="field"><span>Data de emissão</span><input type="date" id="nf-data" value="${esc(nf.data||"")}"></label>
+        <label class="field" style="grid-column:1/-1"><span>Chave de acesso</span><input id="nf-chave" value="${esc(nf.chave||"")}" inputmode="numeric" placeholder="50 dígitos"></label>
+        <label class="field"><span>Situação</span><select id="nf-st">${[["emitir","A emitir"],["emitida","Emitida"],["cancelada","Cancelada"]].map(([k,l])=>`<option value="${k}" ${(nf.status||(nf.numero?"emitida":"emitir"))===k?"selected":""}>${l}</option>`).join("")}</select></label>
+        <label class="field"><span>Vencimento do pagamento</span><input type="date" id="nf-venc" value="${esc(fechVenc(f))}"></label></div>
+        ${nf.pdf||nf.xml||nf.chave?`<div class="row">${anexo("pdf","PDF")}${anexo("xml","XML")}${nf.chave?`<button type="button" class="btn sm" data-act="nfCopia" data-v="${esc(nf.chave)}">Copiar chave</button>`:""}</div>`:""}
+      </div>
+      <footer><button class="btn primary" type="submit">Salvar</button></footer>
     </form>`); },
+  nfEmissor(){ window.open("https://www.nfse.gov.br/EmissorNacional/", "_blank", "noopener"); },
+  nfCopia(b){ copyText(b.dataset.v); },
   nfCopiar(){ copyText($("#nf-txt").value); },
   fechGlosa(b){ const f = state.fech.find(x=>x.id===b.dataset.id); if(!f) return; const aps = (f.snap?.aps)||fechRows(f.de,f.ate,f.empresa||"",f.profissional||"");
     openModal(`<header><h2>Registrar glosa · ${esc(f.numero)}</h2><button class="iconbtn" data-act="closeModal" aria-label="Fechar">✕</button></header>

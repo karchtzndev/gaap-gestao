@@ -5,7 +5,7 @@ const KEY = {apontamentos:"ap",orcamentos:"orc",recebimentos:"rec",fechamentos:"
 const state = {
   ready:false, cfg:clone(DEFAULT_CFG), ap:[], orc:[], rec:[], fech:[], desp:[], pag:[], eq:[], docs:[], ord:[], perfis:[], worker:false, me:"", pub:null, hmode:"dia", osQ:"",
   view:"painel", month:ym(today()), orcFilter:"todos", orcDraft:null, auth:"entrar",
-  rep:{modo:"dia", dia:today(), de:ym(today())+"-01", ate:today(), valores:true, f:{prof:"__all",unid:"__all",emp:"__all"}, by:"", vazios:true, fmt:"dec"},
+  rep:{modo:"dia", dia:today(), de:ym(today())+"-01", ate:today(), valores:true, f:{prof:"__all",unid:"__all",emp:"__all"}, by:"", vazios:false, fmt:"dec"},
   hf:{f:{prof:"__all",unid:"__all",emp:"__all"}, by:""}, pby:"prof"
 };
 // sem a biblioteca do Supabase ou sem o config.js (sem internet e sem cópia guardada): avisa em vez de ficar em branco
@@ -282,10 +282,11 @@ async function initStore(){
     if(s && state.sessaoLocal){ session = s; state.sessaoLocal = false; setTimeout(atualizar, 500); return; } // a internet voltou e o acesso foi renovado
     const tinha = !!session; session = s;
     if(ev==="PASSWORD_RECOVERY"){ state.auth = "nova-senha"; state.ready = true; render(); return; }
-    if(ev==="SIGNED_OUT"){ perfil = null; Object.assign(state, {worker:false, me:"", ap:[], orc:[], rec:[], fech:[], desp:[], pag:[], eq:[], docs:[], perfis:[], pub:null, view:"painel", auth:"entrar"}); render(); return; }
-    if(ev==="SIGNED_IN" && !tinha) boot();
+    if(ev==="SIGNED_OUT"){ document.getElementById("bio-trava")?.remove(); perfil = null; Object.assign(state, {worker:false, me:"", ap:[], orc:[], rec:[], fech:[], desp:[], pag:[], eq:[], docs:[], perfis:[], pub:null, view:"painel", auth:"entrar"}); render(); return; }
+    if(ev==="SIGNED_IN" && !tinha) boot().then(()=>bio.oferecer()).catch(()=>{});
   });
   if(!session){ state.ready = true; render(); return; }
+  bio.trancar();
   await boot();
 }
 /* atualiza sozinho: ao voltar para a aba e a cada 2 minutos */

@@ -6,6 +6,7 @@ function vAjustes(){
   const c = state.cfg, E = c.empresa; const y = new Date().getFullYear();
   const hol = Object.entries(holidays(y)).sort();
   return `<div class="pagehead"><div><span class="eyebrow">Ajustes</span><h1>Empresa, valores e jornada</h1><p class="muted">Valores novos valem para os próximos apontamentos. Os já lançados mantêm o valor da hora da época.</p><p class="muted" style="margin:0;font-size:.8rem">Versão do app: <b>${VERSAO}</b></p></div></div>
+  ${window.PublicKeyCredential ? bio.painel() : ""}
   ${state.mode==="local"?`<div class="banner">Os dados estão sendo salvos só neste navegador. Exporte um backup com frequência.</div>`:""}
   <div class="ajtabs" role="tablist">${[["valores","Valores"],["jornada","Jornada e feriados"],["contratantes","Empresas e unidades"],["empresa","Minha empresa"],["equipe","Equipe e acessos"],["dados","Backup e lixeira"]].map(([k,l])=>`<button type="button" class="chipbtn" role="tab" data-act="ajAba" data-k="${k}" aria-pressed="${(state.ajAba||"valores")===k}">${l}</button>`).join("")}</div>
   <form class="form" id="cfgForm">
@@ -69,6 +70,8 @@ function vAjustes(){
           <label class="field"><span>Dia de corte da medição (0 = mês fechado)</span><input class="ct-corte" type="number" min="0" max="28" value="${F.corte||0}"></label>
           <label class="field"><span>Prazo de pagamento (dias após o envio)</span><input class="ct-prazo" type="number" min="0" max="180" value="${F.prazo??30}"></label>
         </div>
+        ${lines(F.unidades||"").length?`<div class="field" style="margin-top:8px"><span>CNPJ de cada unidade (vai como tomador na nota fiscal; vazio = CNPJ acima)</span>
+          <div class="nflista">${lines(F.unidades).map(u=>`<label class="nfl" style="grid-template-columns:1fr minmax(150px,190px)"><span>${esc(u)}</span><input class="ct-ucnpj" data-u="${esc(u)}" value="${esc((F.unidadesCnpj||{})[u]||"")}" inputmode="numeric" placeholder="00.000.000/0000-00"></label>`).join("")}</div></div>`:""}
         <label class="field" style="margin-top:8px"><span>Lista de OS abertas (cole a lista que a empresa manda: uma por linha, "número;serviço;unidade")</span><textarea class="ct-oslista" rows="4" placeholder="Ex.:&#10;2217864;BOMBA DO REATOR;1001 - ANÁPOLIS&#10;2217901;TROCAR ROLAMENTO ELEVADOR 5;1008 - URUAÇU">${esc(F.osLista||"")}</textarea></label>
         <label class="field" style="margin-top:8px"><span>Unidades desta empresa (uma por linha) — aparecem para escolher ao lançar</span><textarea class="ct-unids" rows="5" placeholder="Ex.:&#10;1001 - ANÁPOLIS&#10;1008 - URUAÇU">${esc(F.unidades||"")}</textarea></label>
         <label class="check"><input type="checkbox" class="ct-exos" ${F.exigirOS?"checked":""}> Exigir nº da OS em todo lançamento</label>
@@ -81,6 +84,8 @@ function vAjustes(){
       <div class="grid2"><label class="field"><span>Nome</span><input id="e-nome" value="${esc(E.nome)}"></label><label class="field"><span>CNPJ</span><input id="e-cnpj" value="${esc(E.cnpj)}"></label>
       <label class="field"><span>E-mail</span><input id="e-email" value="${esc(E.email)}"></label><label class="field"><span>Telefone</span><input id="e-tel" value="${esc(E.telefone)}"></label>
       <label class="field"><span>Código do serviço na NF (LC 116)</span><input id="e-codserv" value="${esc(E.codServico||"14.01")}" placeholder="14.01"></label><label class="field"><span>Alíquota do ISS (%)</span><input id="e-iss" inputmode="decimal" value="${esc(E.issPct??"")}" placeholder="Ex.: 3"></label>
+      <label class="field"><span>Inscrição municipal</span><input id="e-im" value="${esc(E.im||"")}" inputmode="numeric"></label><label class="field"><span>Código de tributação nacional (NFS-e)</span><input id="e-ctrib" value="${esc(E.cTribNac||"")}" inputmode="numeric" placeholder="Ex.: 14.01.01"></label>
+      <label class="field" style="grid-column:1/-1"><span>Descrição do serviço na nota (início do texto)</span><input id="e-descserv" value="${esc(E.descServico||"")}" placeholder="Prestação de serviços de montagem e manutenção mecânica industrial"></label>
       <label class="field"><span>Cidade</span><input id="e-cid" value="${esc(E.cidade)}"></label><label class="field"><span>Responsável técnico (assinatura)</span><input id="e-resp" value="${esc(E.responsavel)}"></label>
       <label class="field"><span>Chave Pix (sinal dos orçamentos)</span><input id="e-pix" value="${esc(E.pix||"")}" placeholder="CNPJ, e-mail, +55 62 9… ou chave aleatória"></label></div>
       <label class="field"><span>Quem somos</span><textarea id="e-sobre" rows="5">${esc(E.sobre)}</textarea></label>
@@ -90,15 +95,17 @@ function vAjustes(){
   <section class="section" id="equipe-acessos" data-aba="equipe"><header><h2>Equipe e celulares</h2></header>
     ${lembretesHtml()}
     <div class="panel form" id="acessos"><h3>Acessos</h3>
-      <p class="muted" style="margin:0">Cada pessoa entra com o próprio e-mail e senha. Quem criar conta aparece aqui como “Aguardando”: escolha qual funcionário é e toque em Liberar. O funcionário só vê as próprias OS, sem valores.</p>
-      <div class="tablewrap"><table class="inputs cards-sm"><thead><tr><th>E-mail</th><th>Situação</th><th>Acesso</th><th></th></tr></thead><tbody>
+      <p class="muted" style="margin:0">Cada pessoa entra com o próprio usuário (ou e-mail) e senha. Quem criar conta aparece aqui como “Aguardando”: escolha qual funcionário é e toque em Liberar. O funcionário só vê as próprias OS, sem valores.</p>
+      <div class="tablewrap"><table class="inputs cards-sm"><thead><tr><th>Usuário / e-mail</th><th>Situação</th><th>Acesso</th><th></th></tr></thead><tbody>
       ${state.perfis.map(p=>{ const eu = p.user_id===session?.user?.id; const st = {dono:['good','Responsável'],funcionario:['good','Liberado'],pendente:['warn','Aguardando'],bloqueado:['bad','Bloqueado']}[p.papel]||['','?'];
-        return `<tr data-uid="${esc(p.user_id)}"><td>${esc(p.email)}${eu?' <b>(você)</b>':""}</td><td><span class="pill ${st[0]}">${st[1]}</span></td>
+        return `<tr data-uid="${esc(p.user_id)}"><td>${esc(loginDe(p.email))}${eu?' <b>(você)</b>':""}</td><td><span class="pill ${st[0]}">${st[1]}</span></td>
         <td>${eu ? "—" : `<div class="pf-box"><select class="pf-papel" aria-label="Tipo de acesso de ${esc(p.email)}"><option value="funcionario" ${p.papel!=="dono"?"selected":""}>Funcionário (só as próprias OS)</option><option value="dono" ${p.papel==="dono"?"selected":""}>Responsável (vê tudo)</option></select>
           <input class="pf-nome" list="pf-profs" value="${esc(p.nome||"")}" placeholder="Nome (ex.: Juliano de Oliveira)" aria-label="Nome de ${esc(p.email)}"></div>`}</td>
-        <td>${eu ? "" : `<span class="row" style="flex-wrap:nowrap"><button type="button" class="btn sm primary" data-act="perfilLiberar" data-uid="${esc(p.user_id)}">${p.papel==="pendente"||p.papel==="bloqueado"?"Liberar":"Salvar"}</button>${p.papel!=="bloqueado"?`<button type="button" class="btn sm danger" data-act="perfilBloquear" data-uid="${esc(p.user_id)}">Bloquear</button>`:""}</span>`}</td></tr>`; }).join("") || `<tr><td colspan="4" class="muted">Ninguém além de você ainda.</td></tr>`}
+        <td>${eu ? "" : `<span class="row" style="flex-wrap:nowrap"><button type="button" class="btn sm primary" data-act="perfilLiberar" data-uid="${esc(p.user_id)}">${p.papel==="pendente"||p.papel==="bloqueado"?"Liberar":"Salvar"}</button><button type="button" class="btn sm" data-act="perfilSenha" data-uid="${esc(p.user_id)}">Nova senha</button><button type="button" class="btn sm" data-act="perfilEmail" data-uid="${esc(p.user_id)}">E-mail</button>${p.papel!=="bloqueado"?`<button type="button" class="btn sm danger" data-act="perfilBloquear" data-uid="${esc(p.user_id)}">Bloquear</button>`:""}</span>`}</td></tr>`; }).join("") || `<tr><td colspan="4" class="muted">Ninguém além de você ainda.</td></tr>`}
       </tbody></table></div><datalist id="pf-profs">${profs().map(n=>`<option value="${esc(n)}">`).join("")}</datalist>
-      <p class="muted" style="margin:0">Para a equipe entrar: mande o endereço do sistema; cada um toca em “Criar conta” e aparece aqui para você liberar. Ao liberar, o e-mail da pessoa já fica confirmado (não precisa achar o e-mail do Supabase).</p>
+      <p class="muted" style="margin:0">Para a equipe entrar: mande o endereço do sistema; cada um toca em “Criar conta”, escolhe usuário e senha (e-mail é opcional) e aparece aqui para você liberar. Esqueceu a senha e não tem e-mail? Toque em <b>Nova senha</b>. O e-mail de recuperação pode ser o mesmo para todos (o link chega na sua caixa de entrada).</p>
+      <button type="button" class="btn sm" style="max-width:100%;white-space:normal;text-align:left" data-act="emailTodos">Usar um e-mail de recuperação para toda a equipe</button>
+      <div class="row" style="align-items:flex-end"><label class="field" style="flex:1"><span>Meu e-mail de recuperação de senha</span><input id="meu-email" type="email" value="${esc(/@usuarios\.gaap-gestao\.app$/.test(session?.user?.email||"")?"":(session?.user?.email||""))}" placeholder="opcional"></label><button type="button" class="btn" data-act="meuEmail">Salvar e-mail</button></div>
     </div>
   </section>
   <section class="section" id="lixeira" data-aba="dados"><header><h2>Lixeira</h2></header>
@@ -135,6 +142,7 @@ function vAjustes(){
     </div>
   </section>`;
 }
+const loginDe = e => { e = String(e||""); if(/@usuarios\.gaap-gestao\.app$/.test(e)) return e.split("@")[0]; const m = e.match(/^([^+@]+)\+([^@]+)@(.+)$/); return m ? `${m[2]} · ${m[1]}@${m[3]}` : e; };
 function backupDados(){ return {sistema:"GAAP Gestão de Serviços", versao:2, exportadoEm:new Date().toISOString(), config:state.cfg, apontamentos:state.ap, orcamentos:state.orc, recebimentos:state.rec, fechamentos:state.fech, despesas:state.desp, pagamentos:state.pag, equipamentos:state.eq, documentos:state.docs, ordens:state.ord, perfis:state.perfis||[]}; }
 function backupIdade(){
   const b = state.cfg.backupBaixadoEm; if(!b) return `<span class="pill warn">Você ainda não baixou nenhuma cópia completa.</span>`;
@@ -207,11 +215,12 @@ async function submitCfg(){
   c.tolerancia = Math.max(0, +g("c-tol") || 0); c.carimbo = !!$("#c-carimbo")?.checked; c.preventivas = !!$("#c-prev")?.checked;
   c.profissionais = lines(g("c-profs")).join("\n"); c.unidades = lines(g("c-unids")).join("\n");
   c.feriados = {carnaval:$("#c-carn").checked, corpus:$("#c-corp").checked, extras:g("c-fer")};
-  c.empresa = {nome:g("e-nome"), cnpj:g("e-cnpj"), email:g("e-email"), telefone:g("e-tel"), cidade:g("e-cid"), responsavel:g("e-resp"), pix:g("e-pix"), sobre:g("e-sobre"), codServico:g("e-codserv"), issPct:g("e-iss")};
+  c.empresa = {nome:g("e-nome"), cnpj:g("e-cnpj"), email:g("e-email"), telefone:g("e-tel"), cidade:g("e-cid"), responsavel:g("e-resp"), pix:g("e-pix"), sobre:g("e-sobre"), codServico:g("e-codserv"), issPct:g("e-iss"), im:g("e-im"), cTribNac:g("e-ctrib"), descServico:g("e-descserv")};
   const cuOld = c.custos || {}; c.custos = {}; document.querySelectorAll("[data-cu]").forEach(tr=>{ const v = numIn(tr.querySelector(".cu-v").value), bco = !!tr.querySelector(".cu-b")?.checked, o = cuOld[tr.dataset.cu] || {};
     if(v>0 || bco) c.custos[tr.dataset.cu] = {tipo:tr.querySelector(".cu-t").value, valor:v, ...(bco?{banco:true, bancoDesde:o.banco && o.bancoDesde ? o.bancoDesde : today()}:{})}; });
   c.contratantes = {}; document.querySelectorAll("[data-ct]").forEach(el=>{ const q = k=>el.querySelector(k);
-    c.contratantes[el.dataset.ct] = {...((state.cfg.contratantes||{})[el.dataset.ct]||{}), razao:q(".ct-razao").value.trim(), cnpj:q(".ct-cnpj").value.trim(), aprovador:q(".ct-apr").value.trim(), cargo:q(".ct-cargo").value.trim(), whats:q(".ct-whats").value.trim(), email:q(".ct-email").value.trim(), corte:Math.min(28,Math.max(0,+q(".ct-corte").value||0)), prazo:Math.max(0,+q(".ct-prazo").value||0), exigirOS:q(".ct-exos").checked, unidades:lines(q(".ct-unids").value).join("\n"), codigo:q(".ct-cod").value.trim(), nomeFech:q(".ct-nomef").value.trim(), osLista:lines(q(".ct-oslista").value).join("\n")}; });
+    const ucn = {...(((state.cfg.contratantes||{})[el.dataset.ct]||{}).unidadesCnpj||{})}; el.querySelectorAll(".ct-ucnpj").forEach(i=>{ const v = i.value.trim(); if(v) ucn[i.dataset.u] = v; else delete ucn[i.dataset.u]; });
+    c.contratantes[el.dataset.ct] = {...((state.cfg.contratantes||{})[el.dataset.ct]||{}), unidadesCnpj:ucn, razao:q(".ct-razao").value.trim(), cnpj:q(".ct-cnpj").value.trim(), aprovador:q(".ct-apr").value.trim(), cargo:q(".ct-cargo").value.trim(), whats:q(".ct-whats").value.trim(), email:q(".ct-email").value.trim(), corte:Math.min(28,Math.max(0,+q(".ct-corte").value||0)), prazo:Math.max(0,+q(".ct-prazo").value||0), exigirOS:q(".ct-exos").checked, unidades:lines(q(".ct-unids").value).join("\n"), codigo:q(".ct-cod").value.trim(), nomeFech:q(".ct-nomef").value.trim(), osLista:lines(q(".ct-oslista").value).join("\n")}; });
   const txAnt = c.taxas || {}; c.taxas = {}; document.querySelectorAll("[data-tx]").forEach(tr=>{ const q = k=>tr.querySelector(k).value.trim(), a = txAnt[tr.dataset.tx] || {}, t = {}; if(q(".tx-v")) t.valorHora = numIn(q(".tx-v")); if(q(".tx-p50")!=="") t.extraPct = +q(".tx-p50"); if(q(".tx-p100")!=="") t.feriadoPct = +q(".tx-p100"); if(q(".tx-not")!=="") t.noturnoPct = +q(".tx-not");
     if(a.desde){ t.desde = a.desde; t.historico = a.historico || []; } // a vigência do reajuste continua valendo
     if(Object.keys(t).length) c.taxas[tr.dataset.tx] = t; });

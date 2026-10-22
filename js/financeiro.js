@@ -273,7 +273,7 @@ function vFinanceiro(){
   const recs = [...state.rec].sort((a,b)=>(b.data||"").localeCompare(a.data||""));
   const stPill = (saldo, rec) => saldo<=0.005 ? '<span class="pill good">Recebido</span>' : rec>0 ? '<span class="pill warn">Parcial</span>' : '<span class="pill">Pendente</span>';
   return `${exampleBanner()}
-  <div class="pagehead"><div><span class="eyebrow">Financeiro</span><h1>A receber</h1><p class="muted">Horas por mês de competência e orçamentos aprovados. Registre cada pagamento recebido para baixar o saldo.</p></div><div class="row"><button class="btn" data-act="pacoteContador">Pacote do contador</button><button class="btn primary" data-act="newRec">+ Registrar recebimento</button></div></div>
+  <div class="pagehead"><div><span class="eyebrow">Financeiro</span><h1>A receber</h1><p class="muted">Horas por mês de competência e orçamentos aprovados. Registre cada pagamento recebido para baixar o saldo.</p></div><div class="row"><button class="btn primary" data-act="nfMenu">🧾 Emitir nota fiscal</button><button class="btn" data-act="pacoteContador">Pacote do contador</button><button class="btn" data-act="newRec">+ Registrar recebimento</button></div></div>
   <div class="kpis" style="margin:0">
     <div class="kpi"><span class="eyebrow">A receber total</span><span class="v">${brl(t.horas+t.orc)}</span><span class="s">horas + orçamentos</span></div>
     <div class="kpi"><span class="eyebrow">Horas a receber</span><span class="v">${brl(t.horas)}</span><span class="s">${brl(t.prod)} produzido${t.reemb?` + ${brl(t.reemb)} despesas`:""} · ${brl(t.recH)} recebido${t.glosas?` · ${brl(t.glosas)} glosado`:""}</span></div>
@@ -436,11 +436,12 @@ async function gerarPacoteContador(m, btn){
     await offerFile(`pacote-contador-${m}.zip`, blob);
   }catch(err){ toast("Não consegui gerar o pacote. Verifique a conexão."); if(btn){ btn.disabled = false; btn.textContent = "Gerar pacote"; } }
 }
+function descServ(){ return (state.cfg.empresa.descServico||"").trim() || "Prestação de serviços de montagem e manutenção mecânica industrial"; }
 function nfTexto(f){
   const E = state.cfg.empresa, F0 = ficha(f.empresa||state.cfg.contratante||""), iss = numIn(E.issPct), comp = f.competencia || (f.ate||"").slice(0,7);
   const extra = `\nCompetência: ${COMPET[+comp.slice(5,7)-1]||""}/${comp.slice(0,4)}.${f.pedido?` Pedido de compra: ${f.pedido}.`:""}${F0.codigo?` Fornecedor ${F0.codigo}.`:""}${E.codServico?`\nCódigo do serviço (LC 116): ${E.codServico}.`:""}${iss?` ISS ${String(iss).replace(".",",")}%: ${brl(Math.round((+f.valor||0)*iss)/100)}.`:""}`;
   if(f.itens){ const t = f.totais || totaisTerceiros(f.itens);
-    return `Prestação de serviços de manutenção mecânica industrial${F0.razao||f.empresa?` para ${F0.razao||f.empresa}`:""}, conforme fechamento ${f.numero}.
+    return `${descServ()}${F0.razao||f.empresa?` para ${F0.razao||f.empresa}`:""}, conforme fechamento ${f.numero}.
 Ordens de serviço: ${f.itens.map(x=>x.os).filter(Boolean).join(", ")}.
 Horas normais: ${n2(t.hn)} h; extras 50%: ${n2(t.h50)} h; extras 100%: ${n2(t.h100)} h${t.not?`; adicional noturno: ${n2(t.not)} h`:""}. Valor dos serviços: ${brl(+f.valor||0)}.${extra}`; }
   return nfTextoHoras(f) + extra;
@@ -451,7 +452,7 @@ function nfTextoHoras(f){
   const T = taxas[0] || rateFor(f.empresa||state.cfg.contratante||"");
   const c = (()=>{ const ap = state.ap, cf = state.cfg; state.ap = aps; state.cfg = {...cf, ...cfg}; holCache = {}; try{ return sumCalc(aps); } finally { state.ap = ap; state.cfg = cf; holCache = {}; } })();
   const F = ficha(f.empresa||state.cfg.contratante||""), oss = [...new Set(aps.map(e=>e.os).filter(Boolean))];
-  return `Prestação de serviços de manutenção mecânica industrial${F.razao||f.empresa?` para ${F.razao||f.empresa}`:""}, conforme fechamento ${f.numero}, período de ${fdate(f.de)} a ${fdate(f.ate)}.
+  return `${descServ()}${F.razao||f.empresa?` para ${F.razao||f.empresa}`:""}, conforme fechamento ${f.numero}, período de ${fdate(f.de)} a ${fdate(f.ate)}.
 Ordens de serviço: ${oss.length?oss.join(", "):"-"}.
 Horas normais: ${fdec(c.n)} h; horas extras ${T.extraPct}%: ${fdec(c.e50)} h; horas extras ${T.feriadoPct}% (domingos e feriados): ${fdec(c.e100)} h. Total: ${fdec(c.total)} h.
 ${taxas.length>1 ? `Valores da hora: ${taxas.map(t=>brl(t.valorHora)).join(", ")}.` : `Valor da hora: ${brl(T.valorHora)}.`} Valor dos serviços: ${brl(+f.valor||0)}.${+f.reemb?`
@@ -459,8 +460,16 @@ Despesas reembolsáveis: ${brl(+f.reemb)}. Total: ${brl((+f.valor||0)+(+f.reemb)
 }
 document.addEventListener("submit", async e=>{
   if(e.target.id==="nfForm"){ e.preventDefault(); const f = state.fech.find(x=>x.id===e.target.dataset.id); if(!f) return;
-    const nf = {numero:$("#nf-num").value.trim(), data:$("#nf-data").value, status:$("#nf-st").value};
-    try{ await save("fechamentos", {...f, nf, vencimento:$("#nf-venc").value || fechVenc(f)}); closeModal(); toast("Nota fiscal salva"); }catch(err){ toast(writeErr(err)); } }
+    const nf = {...(f.nf||{}), numero:$("#nf-num").value.trim(), chave:$("#nf-chave").value.replace(/\D/g,""), data:$("#nf-data").value, status:$("#nf-st").value};
+    const btn = e.target.querySelector("[type=submit]"); btn.disabled = true;
+    try{
+      for(const [k, inp] of [["pdf", $("#nf-pdf")], ["xml", $("#nf-xml")]]){ const arq = inp?.files?.[0]; if(!arq) continue;
+        const tipo = k==="xml" ? "application/xml" : (arq.type || "application/pdf"), path = `nfse/${f.id}-${Date.now()}.${k==="xml"?"xml":(arq.type.includes("pdf")?"pdf":"jpg")}`;
+        const {error} = await sb.storage.from("documentos").upload(path, arq, {contentType:tipo}); if(error) throw {code:"db", message:"Não consegui enviar o arquivo: "+error.message};
+        nf[k] = path; }
+      if(nf.numero && nf.status==="emitir") nf.status = "emitida";
+      await save("fechamentos", {...f, nf, vencimento:$("#nf-venc").value || fechVenc(f)}); closeModal(); toast("Nota fiscal salva");
+    }catch(err){ btn.disabled = false; toast(writeErr(err)); } }
   if(e.target.id==="glosaForm"){ e.preventDefault(); const f = state.fech.find(x=>x.id===e.target.dataset.id); if(!f) return;
     const v = numIn($("#gl-v").value); if(!(v>0)){ toast("Informe o valor glosado."); return; }
     const o = $("#gl-os"), ap = (f.snap?.aps||state.ap).find(x=>x.id===o.value);
@@ -534,3 +543,16 @@ async function submitRec(){
   catch(err){ toast(writeErr(err)); }
 }
 
+
+/* NFS-e (Emissor Nacional): ao escolher o XML da nota, preenche número, chave e data sozinho */
+document.addEventListener("change", async e=>{
+  if(e.target.id!=="nf-xml" || !e.target.files[0]) return;
+  try{
+    const x = new DOMParser().parseFromString(await e.target.files[0].text(), "text/xml");
+    const tag = n => x.getElementsByTagNameNS("*", n)[0]?.textContent?.trim() || "";
+    const id = (x.getElementsByTagNameNS("*", "infNFSe")[0]?.getAttribute("Id") || "").replace(/\D/g,"");
+    const num = tag("nNFSe"), dt = (tag("dhProc") || tag("dhEmi")).slice(0,10);
+    if(num) $("#nf-num").value = num; if(id) $("#nf-chave").value = id; if(dt) $("#nf-data").value = dt;
+    if(num) { $("#nf-st").value = "emitida"; toast(`Lido do XML: NFS-e ${num}.`); } else toast("Não achei o número no XML. Preencha à mão.");
+  }catch(err){ toast("Não consegui ler o XML."); }
+});

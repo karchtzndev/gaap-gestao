@@ -9,35 +9,39 @@ function vLogin(){
   if(session && perfil && !sessOk()){
     return card(perfil.papel==="bloqueado"
       ? `<h1>Acesso bloqueado</h1><p class="muted">Seu acesso foi bloqueado pelo responsável.</p><button class="btn" data-act="sair">Sair</button>`
-      : `<h1>Aguardando liberação</h1><p class="muted">Sua conta (${esc(perfil.email)}) foi criada. Agora o responsável precisa liberar o seu acesso e escolher o seu nome na equipe. Depois disso, toque em “Verificar de novo”.</p><div class="row"><button class="btn primary" data-act="reverificar">Verificar de novo</button><button class="btn" data-act="sair">Sair</button></div>`);
+      : `<h1>Aguardando liberação</h1><p class="muted">Sua conta (${esc(loginDe(perfil.email))}) foi criada. Agora o responsável precisa liberar o seu acesso e escolher o seu nome na equipe. Depois disso, toque em “Verificar de novo”.</p><div class="row"><button class="btn primary" data-act="reverificar">Verificar de novo</button><button class="btn" data-act="sair">Sair</button></div>`);
   }
   if(session && !perfil) return card(`<h1>Não consegui abrir sua conta</h1><p class="muted">Verifique a conexão e tente de novo.</p><div class="row"><button class="btn primary" data-act="reverificar">Tentar de novo</button><button class="btn" data-act="sair">Sair</button></div>`);
   const m = state.auth;
   const campo = (id, label, type, extra="") => `<label class="field"><span>${label}</span><input id="${id}" type="${type}" ${extra} required></label>`;
-  if(m==="criar") return card(`<h1>Criar conta</h1><p class="muted">Depois de criar, confirme pelo link que chega no seu e-mail.</p>
-    <form id="loginForm" class="form" data-modo="criar">${campo("lg-email","E-mail","email",'autocomplete="email" inputmode="email"')}${campo("lg-senha","Senha (mínimo 6 caracteres)","password",'autocomplete="new-password" minlength="6"')}
+  if(m==="criar") return card(`<h1>Criar conta</h1><p class="muted">Escolha um usuário e uma senha. Depois o responsável libera o seu acesso.</p>
+    <form id="loginForm" class="form" data-modo="criar">${campo("lg-user","Usuário (ex.: joao.silva)","text",'autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="30"')}<label class="field"><span>E-mail (opcional, só para recuperar a senha)</span><input id="lg-email" type="email" autocomplete="email" inputmode="email"></label>${campo("lg-senha","Senha (mínimo 6 caracteres)","password",'autocomplete="new-password" minlength="6"')}
     <button class="btn primary lg-go" type="submit">Criar conta</button></form><button class="btn lg-link" data-act="authModo" data-m="entrar">Já tenho conta</button>`);
-  if(m==="recuperar") return card(`<h1>Esqueci a senha</h1><p class="muted">Informe seu e-mail e enviaremos um link para criar uma senha nova.</p>
-    <form id="loginForm" class="form" data-modo="recuperar">${campo("lg-email","E-mail","email",'autocomplete="email" inputmode="email"')}<button class="btn primary lg-go" type="submit">Enviar link</button></form>
+  if(m==="recuperar") return card(`<h1>Esqueci a senha</h1><p class="muted">Informe seu usuário (ou e-mail). Se a conta tiver e-mail cadastrado, enviaremos um link para criar uma senha nova.</p>
+    <form id="loginForm" class="form" data-modo="recuperar">${campo("lg-user","Usuário ou e-mail","text",'autocomplete="username" autocapitalize="none" spellcheck="false"')}<button class="btn primary lg-go" type="submit">Enviar link</button></form>
     <button class="btn lg-link" data-act="authModo" data-m="entrar">Voltar</button>`);
   if(m==="nova-senha") return card(`<h1>Nova senha</h1><form id="loginForm" class="form" data-modo="nova-senha">${campo("lg-senha","Nova senha (mínimo 6 caracteres)","password",'autocomplete="new-password" minlength="6"')}<button class="btn primary lg-go" type="submit">Salvar senha</button></form>`);
   if(m==="enviado") return card(`<h1>Confira seu e-mail</h1><p class="muted">${esc(state.authInfo||"")}</p><button class="btn primary lg-go" data-act="authModo" data-m="entrar">Ir para o login</button>`);
   return card(`<h1>Entrar</h1>
-    <form id="loginForm" class="form" data-modo="entrar">${campo("lg-email","E-mail","email",'autocomplete="email" inputmode="email"')}${campo("lg-senha","Senha","password",'autocomplete="current-password"')}
-    <button class="btn primary lg-go" type="submit">Entrar</button></form>
+    <form id="loginForm" class="form" data-modo="entrar">${campo("lg-user","Usuário ou e-mail","text",'autocomplete="username" autocapitalize="none" spellcheck="false"')}${campo("lg-senha","Senha","password",'autocomplete="current-password"')}
+    <button class="btn primary lg-go" type="submit">Entrar</button></form>${typeof bio!=="undefined" ? bio.botaoLogin() : ""}
     <div class="row" style="justify-content:space-between"><button class="btn lg-link" data-act="authModo" data-m="criar">Criar conta</button><button class="btn lg-link" data-act="authModo" data-m="recuperar">Esqueci a senha</button></div>`);
 }
 async function submitLogin(form){
   const modo = form.dataset.modo, err = $("#lg-err"), btn = form.querySelector('[type="submit"]');
-  const email = ($("#lg-email")?.value||"").trim().toLowerCase(), senha = $("#lg-senha")?.value || "";
+  const user = ($("#lg-user")?.value||"").trim().toLowerCase(), email = ($("#lg-email")?.value||"").trim().toLowerCase(), senha = $("#lg-senha")?.value || "";
+  const conta = async body => { let {data, error} = await sb.functions.invoke("conta", {body}); if(!data && error?.context?.json) data = await error.context.json().catch(()=>null); if(data?.erro) throw {message:data.erro, proprio:true}; if(error) throw {message:"Sem conexão com o servidor. Tente de novo.", proprio:true}; return data; };
+  const entrarUsuario = async () => { const d = await conta({acao:"entrar", usuario:user, senha}); const {error} = await sb.auth.setSession({access_token:d.access_token, refresh_token:d.refresh_token}); if(error) throw error; };
   btn.disabled = true; err.textContent = "";
   try{
-    if(modo==="entrar"){ const {error} = await sb.auth.signInWithPassword({email, password:senha}); if(error) throw error; }
-    else if(modo==="criar"){ const {data, error} = await sb.auth.signUp({email, password:senha, options:{emailRedirectTo: location.origin + "/app"}}); if(error) throw error;
-      if(!data.session){ state.auth = "enviado"; state.authInfo = `Enviamos um link de confirmação para ${email}. Abra o e-mail, toque no link e depois entre com seu e-mail e senha.`; render(); } }
-    else if(modo==="recuperar"){ const {error} = await sb.auth.resetPasswordForEmail(email, {redirectTo: location.origin + "/app"}); if(error) throw error; state.auth = "enviado"; state.authInfo = `Se existir uma conta com ${email}, enviamos um link para criar uma senha nova.`; render(); }
+    if(modo==="entrar"){ if(user.includes("@")){ const {error} = await sb.auth.signInWithPassword({email:user, password:senha}); if(error) throw error; } else await entrarUsuario(); }
+    else if(modo==="criar"){ await conta({acao:"criar", usuario:user, senha, email}); await entrarUsuario(); toast("Conta criada. Aguarde o responsável liberar o seu acesso."); }
+    else if(modo==="recuperar"){
+      if(user.includes("@")){ const {error} = await sb.auth.resetPasswordForEmail(user, {redirectTo: location.origin + "/app"}); if(error) throw error; state.authInfo = `Se existir uma conta com ${user}, enviamos um link para criar uma senha nova.`; }
+      else { const d = await conta({acao:"recuperar", usuario:user}); state.authInfo = d?.semEmail ? "Essa conta não tem e-mail cadastrado. Peça ao responsável da GAAP para criar uma senha nova para você." : "Se o usuário existir e tiver e-mail, enviamos um link para criar uma senha nova."; }
+      state.auth = "enviado"; render(); }
     else if(modo==="nova-senha"){ const {error} = await sb.auth.updateUser({password:senha}); if(error) throw error; state.auth = "entrar"; toast("Senha alterada."); if(session) await boot(); else render(); }
-  }catch(e){ err.textContent = authMsg(e); btn.disabled = false; }
+  }catch(e){ err.textContent = e?.proprio ? e.message : authMsg(e); btn.disabled = false; }
 }
 /* ---------- FUNCIONÁRIO ---------- */
 function vWorker(){
@@ -64,6 +68,13 @@ function vMais(){
   ${instalarHtml()}
   <div class="maisgrid">
     ${card("carteira","📋 OS recebidas (carteira)","Papéis e telas do TracOS: recebidas, em execução, concluídas e medidas")}
+    ${card("","⬆️ Importar ordens (TracOS)","Leia o Excel ou XML e distribua as ordens no período, com horário de cada dia","impOrdens")}
+    ${card("","🧾 Emitir nota fiscal","Pelo Emissor Nacional (gov.br): de um fechamento ou avulsa","nfMenu")}
+    ${card("comparativo","📈 Comparativo mês a mês","Faturamento, horas e clientes contra o mês anterior e o ano passado")}
+    ${card("contatos","📨 Contatos do site","Pedidos de orçamento que chegaram pela página inicial")}
+    ${card("avaliacoes","⭐ Avaliações dos clientes","Notas e comentários; escolha quais aparecem no site")}
+    ${card("galeria","🖼️ Galeria de obras do site","Fotos de antes e depois publicadas na página inicial")}
+    ${card("","👁 Acessos ao app","Quem abriu o app e quando (só o responsável vê)","acessosAbrir")}
     ${card("equipe","Equipe: acerto e pagamentos","Quanto pagar a cada técnico, vales, recibos")}
     ${card("equipe","Documentos e validades","ASO, NR-10, NR-35, integração, certidões")}
     ${state.cfg.preventivas?card("equipamentos","Equipamentos e preventivas","Histórico por máquina e plano de preventivas"):""}
@@ -106,6 +117,11 @@ function vAjuda(){
     T("Assinatura do responsável da unidade", ["Ao terminar a OS, toque em <b>✍ Assinatura</b> (na linha da OS ou ao editar).", "O responsável escreve o nome e assina com o dedo.", "A assinatura sai no PDF de fotos, no portal e nos indicadores."]),
     T("Indicadores do mês para a Brejeiro", ["Financeiro → no fechamento → <b>📊 Indicadores do mês (PDF)</b>.", "Mostra OS atendidas, horas por unidade, emergências e tempo de resposta, preventivas e % de OS assinadas. Mande junto com o fechamento para a gerência."]),
     T("Documentação para a Brejeiro (integração)", ["Mais → <b>Equipe</b> → Documentação exigida · Brejeiro: a lista oficial deles, da empresa e de cada funcionário.", "Toque em <b>+ incluir</b> em cada item e anexe o PDF ou a foto. FGTS e DARF são mensais: renove todo mês.", "Antes de começar um serviço (72 h antes), toque em <b>Montar pacote (.zip)</b>, marque quem vai e depois em <b>E-mail para a integração</b>; anexe o .zip no e-mail.", "Agende a integração de segurança com 24 h de antecedência (terças e quintas, 07h30)."]),
+    T("Entrar com Face ID / digital", ["Depois de entrar com a senha, toque em <b>Usar Face ID</b> (ou em Ajustes → Entrar com Face ID → Ligar).", "Mesmo depois de sair da conta, na tela de login toque em <b>🔐 Entrar com Face ID</b>.", "Cada pessoa liga no próprio celular."]),
+    T("Entrar com usuário e senha", ["Em <b>Criar conta</b>, escolha um usuário (ex.: joao.silva) e uma senha. O e-mail é opcional: serve só para recuperar a senha.", "O responsável libera o acesso em Ajustes → Equipe e acessos. Esqueceu a senha e não tem e-mail? O responsável toca em <b>Nova senha</b> e passa a senha nova."]),
+    T("Emitir nota fiscal (Emissor Nacional)", ["Mais → <b>Emitir nota fiscal</b> (ou no fechamento → Nota fiscal). O app mostra cada campo pronto para copiar.", "Toque em <b>Abrir Emissor Nacional</b>, entre com o gov.br e cole os campos.", "Depois de emitir, envie o XML da nota: o app lê o número, a chave e a data sozinho, e guarda o PDF e o XML no fechamento. Cadastre o CNPJ de cada unidade em Ajustes → Empresas e unidades."]),
+    T("Importar ordens do TracOS", ["Mais → <b>Importar ordens (TracOS)</b>: escolha o funcionário, a unidade e o período, preencha o horário de cada dia e envie o XML ou Excel do TracOS.", "O app divide as ordens pelos dias, pulando o almoço, e você confere antes de lançar."]),
+    T("Avaliação do cliente e obras no site", ["Horas → toque na OS → <b>⭐ Pedir avaliação</b> manda o link pelo WhatsApp. Em Mais → Avaliações, marque as que aparecem no site.", "<b>🖼️ Publicar no site</b> (na mesma tela) coloca fotos da OS na página inicial."]),
     T("Banco de horas", ["Ajustes → <b>Valores</b> → marque <b>extras viram folga</b> no funcionário.", "As extras dele passam a ir para o banco (não entram no acerto em dinheiro).", "Mais → Equipe → <b>Folga</b> (desconta horas) ou <b>Pagar horas do banco</b>."]),
     T("Lucro e documentos por funcionário", ["Mais → <b>Equipe</b> → escolha o período: aparece faturado, custo, lucro e margem de cada um.", "Na tabela de documentos, vermelho é vencido e amarelo vence em 30 dias. Toque em <b>+ incluir</b> para cadastrar."]),
     T("Relatório anual (contador)", ["Financeiro → fim da página → <b>Relatório anual</b>.", "Escolha o ano e baixe em <b>PDF</b> ou <b>Excel</b>: faturamento, recebimentos, ISS/INSS/IR retidos, despesas e pagamentos."]),

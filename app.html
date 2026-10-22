@@ -14,6 +14,8 @@
 <meta name="apple-mobile-web-app-title" content="GAAP OS">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://pxuzidkfwbjscpkegsno.supabase.co" crossorigin>
+<link rel="dns-prefetch" href="https://pxuzidkfwbjscpkegsno.supabase.co">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -38,7 +40,7 @@
   <nav class="tabbar" id="tabbar" aria-label="Menu"></nav>
 </div>
 <div id="modal" class="modal" hidden></div>
-<div id="toast" class="toast" hidden></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
 
 <script src="/vendor/supabase-2.45.4.min.js"></script>
@@ -56,7 +58,10 @@
 <script src="/js/relatorios.js"></script>
 <script src="/js/financeiro.js"></script>
 <script src="/js/ajustes.js"></script>
+<script src="/js/biometria.js"></script>
 <script src="/js/relatorio.js"></script>
+<script src="/js/extras.js"></script>
+<script src="/js/importar.js"></script>
 <script src="/js/acoes.js"></script>
 </body>
 </html>

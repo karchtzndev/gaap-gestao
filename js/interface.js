@@ -53,7 +53,7 @@ const ICONS = {
   financeiro:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 6.5c-1-1.5-3-2-5-2-2.5 0-4.5 1.2-4.5 3.3 0 4.7 9.5 2.4 9.5 7.2 0 2.2-2.2 3.5-5 3.5-2.2 0-4.3-.8-5.3-2.5"/></svg>'
 };
 const NAV = [["painel","Painel"],["horas","Horas"],["relatorios","Relatórios"],["orcamentos","Orçamentos"],["financeiro","Financeiro"],["mais","Mais"]];
-const MAIS_VIEWS = ["mais","equipe","equipamentos","escala","atividade","ajuda"];
+const MAIS_VIEWS = ["mais","equipe","equipamentos","escala","atividade","ajuda","comparativo","avaliacoes","galeria","contatos"];
 function renderNav(){
   if(state.worker){ $("#tabbar").hidden = true; $("#railnav").innerHTML = ""; const g=document.querySelector('.topbar [data-view="ajustes"]'); if(g) g.hidden = true; return; }
   const cur = state.view==="orcEdit" ? "orcamentos" : MAIS_VIEWS.includes(state.view) ? "mais" : state.view;
@@ -66,9 +66,9 @@ function render(){
   renderNav();
   const v = $("#view");
   if(!state.ready){ v.innerHTML = `<div class="loading">Carregando seus dados…</div>`; return; }
-  if(!sessOk()){ document.body.classList.add("locked"); v.innerHTML = vLogin(); state.rendered = "login"; const f = $("#lg-email") || $("#lg-senha"); if(f && window.innerWidth>700) f.focus(); return; }
+  if(!sessOk()){ document.body.classList.add("locked"); v.innerHTML = vLogin(); state.rendered = "login"; const f = $("#lg-user") || $("#lg-email") || $("#lg-senha"); if(f && window.innerWidth>700) f.focus(); return; }
   document.body.classList.remove("locked");
-  const fn = state.worker ? (state.view==="ajuda" ? vAjuda : state.view==="carteira" ? vCarteira : vWorker) : ({carteira:vCarteira, painel:vPainel, horas:vHoras, relatorios:vRelatorios, orcamentos:vOrcamentos, orcEdit:vOrcEdit, financeiro:vFinanceiro, ajustes:vAjustes, mais:vMais, ajuda:vAjuda, escala:vEscala, atividade:vAtividade, equipe:vEquipe, equipamentos:vEquipamentos}[state.view] || vPainel);
+  const fn = state.worker ? (state.view==="ajuda" ? vAjuda : state.view==="carteira" ? vCarteira : vWorker) : ({carteira:vCarteira, painel:vPainel, horas:vHoras, relatorios:vRelatorios, orcamentos:vOrcamentos, orcEdit:vOrcEdit, financeiro:vFinanceiro, ajustes:vAjustes, mais:vMais, ajuda:vAjuda, escala:vEscala, atividade:vAtividade, equipe:vEquipe, equipamentos:vEquipamentos, comparativo:vComparativo, avaliacoes:vAvaliacoes, galeria:vGaleria, contatos:vContatos}[state.view] || vPainel);
   try{ v.innerHTML = cronoBar() + fn(); }
   catch(err){ console.error(err); v.innerHTML = `<div class="empty"><b>Não consegui mostrar esta tela.</b>Algum registro está com dado inválido. Toque em Atualizar; se continuar, me avise.<div class="row" style="justify-content:center;margin-top:10px"><button class="btn primary" data-act="recarregar">Atualizar</button></div></div>`; }
   state.rendered = state.view; document.body.dataset.ajaba = state.view==="ajustes" ? (state.ajAba||"valores") : "";
@@ -250,7 +250,7 @@ function apItem(e, showDate, bad){
   const c = calc(e), lk = lockedE(e), nf = (e.fotos||[]).length;
   return `<button class="item" data-act="editAp" data-id="${esc(e.id)}">
     <span class="t">${showDate?`${fdate(e.data).slice(0,5)}<br>`:""}${esc(e.inicio)}–${e.andamento?"…":esc(e.fim)}${e.almIni&&e.almFim?`<br><small class="muted">alm. ${esc(e.almIni)}–${esc(e.almFim)}</small>`:""}</span>
-    <span class="main"><b>${e.os?`OS ${esc(e.os)}`:"Sem nº de OS"}${e.tracos?` <span class="pill">TracOS ${esc(e.tracos)}</span>`:""}${e.andamento?' <span class="pill info">Em andamento</span>':""}${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.exemplo?' <span class="pill">Exemplo</span>':""}${e._pend?' <span class="pill warn" title="Será enviado quando a internet voltar">⏳ a enviar</span>':""}${e.geo && !state.worker?` <span class="pill" role="link" data-act="abrirMapa" data-lat="${esc(e.geo.lat)}" data-lng="${esc(e.geo.lng)}" title="Onde estava ao iniciar (precisão ${e.geo.acc||"?"} m)">📍 local</span>`:""}</b>
+    <span class="main"><b>${e.os?`OS ${esc(e.os)}`:"Sem nº de OS"}${e.tracos?` <span class="pill">TracOS ${esc(e.tracos)}</span>`:""}${e.andamento?' <span class="pill info">Em andamento</span>':""}${e.emergencia?' <span class="pill warn">Emergência</span>':""}${e.exemplo?' <span class="pill">Exemplo</span>':""}${e._pend?' <span class="pill warn" title="Será enviado quando a internet voltar">⏳ a enviar</span>':""}${e.geo && !state.worker?` <span class="pill" role="link" data-act="abrirMapa" data-lat="${esc(e.geo.lat)}" data-lng="${esc(e.geo.lng)}" title="Onde estava ao iniciar (precisão ${e.geo.acc||"?"} m)">📍 local</span>`:""}${typeof pontoHtml==="function"?pontoHtml(e):""}</b>
       <span class="sub">${esc(e.descricao||"")}</span>
       <span class="sub" style="display:block">${[empOf(e), e.cliente].filter(Boolean).map(esc).join(" · ")}</span>
       ${e.profissional && !state.worker?`<span class="sub" style="display:block"><b style="display:inline;font-weight:600;color:var(--fg)">${esc(e.profissional)}</b></span>`:""}

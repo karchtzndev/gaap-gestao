@@ -19,6 +19,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "LocalBusiness", "@id": "https://gaap-gestao.vercel.app/#empresa", "name": "GAAP Engenharia", "legalName": "GAAP ENGENHARIA", "description": "Montagem e manutenção mecânica industrial para empresas de grãos, cervejarias e farmacêuticas; fabricação e montagem de galpões e estruturas metálicas; engenharia mecânica, civil e de segurança do trabalho, com projetos, laudos, ART e treinamentos de segurança em Anápolis-GO e região.", "url": "https://gaap-gestao.vercel.app/", "image": "https://gaap-gestao.vercel.app/icon-512.png", "logo": "https://gaap-gestao.vercel.app/icon-512.png", "telephone": "+55 62 99310-3507", "email": "gaapengenharia3m@gmail.com", "taxID": "58.486.529/0001-47", "address": {"@type": "PostalAddress", "addressLocality": "Anápolis", "addressRegion": "GO", "addressCountry": "BR"}, "areaServed": [{"@type": "City", "name": "Anápolis"}, {"@type": "State", "name": "Goiás"}], "hasOfferCatalog": {"@type": "OfferCatalog", "name": "Serviços", "itemListElement": [{"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Manutenção mecânica industrial"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Montagem industrial"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Fabricação e montagem de galpões e estruturas metálicas"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Engenharia mecânica e civil: projetos, laudos e ART"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Engenharia de segurança do trabalho e treinamentos"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Chamados de emergência"}}]}}</script>
 <link rel="icon" href="/icon-192.png">
 <link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="preconnect" href="https://pxuzidkfwbjscpkegsno.supabase.co" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
@@ -148,6 +149,22 @@
     </div>
   </section>
 
+  <section id="obras" class="secao" hidden>
+    <div class="wrap">
+      <p class="eyebrow">Obras realizadas</p>
+      <h2>Alguns serviços entregues</h2>
+      <div class="obras" id="obras-lista"></div>
+    </div>
+  </section>
+
+  <section id="avaliacoes" class="secao faixa" hidden>
+    <div class="wrap">
+      <p class="eyebrow">Quem contratou recomenda</p>
+      <h2 id="aval-titulo">Avaliações dos clientes</h2>
+      <div class="avals" id="aval-lista"></div>
+    </div>
+  </section>
+
   <section id="duvidas" class="secao faixa">
     <div class="wrap duvidas">
       <div>
@@ -176,6 +193,7 @@
       <form id="form-orc" class="form" novalidate>
         <label><span>Seu nome</span><input name="nome" autocomplete="name" required placeholder="Como podemos te chamar?"></label>
         <label><span>Empresa</span><input name="empresa" autocomplete="organization" placeholder="Opcional"></label>
+        <label><span>WhatsApp / telefone</span><input name="telefone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(62) 90000-0000"></label>
         <label><span>Cidade</span><input name="cidade" autocomplete="address-level2" placeholder="Onde é o serviço?"></label>
         <label><span>Tipo de serviço</span>
           <select name="servico">
@@ -228,6 +246,7 @@
   <symbol id="i-frasco" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M9 3h6M10 3v6L5 18a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3L14 9V3"/><path d="M7.5 14h9"/></g></symbol>
 </svg>
 
+<script src="/config.js"></script>
 <script src="/contratar.js"></script>
 </body>
 </html>

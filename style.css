@@ -32,6 +32,8 @@ img{max-width:100%}
 *{box-sizing:border-box}
 html,body{background:var(--bg);color:var(--fg)}
 body{font-family:var(--f-body);font-size:15px;line-height:1.45}
+/* toque mais rápido no celular (sem atraso de duplo-toque) e sem flash cinza ao tocar */
+button,a,label,select,summary,.item,[role=link]{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 h1,h2,h3{font-family:var(--f-display);font-weight:700;letter-spacing:.01em;margin:0;text-wrap:balance}
 h1{font-size:1.75rem} h2{font-size:1.3rem} h3{font-size:1.05rem}
 .mono,.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
@@ -475,6 +477,21 @@ html{scroll-padding-top:80px;scroll-padding-bottom:110px}
 .sheet{scroll-padding:70px 0 96px}
 
 /* ===== Relatório técnico da OS ===== */
+
+/* trava por Face ID / digital */
+.bio-trava{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;padding:24px;background:linear-gradient(160deg,#0b1322 0%,#1d3f8f 70%,#1b7a3d 130%)}
+.bio-card{width:min(360px,100%);background:var(--surface);color:var(--fg);border-radius:22px;padding:28px 22px;display:grid;gap:12px;justify-items:center;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.4)}
+.bio-card img{width:72px;height:72px;border-radius:18px;background:#fff;padding:6px}
+.bio-card b{font-family:var(--f-display);font-size:1.15rem;letter-spacing:.03em}
+.bio-card p{margin:0}
+.bio-card .btn{width:100%}
+
+/* NFS-e: campos para copiar no Emissor Nacional */
+.nflista{display:grid;gap:6px;margin:10px 0}
+.nfl{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)}
+.nfl span{font-size:.82rem;color:var(--muted)}
+.nfl b{font-size:.9rem;word-break:break-all}
+@media (max-width:520px){.nfl{grid-template-columns:1fr auto}.nfl span{grid-column:1/-1}}
 .rtsform .rtsgrupo>span,.rtsform .field>span{font-weight:600}
 .rtschips{display:flex;flex-wrap:wrap;gap:6px}
 .rtschips .chipbtn{white-space:normal;text-align:left;line-height:1.25;max-width:100%}
@@ -505,3 +522,53 @@ html{scroll-padding-top:80px;scroll-padding-bottom:110px}
 .verif-fotos img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
 .verif-fotos figcaption{font-size:.8rem;font-weight:700;margin-top:3px;color:var(--muted)}
 .verif-fotos .t-antes{color:var(--warn)}.verif-fotos .t-depois{color:var(--good)}
+
+/* Ajustes no celular: abas numa linha só (rolam para o lado) e sem grudar no topo; "Salvar" só fica fixo quando há alteração */
+@media (max-width:760px){
+  .ajtabs{position:static;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;margin:0 -16px 6px;padding:2px 16px 10px}
+  .ajtabs::-webkit-scrollbar{display:none}
+}
+.cfg-salvar:has(#cfg-aviso[hidden]){position:static;box-shadow:none}
+/* olhinho da senha */
+.senha-caixa{position:relative;display:block}
+.senha-caixa input{width:100%;padding-right:48px}
+.senha-caixa .olho{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:40px;height:40px;border:0;background:none;font-size:1.15rem;cursor:pointer;color:var(--muted);border-radius:10px}
+.senha-caixa .olho:focus-visible{outline:2px solid var(--brand)}
+.rep-edit{cursor:pointer}
+.rep-edit:hover td{background:var(--warn-bg)}
+
+/* ditado por voz */
+.vozbtn{margin-top:6px}
+.vozbtn.ouvindo{background:var(--bad);color:#fff;border-color:var(--bad);animation:pulsa-voz 1s infinite}
+@keyframes pulsa-voz{50%{opacity:.6}}
+/* comparativo */
+.barra{position:relative;min-width:140px;height:26px;background:var(--surface-2);border-radius:8px;overflow:hidden}
+.barra i{position:absolute;inset:0 auto 0 0;background:color-mix(in srgb,var(--brand) 35%,transparent)}
+.barra span{position:relative;display:block;padding:4px 8px;font-size:.85rem}
+.pos{color:var(--good);font-weight:700}.neg{color:var(--bad);font-weight:700}
+.resumo .rs small.pos,.resumo .rs small.neg{font-size:.8rem}
+/* avaliações e galeria */
+.estrelas{color:#f5a623;letter-spacing:1px}
+.galpick{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}
+.galopt{position:relative;display:block;border-radius:12px;overflow:hidden;border:2px solid var(--line);cursor:pointer}
+.galopt input{position:absolute;top:6px;left:6px;width:20px;height:20px;z-index:1}
+.galopt img{display:block;width:100%;aspect-ratio:1;object-fit:cover}
+.galopt i{position:absolute;bottom:4px;right:6px;font-style:normal;font-size:.7rem;background:rgba(0,0,0,.6);color:#fff;padding:1px 6px;border-radius:6px}
+.galopt:has(input:checked){border-color:var(--brand)}
+.galeria-adm{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+
+/* importar ordens (TracOS): editor de horários por dia */
+.implista{max-height:52vh;overflow:auto;margin:10px 0;display:grid;gap:8px}
+.impdia{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--surface)}
+.impdia.off{opacity:.5}
+.impchk{font-weight:600;margin-bottom:8px}
+.imph{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.imph input[type=time]{min-height:40px;padding:6px 8px;flex:1 1 72px;min-width:72px}
+.imph .impn{margin-left:auto;font-weight:700}
+
+/* cartões de resumo (comparativo, avaliações) */
+.resumo{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin:14px 0 18px}
+.resumo .rs{background:var(--surface);padding:12px 14px;display:grid;gap:2px;box-shadow:0 0 0 .5px var(--line)}
+.resumo .rs span{font-family:var(--f-display);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.resumo .rs b{font-family:var(--f-display);font-size:1.25rem}
+.resumo .rs small{color:var(--muted);font-size:.78rem}

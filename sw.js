@@ -5,9 +5,9 @@
 // - outras páginas do site: cópia do aparelho na hora e atualiza em segundo plano
 // - bibliotecas carregadas sob demanda (CDN, fontes): usam a cópia guardada (versões fixas)
 // - dados (Supabase) não passam por aqui: o app guarda os dados e a fila de envio no IndexedDB
-const CACHE = "gaap-app-v35";
+const CACHE = "gaap-app-v36";
 const FONTES = "https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap";
-const SHELL = ["/app", "/", "/redir.js", "/js/base.js", "/js/dados.js", "/js/interface.js", "/js/leitura-os.js", "/js/telas.js", "/js/lancamentos.js", "/js/relatorios.js", "/js/financeiro.js", "/js/ajustes.js", "/js/relatorio.js", "/js/acoes.js", "/style.css", "/config.js", "/logo.js", "/logo.jpg", "/icon-192.png", "/badge-96.png", "/manifest.webmanifest",
+const SHELL = ["/app", "/", "/redir.js", "/js/base.js", "/js/dados.js", "/js/interface.js", "/js/leitura-os.js", "/js/telas.js", "/js/lancamentos.js", "/js/relatorios.js", "/js/financeiro.js", "/js/ajustes.js", "/js/relatorio.js", "/js/extras.js", "/js/biometria.js", "/js/importar.js", "/js/acoes.js", "/style.css", "/config.js", "/logo.js", "/logo.jpg", "/icon-192.png", "/badge-96.png", "/manifest.webmanifest",
   "/vendor/supabase-2.45.4.min.js", "/vendor/jspdf-2.5.1.umd.min.js", "/vendor/jspdf-autotable-3.8.2.min.js", "/vendor/qrcode-generator-1.4.4.js"];
 const LOCAIS = new Set(SHELL);
 // notificações são sempre para a equipe: "/" (página dos clientes), "/#…" e "/?…" viram o app

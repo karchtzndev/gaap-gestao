@@ -166,3 +166,16 @@ input:focus,select:focus,textarea:focus{border-color:var(--verde)}
 .js .surge{opacity:0;transform:translateY(16px);transition:opacity .6s ease,transform .6s ease}
 .js .surge.visivel{opacity:1;transform:none}
 @media (prefers-reduced-motion:reduce){.js .surge{opacity:1;transform:none;transition:none}}
+
+/* obras e avaliações */
+.obras{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:18px;margin-top:30px}
+.obra{background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.obra h3,.obra p{padding:0 18px}.obra h3{margin-top:14px}.obra p{margin:6px 0 16px;font-size:.96rem}
+.obra-fotos{display:grid;gap:2px}.obra-fotos.f2,.obra-fotos.f3,.obra-fotos.f4{grid-template-columns:1fr 1fr}
+.obra-fotos img{width:100%;aspect-ratio:4/3;object-fit:cover}
+.obra-fotos.f3 img:first-child{grid-column:1/-1}
+.avals{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;margin-top:30px}
+.aval{margin:0;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:22px}
+.aval-est{color:#f5a623;font-size:1.2rem;letter-spacing:2px}
+.aval blockquote{margin:10px 0;color:#d6e0ec;font-size:1rem}
+.aval figcaption{color:var(--muted);font-weight:600;font-size:.92rem}
